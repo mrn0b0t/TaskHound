@@ -143,7 +143,7 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
                 if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
                     priv_lines.extend(_format_block("TIER-0", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    extra_reason=reason, password_analysis=password_analysis, 
-                                                   hv=hv, no_ldap=no_ldap, enabled=meta.get("enabled"), state=meta.get("state")))
+                                                   hv=hv, no_ldap=no_ldap, enabled=meta.get("enabled")))
                     priv_count += 1
                     row["type"] = "TIER-0"
                     row["reason"] = reason
@@ -166,7 +166,7 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
                 if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
                     priv_lines.extend(_format_block("PRIV", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    extra_reason=reason, password_analysis=password_analysis, 
-                                                   hv=hv, no_ldap=no_ldap, enabled=meta.get("enabled"), state=meta.get("state")))
+                                                   hv=hv, no_ldap=no_ldap, enabled=meta.get("enabled")))
                     priv_count += 1
                     row["type"] = "PRIV"
                     row["reason"] = reason
@@ -191,7 +191,7 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
                 if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
                     task_lines.extend(_format_block("TASK", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    password_analysis=password_analysis, hv=hv, no_ldap=no_ldap, 
-                                                   enabled=meta.get("enabled"), state=meta.get("state")))
+                                                   enabled=meta.get("enabled")))
             row["password_analysis"] = password_analysis
 
         # By default omit tasks that explicitly have no saved credentials unless the user asked to show them
@@ -230,7 +230,6 @@ def _build_row(host: str, rel_path: str, meta: Dict[str, str]) -> Dict[str, Opti
         "date": meta.get("date"),
         "logon_type": meta.get("logon_type"),
         "enabled": meta.get("enabled"),
-        "state": meta.get("state"),
         "reason": None,
         "credentials_hint": credentials_hint,
     }
@@ -241,7 +240,7 @@ def _format_block(kind: str, rel_path: str, runas: str, what: str, author: str, 
                   hv: Optional[HighValueLoader] = None, no_ldap: bool = False, 
                   domain: Optional[str] = None, username: Optional[str] = None, 
                   password: Optional[str] = None, hashes: Optional[str] = None,
-                  enabled: Optional[str] = None, state: Optional[str] = None) -> List[str]:
+                  enabled: Optional[str] = None) -> List[str]:
     # Format a small pretty-print block used by the CLI output.
     #
     # kind is either 'TIER-0', 'PRIV' (privileged/high-value) or 'TASK' (normal task).
@@ -263,15 +262,13 @@ def _format_block(kind: str, rel_path: str, runas: str, what: str, author: str, 
     if enabled is not None:
         enabled_display = enabled.capitalize() if enabled.lower() in ['true', 'false'] else enabled
         base.append(f"        Enabled : {enabled_display}")
-    if state is not None:
-        base.append(f"        State   : {state}")
         
-    # Add other task information
-    base.extend([f"        RunAs  : {display_runas}", f"        What   : {what}"])
+    # Add other task information with proper alignment
+    base.extend([f"        RunAs   : {display_runas}", f"        What    : {what}"])
     if author:
-        base.append(f"        Author : {author}")
+        base.append(f"        Author  : {author}")
     if date:
-        base.append(f"        Date   : {date}")
+        base.append(f"        Date    : {date}")
     
     if kind in ["TIER-0", "PRIV"]:
         if extra_reason:
@@ -438,7 +435,7 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
                     priv_lines.extend(_format_block("TIER-0", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    extra_reason=reason, password_analysis=password_analysis, 
                                                    hv=hv, no_ldap=no_ldap, domain=domain, username=username, 
-                                                   password=password, hashes=hashes))
+                                                   password=password, hashes=hashes, enabled=meta.get("enabled")))
                     priv_count += 1
                     row["type"] = "TIER-0"
                     row["reason"] = reason
@@ -460,7 +457,7 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
                     priv_lines.extend(_format_block("PRIV", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    extra_reason=reason, password_analysis=password_analysis, 
                                                    hv=hv, no_ldap=no_ldap, domain=domain, username=username, 
-                                                   password=password, hashes=hashes))
+                                                   password=password, hashes=hashes, enabled=meta.get("enabled")))
                     priv_count += 1
                     row["type"] = "PRIV"
                     row["reason"] = reason
@@ -484,7 +481,7 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
                 if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
                     task_lines.extend(_format_block("TASK", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    password_analysis=password_analysis, hv=hv, no_ldap=no_ldap, 
-                                                   domain=domain, username=username, password=password, hashes=hashes))
+                                                   domain=domain, username=username, password=password, hashes=hashes, enabled=meta.get("enabled")))
             row["password_analysis"] = password_analysis
             
         if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):

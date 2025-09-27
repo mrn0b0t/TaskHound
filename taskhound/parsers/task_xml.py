@@ -10,7 +10,7 @@ from typing import Dict
 
 
 def parse_task_xml(xml_bytes: bytes) -> Dict[str, str]:
-    res = {"runas": None, "author": None, "date": None, "command": None, "arguments": None, "logon_type": None, "enabled": None, "state": None}
+    res = {"runas": None, "author": None, "date": None, "command": None, "arguments": None, "logon_type": None, "enabled": None}
     try:
         root = ET.fromstring(xml_bytes)
         # Handle default namespace if present by binding it to prefix 'ns'
@@ -42,7 +42,6 @@ def parse_task_xml(xml_bytes: bytes) -> Dict[str, str]:
         
         # Task state information - critical for identifying disabled tasks that may still store credentials
         res["enabled"]   = grab(".//ns:Settings/ns:Enabled")
-        res["state"]     = grab(".//ns:RegistrationInfo/ns:State")
     except Exception:
         # Be permissive: return default dict with None values on parse errors
         pass

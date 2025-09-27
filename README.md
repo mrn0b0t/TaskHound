@@ -45,34 +45,38 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
 [+] moe.thesimpsons.local: Found 7 tasks, privileged 2
 
 [TIER-0] Windows\System32\Tasks\BackupTask
-        RunAs  : THESIMPSONS\Administrator
-        What   : C:\Scripts\backup.exe --daily
-        Author : THESIMPSONS\Administrator  
-        Date   : 2025-09-18T23:04:37.3089851
-        Reason : Tier 0 group membership: Domain Admins, Administrators, Enterprise Admins
+        Enabled : True
+        RunAs   : THESIMPSONS\Administrator
+        What    : C:\Scripts\backup.exe --daily
+        Author  : THESIMPSONS\Administrator  
+        Date    : 2025-09-18T23:04:37.3089851
+        Reason  : Tier 0 group membership: Domain Admins, Administrators, Enterprise Admins
         Password Analysis : Password changed BEFORE task creation - stored password likely valid
         Next Step: DPAPI Dump / Task Manipulation
 
 [PRIV] Windows\System32\Tasks\MaintenanceTask
-        RunAs  : THESIMPSONS\marge.simpson
-        What   : C:\Tools\cleanup.exe
-        Author : THESIMPSONS\Administrator
-        Date   : 2025-09-18T23:05:43.0854575
-        Reason : High Value match found
+        Enabled : True
+        RunAs   : THESIMPSONS\marge.simpson
+        What    : C:\Tools\cleanup.exe
+        Author  : THESIMPSONS\Administrator
+        Date    : 2025-09-18T23:05:43.0854575
+        Reason  : High Value match found
         Password Analysis : Password changed BEFORE task creation - stored password likely valid
         Next Step: DPAPI Dump / Task Manipulation
 
 [TASK] Windows\System32\Tasks\SIDTask  
-        RunAs  : Administrator (S-1-5-21-3211413907-14631080-1147255650-500)
-        What   : C:\Windows\System32\cmd.exe /c backup
-        Author : SYSTEM
-        Date   : 2025-09-15T08:15:22.1234567
+        Enabled : True
+        RunAs   : Administrator (S-1-5-21-3211413907-14631080-1147255650-500)
+        What    : C:\Windows\System32\cmd.exe /c backup
+        Author  : SYSTEM
+        Date    : 2025-09-15T08:15:22.1234567
 
 [TASK] Windows\System32\Tasks\UserTask
-        RunAs  : THESIMPSONS\bart.simpson
-        What   : C:\Windows\System32\notepad.exe
-        Author : THESIMPSONS\bart.simpson
-        Date   : 2025-09-18T12:30:15.1234567
+        Enabled : False
+        RunAs   : THESIMPSONS\bart.simpson
+        What    : C:\Windows\System32\notepad.exe
+        Author  : THESIMPSONS\bart.simpson
+        Date    : 2025-09-18T12:30:15.1234567
 
 ================================================================================
 SUMMARY
@@ -119,7 +123,7 @@ RETURN u.samaccountname AS SamAccountName, u.objectid as sid
 ORDER BY u.samaccountname
 ```
 
-#### Enhanced Query with Group Memberships (Recommended)
+#### Enhanced Query with Group Memberships
 ```cypher
 MATCH (u:User {highvalue:true})
 OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)
