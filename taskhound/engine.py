@@ -143,7 +143,7 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
                 if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
                     priv_lines.extend(_format_block("TIER-0", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    extra_reason=reason, password_analysis=password_analysis, 
-                                                   hv=hv, no_ldap=no_ldap))
+                                                   hv=hv, no_ldap=no_ldap, enabled=meta.get("enabled"), state=meta.get("state")))
                     priv_count += 1
                     row["type"] = "TIER-0"
                     row["reason"] = reason
@@ -166,7 +166,7 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
                 if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
                     priv_lines.extend(_format_block("PRIV", rel_path, runas, what, meta.get("author"), meta.get("date"), 
                                                    extra_reason=reason, password_analysis=password_analysis, 
-                                                   hv=hv, no_ldap=no_ldap))
+                                                   hv=hv, no_ldap=no_ldap, enabled=meta.get("enabled"), state=meta.get("state")))
                     priv_count += 1
                     row["type"] = "PRIV"
                     row["reason"] = reason
@@ -190,7 +190,8 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
             if should_include_task:
                 if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
                     task_lines.extend(_format_block("TASK", rel_path, runas, what, meta.get("author"), meta.get("date"), 
-                                                   password_analysis=password_analysis, hv=hv, no_ldap=no_ldap))
+                                                   password_analysis=password_analysis, hv=hv, no_ldap=no_ldap, 
+                                                   enabled=meta.get("enabled"), state=meta.get("state")))
             row["password_analysis"] = password_analysis
 
         # By default omit tasks that explicitly have no saved credentials unless the user asked to show them
@@ -228,6 +229,8 @@ def _build_row(host: str, rel_path: str, meta: Dict[str, str]) -> Dict[str, Opti
         "author": meta.get("author"),
         "date": meta.get("date"),
         "logon_type": meta.get("logon_type"),
+        "enabled": meta.get("enabled"),
+        "state": meta.get("state"),
         "reason": None,
         "credentials_hint": credentials_hint,
     }
@@ -237,7 +240,8 @@ def _format_block(kind: str, rel_path: str, runas: str, what: str, author: str, 
                   extra_reason: Optional[str] = None, password_analysis: Optional[str] = None,
                   hv: Optional[HighValueLoader] = None, no_ldap: bool = False, 
                   domain: Optional[str] = None, username: Optional[str] = None, 
-                  password: Optional[str] = None, hashes: Optional[str] = None) -> List[str]:
+                  password: Optional[str] = None, hashes: Optional[str] = None,
+                  enabled: Optional[str] = None, state: Optional[str] = None) -> List[str]:
     # Format a small pretty-print block used by the CLI output.
     #
     # kind is either 'TIER-0', 'PRIV' (privileged/high-value) or 'TASK' (normal task).
@@ -253,7 +257,17 @@ def _format_block(kind: str, rel_path: str, runas: str, what: str, author: str, 
         runas, hv, no_ldap, domain, username, password, hashes
     )
         
-    base = [f"\n{header} {rel_path}", f"        RunAs  : {display_runas}", f"        What   : {what}"]
+    base = [f"\n{header} {rel_path}"]
+    
+    # Add task state information as first field
+    if enabled is not None:
+        enabled_display = enabled.capitalize() if enabled.lower() in ['true', 'false'] else enabled
+        base.append(f"        Enabled : {enabled_display}")
+    if state is not None:
+        base.append(f"        State   : {state}")
+        
+    # Add other task information
+    base.extend([f"        RunAs  : {display_runas}", f"        What   : {what}"])
     if author:
         base.append(f"        Author : {author}")
     if date:

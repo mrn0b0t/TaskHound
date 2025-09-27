@@ -222,7 +222,7 @@ TaskHound is strictly an **audit and educational tool**. Use only in environment
 
 ## Contributing
 
-PRs to the dev branch welcome. Don't expect wonders though - half of this was caffeine-induced vibe-coding.
+PRs welcome. Don't expect wonders though - half of this was caffeine-induced vibe-coding.
 
 ## License
 

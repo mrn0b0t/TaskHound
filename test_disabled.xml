@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+    <RegistrationInfo>
+        <Date>2024-12-15T10:00:00.000000</Date>
+        <Author>BADSUCCESSOR\highpriv</Author>
+        <Description>Disabled privileged task with stored credentials</Description>
+        <State>Disabled</State>
+    </RegistrationInfo>
+    <Principals>
+        <Principal id="Author">
+            <UserId>BADSUCCESSOR\highpriv</UserId>
+            <LogonType>Password</LogonType>
+        </Principal>
+    </Principals>
+    <Settings>
+        <Enabled>false</Enabled>
+    </Settings>
+    <Actions Context="Author">
+        <Exec>
+            <Command>C:\Scripts\disabled-maintenance.ps1</Command>
+        </Exec>
+    </Actions>
+</Task>
