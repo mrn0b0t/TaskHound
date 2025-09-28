@@ -147,9 +147,11 @@ ORDER BY SamAccountName
 
 ## SID Resolution
 
-TaskHound automatically resolves Windows SIDs to human-readable usernames for improved readability when encountered in a task.
+TaskHound tries to automatically resolve SIDs to samaccountnames for improved readability when encountered in a task.
 Before using any outbound connection, it will try to resolve them using the supplied BloodHound data.
 If there is no data found or wasn't supplied, taskhound will then try to look up the SID via LDAP unless supressed with `--no-ldap`
+
+> **NOTE**: To use this reliably with kerberos auth you need a working krb5.conf.  
 
 ## EXPERIMENTAL Features
 
