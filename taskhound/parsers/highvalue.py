@@ -71,25 +71,22 @@ def _analyze_password_freshness(task_date: Optional[str], pwd_change_date: Optio
         return "UNKNOWN", f"Date parsing error: {e}"
 
 
-# Tier 0 group names (both English and German)
-TIER0_GROUPS = [
-    # Schema Admins
-    "Schema Admins", "Schema-Admins",
-    # Enterprise Admins  
-    "Enterprise Admins", "Unternehmens-Admins",
-    # Domain Admins
-    "Domain Admins", "Domänen-Admins",
-    # Administrators (local)
-    "Administrators", "Administratoren",
-    # Backup Operators
-    "Backup Operators", "Sicherungsoperatoren",
-    # Server Operators
-    "Server Operators", "Server-Operatoren",
-    # Account Operators
-    "Account Operators", "Konto-Operatoren",
-    # Print Operators
-    "Print Operators", "Druck-Operatoren",
-]
+# Well-known Tier 0 SIDs for direct SID-based detection
+TIER0_SIDS = {
+    "S-1-5-32-544": "Administrators",           # Local Administrators
+    "S-1-5-21-{domain}-512": "Domain Admins",        # Domain Admins (domain-relative)
+    "S-1-5-21-{domain}-516": "Domain Controllers",   # Domain Controllers
+    "S-1-5-21-{domain}-518": "Schema Admins",        # Schema Admins
+    "S-1-5-21-{domain}-519": "Enterprise Admins",    # Enterprise Admins
+    "S-1-5-21-{domain}-526": "Key Admins",           # Key Admins (Windows Server 2016+)
+    "S-1-5-21-{domain}-527": "Enterprise Key Admins", # Enterprise Key Admins (Windows Server 2016+)
+    "S-1-5-21-{domain}-500": "Administrator",        # Built-in Administrator account
+    # Additional AdminSDHolder protected groups (lower privilege but still Tier 0)
+    "S-1-5-32-551": "Backup Operators",        # Backup Operators
+    "S-1-5-32-549": "Server Operators",        # Server Operators  
+    "S-1-5-32-548": "Account Operators",       # Account Operators
+    "S-1-5-32-550": "Print Operators",         # Print Operators
+}
 
 
 class HighValueLoader:
@@ -438,8 +435,10 @@ class HighValueLoader:
         return sam in self.hv_users
 
     def check_tier0(self, runas: str) -> tuple[bool, list[str]]:
-        # Return (True, matching_groups) if the given RunAs value belongs to Tier 0 groups.
+        # Return (True, reasons) if the given RunAs value belongs to Tier 0 groups.
+        # Enhanced to include AdminSDHolder detection via admincount=1
         #
+        # Uses SID-based detection instead of name matching for language independence.
         # Accepts SIDs (S-1-5-...) or NETBIOS\sam or plain sam.
         if not runas:
             return False, []
@@ -447,7 +446,7 @@ class HighValueLoader:
         val = runas.strip()
         user_data = None
         
-        # SID form
+        # Look up user data from BloodHound
         if val.upper().startswith("S-1-5-"):
             user_data = self.hv_sids.get(val)
         else:
@@ -461,23 +460,48 @@ class HighValueLoader:
         if not user_data:
             return False, []
         
-        # Check group memberships
-        group_names = user_data.get("group_names", [])
-        matching_groups = []
+        tier0_reasons = []
         
-        for group_name in group_names:
-            # Handle domain-qualified group names (e.g., "DOMAIN ADMINS@DOMAIN.COM")
-            # Extract the base group name before the @ symbol
-            base_group_name = group_name.split('@')[0].strip()
+        # Check 1: AdminSDHolder protection (admincount=1)
+        admincount = user_data.get("admincount")
+        if admincount and str(admincount).lower() in ("1", "true"):
+            tier0_reasons.append("AdminSDHolder protected account (admincount=1)")
+        
+        # Check 2: Group membership via SIDs (language independent)
+        group_sids = user_data.get("groups", [])  # This contains the actual SIDs
+        group_names = user_data.get("group_names", [])  # This contains display names
+        
+        # Create a mapping of SID to display name for output
+        sid_to_name = {}
+        if len(group_sids) == len(group_names):
+            sid_to_name = dict(zip(group_sids, group_names))
+        
+        matching_tier0_groups = []
+        
+        for group_sid in group_sids:
+            group_sid_upper = group_sid.upper()
             
-            # Check both original and base group name for flexibility (case-insensitive)
-            for tier0_group in TIER0_GROUPS:
-                if (group_name.lower() == tier0_group.lower() or 
-                    base_group_name.lower() == tier0_group.lower()):
-                    matching_groups.append(group_name)
-                    break  # Found a match, no need to check other TIER0_GROUPS
+            # Check against well-known Tier 0 SIDs
+            for tier0_sid_pattern, default_name in TIER0_SIDS.items():
+                if tier0_sid_pattern.startswith("S-1-5-21-{domain}"):
+                    # Domain-relative SID - extract the pattern
+                    # e.g., S-1-5-21-{domain}-512 matches S-1-5-21-1234567890-1234567890-1234567890-512
+                    rid = tier0_sid_pattern.split("-")[-1]  # Get the RID (512, 519, etc.)
+                    if group_sid_upper.startswith("S-1-5-21-") and group_sid_upper.endswith(f"-{rid}"):
+                        # Use the display name from BloodHound if available, otherwise use default
+                        display_name = sid_to_name.get(group_sid, default_name)
+                        matching_tier0_groups.append(display_name)
+                        break
+                elif group_sid_upper == tier0_sid_pattern.upper():
+                    # Exact SID match (builtin groups like Administrators)
+                    display_name = sid_to_name.get(group_sid, default_name)
+                    matching_tier0_groups.append(display_name)
+                    break
         
-        return len(matching_groups) > 0, matching_groups
+        if matching_tier0_groups:
+            tier0_reasons.append(f"Tier 0 group membership: {', '.join(matching_tier0_groups)}")
+        
+        return len(tier0_reasons) > 0, tier0_reasons
 
     def analyze_password_age(self, runas: str, task_date: str) -> Tuple[str, str]:
         # Simple boolean password analysis for DPAPI dump viability.

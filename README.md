@@ -100,11 +100,15 @@ TaskHound automatically detects default Tier 0 accounts based on group membershi
 
 ### Data Export from BloodHound
 
-TaskHound accepts CSV or JSON files with the following required fields:
-- `SamAccountName` (required)  
-- `sid` (required)
-- `groups` or `group_names` (optional, for Tier 0 detection)
-- `pwdlastset` and `lastlogon` (optional, for password age analysis)
+TaskHound accepts CSV or JSON exports from BloodHound. The following fields are required as a minimum:
+
+- `SamAccountName` 
+- `sid`
+
+The following fields are optional but provide better insights in the output:
+
+- `groups/group_names` and `admincount` (for Tier-0 detection)
+- `pwdlastset` and `lastlogon` (For password age analysis)
 
 #### Quick High-Value Marking (Warning: can be heavy and cause False Positives)
 ```cypher
@@ -114,24 +118,6 @@ OR toUpper(n.azname) CONTAINS "ADMIN"
 OR toUpper(n.objectid) CONTAINS "ADMIN"
 SET n.highvalue = true, n.highvaluereason = 'Node matched ADMIN keyword'
 RETURN n
-```
-
-#### Basic High-Value Users Query
-```cypher
-MATCH (u:User {highvalue:true})
-RETURN u.samaccountname AS SamAccountName, u.objectid as sid
-ORDER BY u.samaccountname
-```
-
-#### Enhanced Query with Group Memberships
-```cypher
-MATCH (u:User {highvalue:true})
-OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)
-WITH u, collect(g.name) as groups, collect(g.objectid) as group_sids
-RETURN u.samaccountname AS SamAccountName, u.objectid as sid,
-       groups as group_names, group_sids as groups,
-       u.pwdlastset as pwdlastset, u.lastlogon as lastlogon
-ORDER BY u.samaccountname
 ```
 
 #### Lazy Query - Export ALL BloodHound Attributes (Recommended)

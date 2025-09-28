@@ -125,10 +125,10 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
         classified = False
         if hv and hv.loaded:
             # Check Tier 0 classification
-            is_tier0, tier0_groups = hv.check_tier0(runas)
+            is_tier0, tier0_reasons = hv.check_tier0(runas)
             if is_tier0:
                 # Tier 0 match - analyze password age if credentials are stored
-                reason = f"Tier 0 group membership: {', '.join(tier0_groups)}"
+                reason = '; '.join(tier0_reasons)
                 password_analysis = None
                 
                 if row.get("credentials_hint") == "no_saved_credentials":
@@ -417,10 +417,10 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
         classified = False
         if hv and hv.loaded:
             # Check Tier 0 classification
-            is_tier0, tier0_groups = hv.check_tier0(runas)
+            is_tier0, tier0_reasons = hv.check_tier0(runas)
             if is_tier0:
                 # Tier 0 match - analyze password age if credentials are stored
-                reason = f"Tier 0 group membership: {', '.join(tier0_groups)}"
+                reason = '; '.join(tier0_reasons)
                 password_analysis = None
                 
                 if row.get("credentials_hint") == "no_saved_credentials":
