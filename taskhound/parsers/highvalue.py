@@ -12,7 +12,7 @@ import os
 import csv
 import json
 from datetime import datetime, timezone
-from typing import Dict, Any, Iterable, Optional, Tuple
+from typing import Dict, Any, Iterable, Optional, Tuple, List
 from ..utils.logging import warn
 
 
@@ -64,9 +64,9 @@ def _analyze_password_freshness(task_date: Optional[str], pwd_change_date: Optio
         
         # Enhanced analysis with better messaging
         if task_dt < pwd_change_date:
-            return "BAD", "Password changed AFTER task creation - stored credentials are likely stale (admin may have updated task credentials via GUI, but this cannot be detected automatically - try DPAPI dump to verify)"
+            return "BAD", "Password changed AFTER task creation, Password could be stale"
         else:
-            return "GOOD", "Password changed BEFORE task creation - stored password is definitely valid"
+            return "GOOD", "Password changed BEFORE task creation, password is valid!"
     except (ValueError, TypeError) as e:
         return "UNKNOWN", f"Date parsing error: {e}"
 
@@ -91,23 +91,26 @@ TIER0_SIDS = {
 
 class HighValueLoader:
     # Load and query a high-value users export (CSV or JSON).
+    # Supports both Legacy BloodHound and BloodHound Community Edition formats.
     #
     # Attributes:
     #     path: source file path
     #     hv_users: mapping from samaccountname -> metadata (currently only sid)
     #     hv_sids: mapping from sid -> metadata (currently only sam)
     #     loaded: True if load() succeeded
+    #     format_type: "legacy", "bhce", or "unknown"
 
     def __init__(self, path: str):
         self.path = path
         self.hv_users: Dict[str, Dict[str, Any]] = {}
         self.hv_sids: Dict[str, Dict[str, Any]] = {}
         self.loaded = False
+        self.format_type = "unknown"
 
     def load(self) -> bool:
-    # Detect file type and populate internal maps.
-    #
-    # Returns True on success, False on any error or unsupported format.
+        # Detect file type and populate internal maps.
+        #
+        # Returns True on success, False on any error or unsupported format.
         ext = os.path.splitext(self.path)[1].lower()
         try:
             if ext == ".json":
@@ -145,33 +148,11 @@ class HighValueLoader:
 
     @staticmethod
     def _schema_help():
-        # Print a small help if the schema is wrong
+        # Print a simple help if the schema is wrong
         print("[!] Invalid schema in custom HV file!")
-        print("    Required fields: SamAccountName + (sid OR objectid OR all_props)")
+        print("    Required fields: SamAccountName + (sid OR objectid)")
         print("    Optional fields: groups, group_names, pwdlastset, lastlogon")
         print("    Additional fields: Any BloodHound attribute will be preserved")
-        print("    Please generate with one of these Neo4j queries:")
-        print()
-        print("## Basic Query:")
-        print("MATCH (u:User {highvalue:true})")
-        print("RETURN u.samaccountname AS SamAccountName, u.objectid as sid")
-        print("ORDER BY u.samaccountname")
-        print()
-        print("## Enhanced Query (Recommended):")
-        print("MATCH (u:User {highvalue:true})")
-        print("OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)")
-        print("WITH u, collect(g.name) as groups, collect(g.objectid) as group_sids")
-        print("RETURN u.samaccountname AS SamAccountName, u.objectid as sid,")
-        print("       groups as group_names, group_sids as groups,")
-        print("       u.pwdlastset as pwdlastset, u.lastlogon as lastlogon")
-        print("ORDER BY u.samaccountname")
-        print()
-        print("## Lazy Query (All Attributes):")
-        print("MATCH (u:User {highvalue:true})")
-        print("OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)")
-        print("WITH u, properties(u) as all_props, collect(g.name) as groups, collect(g.objectid) as group_sids")
-        print("RETURN u.samaccountname AS SamAccountName, all_props, groups, group_sids")
-        print("ORDER BY SamAccountName")
 
     def _process_user_data(self, row: Dict[str, Any]) -> bool:
         # Process a single user record from JSON or CSV data.
@@ -391,11 +372,102 @@ class HighValueLoader:
             data = json.load(f)
         if not data:
             return False
-        # Expect a list of objects; validate the first row for required fields
-        if not self._has_fields(data[0].keys()):
-            self._schema_help()
+        
+        # Detect format type
+        if self._is_bhce_format(data):
+            self.format_type = "bhce"
+            print(f"[+] BloodHound Community Edition export detected")
+            return self._load_bhce_json(data)
+        elif isinstance(data, list) and len(data) > 0:
+            # Check if it's legacy format
+            if self._has_fields(data[0].keys()):
+                self.format_type = "legacy"
+                print(f"[+] Legacy BloodHound export detected")
+                return self._load_legacy_json(data)
+            else:
+                self._schema_help()
+                return False
+        else:
+            warn("Unrecognized JSON format")
+            return False
+    
+    def _is_bhce_format(self, data: Any) -> bool:
+        # Detect BHCE format by presence of isTierZero field in nodes
+        if not isinstance(data, dict):
             return False
         
+        nodes = data.get("nodes", {})
+        if not isinstance(nodes, dict):
+            return False
+            
+        # Check if any node has isTierZero field (key indicator)
+        for node_data in nodes.values():
+            if isinstance(node_data, dict) and "isTierZero" in node_data:
+                return True
+        return False
+    
+    def _load_bhce_json(self, data: Dict[str, Any]) -> bool:
+        # Load BloodHound Community Edition format
+        nodes = data.get("nodes", {})
+        edges = data.get("edges", [])
+        
+        # Process each node
+        for node_id, node_data in nodes.items():
+            if not isinstance(node_data, dict):
+                continue
+                
+            # Only process Users for now (could extend to Groups later)
+            if node_data.get("kind") != "User":
+                continue
+                
+            # Extract core fields
+            object_id = node_data.get("objectId", "").strip()
+            label = node_data.get("label", "").strip()
+            properties = node_data.get("properties", {})
+            
+            if not object_id or not label:
+                continue
+            
+            # Extract samaccountname from label (e.g., "HIGHPRIV@BADSUCCESSOR.LAB" -> "highpriv")
+            if "@" in label:
+                sam = label.split("@")[0].lower()
+            else:
+                sam = properties.get("samaccountname", "").strip().lower()
+            
+            if not sam:
+                continue
+                
+            # Build user data structure compatible with existing code
+            user_data = {
+                "sid": object_id.upper(),
+                "groups": [],  # Will be populated from edges
+                "group_names": [],  # Will be populated from edges
+                "pwdlastset": _convert_timestamp(properties.get("pwdlastset")),
+                "lastlogon": _convert_timestamp(properties.get("lastlogon")),
+            }
+            
+            # Copy all properties for extensibility
+            # Exclude fields we've already processed with special handling
+            for key, value in properties.items():
+                if key.lower() not in ["samaccountname", "objectid", "pwdlastset", "lastlogon"]:
+                    user_data[key.lower()] = value
+            
+            # Add BHCE-specific fields
+            user_data["istierzero"] = node_data.get("isTierZero", False)
+            user_data["system_tags"] = properties.get("system_tags", "")
+            
+            # Store in lookup dictionaries
+            self.hv_users[sam] = user_data
+            self.hv_sids[object_id.upper()] = dict(user_data)
+            self.hv_sids[object_id.upper()]["sam"] = sam
+        
+        # TODO: Process edges to build group membership information
+        # For now, we rely on other detection methods (admincount, system_tags)
+        
+        return True
+    
+    def _load_legacy_json(self, data: List[Dict[str, Any]]) -> bool:
+        # Load legacy BloodHound format
         for row in data:
             self._process_user_data(row)
         return True
@@ -437,6 +509,7 @@ class HighValueLoader:
     def check_tier0(self, runas: str) -> tuple[bool, list[str]]:
         # Return (True, reasons) if the given RunAs value belongs to Tier 0 groups.
         # Enhanced to include AdminSDHolder detection via admincount=1
+        # Supports both Legacy and BHCE formats
         #
         # Uses SID-based detection instead of name matching for language independence.
         # Accepts SIDs (S-1-5-...) or NETBIOS\sam or plain sam.
@@ -462,12 +535,21 @@ class HighValueLoader:
         
         tier0_reasons = []
         
-        # Check 1: AdminSDHolder protection (admincount=1)
+        # Check 1: BHCE-specific isTierZero flag
+        if self.format_type == "bhce" and user_data.get("istierzero"):
+            tier0_reasons.append("BloodHound CE Tier Zero classification")
+        
+        # Check 2: BHCE-specific system_tags
+        system_tags = user_data.get("system_tags", "")
+        if system_tags and "admin_tier_0" in system_tags:
+            tier0_reasons.append("System tagged as admin_tier_0")
+        
+        # Check 3: AdminSDHolder protection (admincount=1) - works for both formats
         admincount = user_data.get("admincount")
         if admincount and str(admincount).lower() in ("1", "true"):
-            tier0_reasons.append("AdminSDHolder protected account (admincount=1)")
+            tier0_reasons.append("AdminSDHolder")
         
-        # Check 2: Group membership via SIDs (language independent)
+        # Check 4: Group membership via SIDs (language independent) - mainly for Legacy format
         group_sids = user_data.get("groups", [])  # This contains the actual SIDs
         group_names = user_data.get("group_names", [])  # This contains display names
         
@@ -499,7 +581,7 @@ class HighValueLoader:
                     break
         
         if matching_tier0_groups:
-            tier0_reasons.append(f"Tier 0 group membership: {', '.join(matching_tier0_groups)}")
+            tier0_reasons.append("TIER0 Group Membership")
         
         return len(tier0_reasons) > 0, tier0_reasons
 

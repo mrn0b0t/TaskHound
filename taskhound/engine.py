@@ -151,7 +151,7 @@ def _process_offline_host(hostname: str, host_dir: str, hv: Optional[HighValueLo
                 classified = True
             elif hv.check_highvalue(runas):
                 # High-value match — mark as privileged if credentials are stored (or show unsaved creds)
-                reason = "High Value match found"
+                reason = "High Value match found (Check BloodHound Outbound Object Control for Details)"
                 password_analysis = None
                 
                 if row.get("credentials_hint") == "no_saved_credentials":
@@ -276,7 +276,7 @@ def _format_block(kind: str, rel_path: str, runas: str, what: str, author: str, 
         elif kind == "TIER-0":
             base.append("        Reason : Tier 0 privileged group membership")
         else:
-            base.append("        Reason : High Value match found")
+            base.append("        Reason : High Value match found (Check BloodHound Outbound Object Control for Details)")
         
         # Add password analysis if available
         if password_analysis:
@@ -442,7 +442,7 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
                     row["password_analysis"] = password_analysis
                 classified = True
             elif hv.check_highvalue(runas):
-                reason = "High Value match found"
+                reason = "High Value match found (Check BloodHound Outbound Object Control for Details)"
                 password_analysis = None
                 
                 if row.get("credentials_hint") == "no_saved_credentials":

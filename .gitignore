@@ -45,3 +45,4 @@ Pipfile.lock
 *.exe
 BOF/AdaptixC2/taskhound.o
 BOF/AdaptixC2/taskhound.exe
+Import_Tests/

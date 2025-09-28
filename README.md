@@ -6,8 +6,9 @@ TaskHound hunts for Windows scheduled tasks that run with privileged accounts an
 
 ## Key Features
 
-- **Tier 0 Detection**: Automatically tries to identifiy tasks running as Domain Admins, Enterprise Admins, and other Tier 0 accounts.
-- **BloodHound Integration**: Supports CSV/JSON exports with group membership analysis
+- **Tier 0 Detection**: Automatically identifies tasks running as classic Tier 0 users
+- **BloodHound Export Integration**: Supports both Legacy BloodHound and BloodHound Community Edition (BHCE) formats
+- **Password Analysis**: Analyzes password age relative to task creation date for DPAPI dump viability
 - **Offline Analysis**: Process previously collected XML files
 - **BOF**: BOF implementation for AdaptixC2 (see [BOF/README.md](BOF/README.md))
 
@@ -38,6 +39,7 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
 
                      by 0xr0BIT
 
+[+] Legacy BloodHound export detected
 [+] High Value target data loaded
 [+] moe.thesimpsons.local: Connected via SMB
 [+] moe.thesimpsons.local: Local Admin Access confirmed
@@ -50,9 +52,9 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
         What    : C:\Scripts\backup.exe --daily
         Author  : THESIMPSONS\Administrator  
         Date    : 2025-09-18T23:04:37.3089851
-        Reason  : Tier 0 group membership: Domain Admins, Administrators, Enterprise Admins
-        Password Analysis : Password changed BEFORE task creation - stored password likely valid
-        Next Step: DPAPI Dump / Task Manipulation
+        Reason  : AdminSDHolder; TIER0 Group Membership
+        Password Analysis : Password changed BEFORE task creation, password is valid!
+        Next Step: Try DPAPI Dump / Task Manipulation
 
 [PRIV] Windows\System32\Tasks\MaintenanceTask
         Enabled : True
@@ -61,8 +63,8 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
         Author  : THESIMPSONS\Administrator
         Date    : 2025-09-18T23:05:43.0854575
         Reason  : High Value match found
-        Password Analysis : Password changed BEFORE task creation - stored password likely valid
-        Next Step: DPAPI Dump / Task Manipulation
+        Password Analysis : Password changed AFTER task creation, Password could be stale
+        Next Step: Try DPAPI Dump / Task Manipulation
 
 [TASK] Windows\System32\Tasks\SIDTask  
         Enabled : True
@@ -90,37 +92,43 @@ moe.thesimpsons.local   | 1            | 1                | 6
 
 ## BloodHound Integration
 
+TaskHound supports both **Legacy BloodHound** and **BloodHound Community Edition (BHCE)** formats with automatic format detection.
+
 ### Tier 0 Detection
-TaskHound automatically detects default Tier 0 accounts based on group memberships:
-- **Schema Admins**
-- **Enterprise Admins** 
-- **Domain Admins**
-- **Administrators**
-- **etc...**
+TaskHound uses multiple detection methods for Tier 0 identification:
 
-### Data Export from BloodHound
+**BHCE Format:**
+- `isTierZero` attribute
+- System tags (e.g., `admin_tier_0`)
+- AdminSDHolder (`admincount=1`)
 
-TaskHound accepts CSV or JSON exports from BloodHound. The following fields are required as a minimum:
+**Legacy Format:**
+- AdminSDHolder (`admincount=1`) 
+- SID-based detection
 
-- `SamAccountName` 
-- `sid`
+**Supported Tier 0 Groups:**
+- Domain Admins, Enterprise Admins, Schema Admins
+- Key Admins, Enterprise Key Admins
+- Local Administrators, Domain Controllers
+- Backup/Server/Account/Print Operators
 
-The following fields are optional but provide better insights in the output:
+### Data Ingestion
 
-- `groups/group_names` and `admincount` (for Tier-0 detection)
-- `pwdlastset` and `lastlogon` (For password age analysis)
+TaskHound supports the parsing of both BloodHound Community Edition and Legacy BloodHound Exports.
+Legacy BloodHound supports both `JSON` and `CSV` while `CSV` is deprecated and will be removed in future releases.
 
-#### Quick High-Value Marking (Warning: can be heavy and cause False Positives)
+You can generate ingestable data with the following queries:
+
+#### BloodHound Community Edition (BHCE)
 ```cypher
-// Mark all accounts with "ADMIN" in the name as high-value
-MATCH (n) WHERE toUpper(n.name) CONTAINS "ADMIN"
-OR toUpper(n.azname) CONTAINS "ADMIN"  
-OR toUpper(n.objectid) CONTAINS "ADMIN"
-SET n.highvalue = true, n.highvaluereason = 'Node matched ADMIN keyword'
-RETURN n
+MATCH (n)
+WHERE coalesce(n.system_tags, "") CONTAINS "admin_tier_0"
+   OR n.highvalue = true
+MATCH p = (n)-[:MemberOf*1..]->(g:Group)
+RETURN p;
 ```
 
-#### Lazy Query - Export ALL BloodHound Attributes (Recommended)
+#### Legacy BloodHound 
 ```cypher
 MATCH (u:User {highvalue:true})
 OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)
@@ -129,7 +137,7 @@ RETURN u.samaccountname AS SamAccountName, all_props, groups, group_sids
 ORDER BY SamAccountName
 ```
 
-> **Note**: The lazy query format only works with JSON export. The `all_props` field contains all BloodHound user attributes automatically, making it much more maintainable than manually specifying each field.
+> **Note**: The above shown legacy query only works with JSON export. The `all_props` field contains all BloodHound user attributes, making it much more maintainable than manually specifying each field.
 
 ## SID Resolution
 
@@ -201,11 +209,9 @@ TaskHound relies heavily on impacket for SMB/RPC/Kerberos operations. Standard i
 ## Roadmap
 
 When caffeine intake and free time align:
-- Support custom Tier-0 mappings instead of just the default ones
-- Support for more languages via custom mapping logic
-- True BloodHound Community Edition export compatibility
-- OpenGraph integration for attack path mapping  
 - Dedicated NetExec module (PR in Review)
+- Support custom Tier-0 mappings instead of just the default ones
+- OpenGraph integration for attack path mapping  
 - Automated credential blob extraction for offline decryption
 
 ## Disclaimer
