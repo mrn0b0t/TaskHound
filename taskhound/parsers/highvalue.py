@@ -535,14 +535,17 @@ class HighValueLoader:
         
         tier0_reasons = []
         
-        # Check 1: BHCE-specific isTierZero flag
+        # Check 1: BHCE-specific isTierZero flag or system_tags  
+        bhce_tier0_detected = False
         if self.format_type == "bhce" and user_data.get("istierzero"):
-            tier0_reasons.append("BloodHound CE Tier Zero classification")
+            bhce_tier0_detected = True
         
-        # Check 2: BHCE-specific system_tags
         system_tags = user_data.get("system_tags", "")
         if system_tags and "admin_tier_0" in system_tags:
-            tier0_reasons.append("System tagged as admin_tier_0")
+            bhce_tier0_detected = True
+            
+        if bhce_tier0_detected:
+            tier0_reasons.append("BHCE Tier 0 attribute")
         
         # Check 3: AdminSDHolder protection (admincount=1) - works for both formats
         admincount = user_data.get("admincount")
