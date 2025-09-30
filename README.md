@@ -210,9 +210,9 @@ TaskHound relies heavily on impacket for SMB/RPC/Kerberos operations. Standard i
 
 When caffeine intake and free time align:
 - Dedicated NetExec module (PR in Review)
+- Automated credential blob extraction for offline decryption
 - Support custom Tier-0 mappings instead of just the default ones
 - OpenGraph integration for attack path mapping  
-- Automated credential blob extraction for offline decryption
 
 ## Disclaimer
 
