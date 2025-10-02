@@ -218,6 +218,13 @@ When caffeine intake and free time align:
 
 TaskHound is strictly an **audit and educational tool**. Use only in environments you own or where you have explicit authorization to test. Seriously. Don't be a jerk.
 
+## Acknowledgement
+
+[Fortra/Impacket](https://github.com/fortra/impacket)
+[SpecterOps/BloodHound](https://github.com/SpecterOps/BloodHound)
+
+and every contributor to these projects for the amazing work they did for the community.
+
 ## Contributing
 
 PRs welcome. Don't expect wonders though - half of this was caffeine-induced vibe-coding.
