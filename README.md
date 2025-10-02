@@ -209,6 +209,8 @@ TaskHound relies heavily on impacket for SMB/RPC/Kerberos operations. Standard i
 ## Roadmap
 
 When caffeine intake and free time align:
+- BloodHound DB Connector to always query the freshest BloodHound Data without the need for exports/imports
+  - (Will be prioritized as it's needed for the NetExec Module)
 - Dedicated NetExec module (PR in Review)
 - Automated credential blob extraction for offline decryption
 - Support custom Tier-0 mappings instead of just the default ones
@@ -221,6 +223,7 @@ TaskHound is strictly an **audit and educational tool**. Use only in environment
 ## Acknowledgement
 
 [Fortra/Impacket](https://github.com/fortra/impacket)
+
 [SpecterOps/BloodHound](https://github.com/SpecterOps/BloodHound)
 
 and every contributor to these projects for the amazing work they did for the community.
