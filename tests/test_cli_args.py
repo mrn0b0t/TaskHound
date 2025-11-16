@@ -114,7 +114,7 @@ def test_dpapi_key_validation_with_targets_file():
 
 
 def test_bloodhound_live_requires_user(capsys):
-    """Test that --bh-live requires --bh-user."""
+    """Test that --bh-live requires SMB credentials for target scanning."""
     from taskhound import cli
 
     old_argv = sys.argv
@@ -130,7 +130,9 @@ def test_bloodhound_live_requires_user(capsys):
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert '--bh-user is required' in captured.out
+        # When using --bh-live, SMB credentials are still required for target scanning
+        # Even if BloodHound auth is loaded from config, username is needed for SMB
+        assert 'Username' in captured.out and 'required' in captured.out
 
     finally:
         sys.argv = old_argv
