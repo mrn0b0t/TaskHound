@@ -5,6 +5,28 @@
 <p align="center">
   <strong>Windows Privileged Scheduled Task Discovery Tool</strong> for fun and profit.
 </p>
+
+<p align="center">
+  <a href="https://github.com/1r0BIT/TaskHound/releases">
+    <img src="https://img.shields.io/github/v/release/1r0BIT/TaskHound?style=flat-square&logo=github&color=blue" alt="Latest Release">
+  </a>
+  <a href="https://bloodhound.specterops.io/">
+    <img src="https://img.shields.io/badge/BloodHound-OpenGraph-red.svg?style=flat-square&logo=neo4j" alt="BloodHound OpenGraph">
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
+  </a>
+  <br>
+  <a href="https://deepwiki.com/1r0BIT/TaskHound">
+    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
+  </a>
+  <a href="https://twitter.com/0xr0BIT">
+    <img src="https://img.shields.io/badge/Twitter-@0xr0BIT-1DA1F2?style=flat-square&logo=twitter&logoColor=white" alt="Twitter">
+  </a>
+  <a href="https://r0bit.io">
+    <img src="https://img.shields.io/badge/Blog-r0bit.io-orange?style=flat-square&logo=rss&logoColor=white" alt="Blog">
+  </a>
+</p>
 <hr />
 
 TaskHound hunts for Windows scheduled tasks that run with privileged accounts and stored credentials. It enumerates tasks over SMB, parses XMLs, and identifies high-value attack opportunities through BloodHound support.
@@ -131,7 +153,16 @@ TaskHound can connect directly to live BloodHound instances for real-time high-v
 
 #### Live BloodHound Connection
 
-**BHCE (Community Edition):**
+**BHCE (Community Edition) with API Key/ID Pair (Recommended):**
+```bash
+# Generate key via BloodHound UI: My Profile → API Key Management → Create Token
+taskhound -u homer.simpson -p pass -t moe.thesimpsons.local \
+  --bh-live --bhce --bh-connector http://127.0.0.1:8080 \
+  --bh-api-key "YOUR_API_KEY" --bh-api-key-id "YOUR_API_KEY_ID"
+```
+**Note:** API key authentication uses HMAC-SHA256 signing for secure requests. Both the key and ID are required.
+
+**BHCE with Username/Password:**
 ```bash
 taskhound -u homer.simpson -p pass -t moe.thesimpsons.local --bh-live --bhce --bh-connector http://127.0.0.1:8080 --bh-user admin --bh-password password
 ```
@@ -144,11 +175,21 @@ taskhound -u homer.simpson -p pass -t moe.thesimpsons.local --bh-live --legacy -
 **Configuration File Support:**
 ```ini
 [BloodHound]
-ip = 127.0.0.1
-username = admin
-password = ${BH_PASSWORD}
+connector = http://127.0.0.1:8080
 type = bhce
+
+# Method 1: API Key/ID Pair (recommended - uses HMAC-SHA256 signing)
+# Generate via BloodHound UI: My Profile → API Key Management → Create Token
+# BOTH key and ID are required
+api_key = ${BH_API_KEY}
+api_key_id = ${BH_API_KEY_ID}
+
+# Method 2: Username + Password
+# username = admin
+# password = ${BH_PASSWORD}
 ```
+
+**Note:** API key authentication uses HMAC-SHA256 signing with a signature chain (OperationKey → DateKey → Signature) for secure, token-based access without session management
 If you don't need live data or your BloodHound instance is located in an unreachable network, you can generate ingestable data with the following queries:
 
 #### BloodHound Community Edition (BHCE)
@@ -370,7 +411,7 @@ When caffeine intake and free time align:
 - **Abuse Info Integration**: Add MITRE ATT&CK techniques and OPSEC notes to BloodHound nodes
 - **OpenGraph Optimization**: Switch from name-based to ID-based node matching for reliable BloodHound integration
 - **Node Caching System**: Multi-tier caching to reduce API calls by 80% and speed up repeated runs
-- **API Key Authentication**: Support for BloodHound API tokens instead of username/password
+- ~~**API Key Authentication**: Support for BloodHound API tokens instead of username/password~~ **DONE (v1.1.0)**
 - **Enhanced SID Resolution**: Improved fallback chain combining BloodHound, LDAP, and local SID databases
 - **Unreachable Hosts Tracking**: Show failed connections in summary with detailed error reasons
 

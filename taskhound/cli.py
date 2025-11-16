@@ -333,6 +333,8 @@ def main():
                     bloodhound_url=bh_config.bh_connector,
                     username=bh_config.bh_username,
                     password=bh_config.bh_password,
+                    api_key=bh_config.bh_api_key,
+                    api_key_id=bh_config.bh_api_key_id,
                     set_icon=bh_config.bh_set_icon,
                     force_icon=bh_config.bh_force_icon,
                     icon_name=bh_config.bh_icon,

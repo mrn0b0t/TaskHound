@@ -22,9 +22,21 @@ connector = http://127.0.0.1:8080
 # url = http://127.0.0.1:8080  # Older field name
 # ip = 127.0.0.1               # Oldest format (assumes http:// + :8080)
 
-# BloodHound credentials
+# BloodHound credentials (choose one authentication method)
+# Method 1: Username + Password (traditional authentication)
 username = admin
 password = ${BH_PASSWORD}
+
+# Method 2: API Key/ID Pair (recommended for BHCE - uses HMAC-SHA256 signing)
+# BOTH api_key and api_key_id are REQUIRED for API key authentication
+# api_key = ${BH_API_KEY}
+# api_key_id = ${BH_API_KEY_ID}
+# To generate an API key/ID pair in BloodHound CE:
+#   1. Log in to BloodHound UI
+#   2. Click your profile (top-right) → API Key Management
+#   3. Click "Create Token" and give it a name
+#   4. Copy BOTH the Key and ID - the Key will never be shown again!
+# Note: If both methods are configured, API key takes precedence
 
 # BloodHound type: 'bhce' (BloodHound Community Edition) or 'legacy' (Legacy with Neo4j)
 # IMPORTANT: OpenGraph upload is ONLY compatible with BHCE!

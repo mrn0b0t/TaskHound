@@ -8,7 +8,12 @@ Supports both BHCE (API) and Legacy (Neo4j Bolt) connections.
 Author: 0xr0BIT
 """
 
+import base64
+import datetime
+import hashlib
+import hmac
 import json
+import re
 from typing import Any, Dict, Optional
 
 import requests
@@ -110,12 +115,70 @@ def _sanitize_json_response(response_text: str) -> str:
 class BloodHoundConnector:
     """Simple BloodHound connector for both BHCE and Legacy"""
 
-    def __init__(self, bh_type: str, ip: str, username: str, password: str):
+    def __init__(self, bh_type: str, ip: str, username: Optional[str] = None, 
+                 password: Optional[str] = None, api_key: Optional[str] = None, api_key_id: Optional[str] = None):
         self.bh_type = bh_type  # 'bhce' or 'legacy'
         self.ip = ip
         self.username = username
         self.password = password
+        self.api_key = api_key
+        self.api_key_id = api_key_id
         self.users_data = {}
+
+    def _bhce_signed_request(self, method: str, uri: str, base_url: str, body: Optional[bytes] = None) -> requests.Response:
+        """
+        Make a signed request to BloodHound CE API using HMAC-SHA256 authentication.
+        
+        According to BloodHound CE API documentation, API key authentication uses
+        hash-based message authentication code (HMAC) with the following signature chain:
+        1. OperationKey: HMAC(api_key, method + uri)
+        2. DateKey: HMAC(OperationKey, RFC3339_datetime[:13])  # truncated to hour
+        3. Signature: HMAC(DateKey, body)  # body can be empty
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            uri: API endpoint path (e.g., '/api/version')
+            base_url: Base URL of BloodHound CE instance
+            body: Optional request body as bytes
+            
+        Returns:
+            requests.Response object
+        """
+        # Initialize HMAC digester with API key as secret
+        digester = hmac.new(self.api_key.encode(), None, hashlib.sha256)
+        
+        # OperationKey: HMAC digest of method + URI (no delimiter)
+        # Example: GET/api/v2/test/resource
+        digester.update(f'{method}{uri}'.encode())
+        digester = hmac.new(digester.digest(), None, hashlib.sha256)
+        
+        # DateKey: HMAC digest of RFC3339 datetime truncated to hour
+        # Example: 2020-12-01T23:59:60Z -> 2020-12-01T23
+        datetime_formatted = datetime.datetime.now().astimezone().isoformat('T')
+        digester.update(datetime_formatted[:13].encode())
+        digester = hmac.new(digester.digest(), None, hashlib.sha256)
+        
+        # Body signing: HMAC digest of request body (or empty)
+        if body is not None:
+            digester.update(body)
+        
+        # Build headers with HMAC signature
+        headers = {
+            'Authorization': f'bhesignature {self.api_key_id}',
+            'RequestDate': datetime_formatted,
+            'Signature': base64.b64encode(digester.digest()).decode(),
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        }
+        
+        # Make the signed request
+        return requests.request(
+            method=method,
+            url=f'{base_url}{uri}',
+            headers=headers,
+            data=body,
+            timeout=30
+        )
 
     def connect_and_query(self) -> bool:
         """Connect to BloodHound and query high-value users"""
@@ -136,40 +199,53 @@ class BloodHoundConnector:
         # BHCE typically runs on port 8080
         base_url = f"http://{self.ip}:8080"
 
-        # BHCE uses token-based authentication
-        login_data = {
-            "login_method": "secret",
-            "username": self.username,
-            "secret": self.password
-        }
-
-        # Get authentication token
+        # Get authentication headers
         try:
-            login_response = requests.post(f"{base_url}/api/v2/login", json=login_data, timeout=10)
-            if login_response.status_code == 401:
-                warn("BloodHound login failed - invalid credentials")
-                return False
-            elif login_response.status_code != 200:
-                warn(f"BloodHound login failed - HTTP {login_response.status_code}")
-                return False
+            # Choose authentication method
+            use_api_key = self.api_key and self.api_key_id
+            
+            if use_api_key:
+                info("Using API key authentication for BloodHound CE")
+                # Test connection with HMAC-signed request
+                response = self._bhce_signed_request('GET', '/api/version', base_url)
+            else:
+                # BHCE uses token-based authentication with username/password
+                if not self.username or not self.password:
+                    warn("BloodHound authentication requires either API key/ID pair or username/password")
+                    return False
+                    
+                login_data = {
+                    "login_method": "secret",
+                    "username": self.username,
+                    "secret": self.password
+                }
 
-            # Extract token from response (with JSON sanitization)
-            sanitized_response = _sanitize_json_response(login_response.text)
-            token_data = json.loads(sanitized_response)
-            if 'data' not in token_data or 'session_token' not in token_data['data']:
-                warn("BloodHound login failed - no token in response")
-                return False
+                # Get authentication token
+                login_response = requests.post(f"{base_url}/api/v2/login", json=login_data, timeout=10)
+                if login_response.status_code == 401:
+                    warn("BloodHound login failed - invalid credentials")
+                    return False
+                elif login_response.status_code != 200:
+                    warn(f"BloodHound login failed - HTTP {login_response.status_code}")
+                    return False
 
-            token = token_data['data']['session_token']
-            headers = {
-                'Authorization': f'Bearer {token}',
-                'Content-Type': 'application/json',
-                'accept': 'application/json',
-                'Prefer': '0'
-            }
+                # Extract token from response (with JSON sanitization)
+                sanitized_response = _sanitize_json_response(login_response.text)
+                token_data = json.loads(sanitized_response)
+                if 'data' not in token_data or 'session_token' not in token_data['data']:
+                    warn("BloodHound login failed - no token in response")
+                    return False
 
-            # Test connection with token
-            response = requests.get(f"{base_url}/api/version", headers=headers, timeout=10)
+                token = token_data['data']['session_token']
+                headers = {
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json',
+                    'accept': 'application/json',
+                    'Prefer': '0'
+                }
+                
+                # Test connection with token
+                response = requests.get(f"{base_url}/api/version", headers=headers, timeout=10)
             if response.status_code != 200:
                 warn(f"BloodHound connection failed - HTTP {response.status_code}")
                 return False
@@ -203,12 +279,18 @@ class BloodHoundConnector:
         }
 
         try:
-            response = requests.post(
-                f"{base_url}/api/v2/graphs/cypher",
-                headers=headers,
-                json=query_data,
-                timeout=30
-            )
+            if use_api_key:
+                # Use HMAC-signed request for API key authentication
+                body = json.dumps(query_data).encode('utf-8')
+                response = self._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            else:
+                # Use Bearer token for username/password authentication
+                response = requests.post(
+                    f"{base_url}/api/v2/graphs/cypher",
+                    headers=headers,
+                    json=query_data,
+                    timeout=30
+                )
 
             if response.status_code != 200:
                 warn(f"BloodHound BHCE query failed - HTTP {response.status_code}")
@@ -234,9 +316,14 @@ class BloodHoundConnector:
                             properties = node_data.get('properties', {})
                             # Get group memberships for this user
                             username = properties.get('samaccountname', '')
-                            group_sids, group_names = self._get_user_groups_bhce(
-                                username, headers, base_url
-                            )
+                            if use_api_key:
+                                group_sids, group_names = self._get_user_groups_bhce_hmac(
+                                    username, base_url
+                                )
+                            else:
+                                group_sids, group_names = self._get_user_groups_bhce(
+                                    username, headers, base_url
+                                )
                             properties['group_sids'] = group_sids
                             properties['group_names'] = group_names
                             self._process_bhce_user(properties, users_found)
@@ -375,6 +462,53 @@ class BloodHoundConnector:
                 pass
             warn(f"BloodHound query execution failed: {e}")
             return False
+
+    def _get_user_groups_bhce_hmac(self, username: str, base_url: str) -> tuple:
+        """Get group memberships for a user in BHCE using HMAC-signed request"""
+        if not username:
+            return [], []
+
+        try:
+            # Query for this user's group memberships using samaccountname
+            group_query = f"""
+            MATCH (u:User {{samaccountname: "{username}"}})-[:MemberOf*1..]->(g:Group)
+            RETURN g
+            """
+
+            query_data = {
+                "query": group_query,
+                "include_properties": True
+            }
+
+            body = json.dumps(query_data).encode('utf-8')
+            response = self._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+
+            if response.status_code == 200:
+                # Parse response with JSON sanitization
+                sanitized_response = _sanitize_json_response(response.text)
+                result = json.loads(sanitized_response)
+                group_sids = []
+                group_names = []
+
+                # Parse the response to extract group data
+                if 'data' in result and 'nodes' in result['data']:
+                    nodes = result['data']['nodes']
+                    for node_id, node_data in nodes.items():
+                        if node_data.get('kind') == 'Group':
+                            properties = node_data.get('properties', {}) or {}
+                            objectid = properties.get('objectid', '') or ''
+                            name = properties.get('name', '') or ''
+
+                            if objectid:
+                                group_sids.append(objectid)
+                                group_names.append(name)
+
+                return group_sids, group_names
+            else:
+                return [], []
+
+        except Exception:
+            return [], []
 
     def _get_user_groups_bhce(self, username: str, headers: dict, base_url: str) -> tuple:
         """Get group memberships for a user in BHCE"""
@@ -527,7 +661,9 @@ def connect_bloodhound(args) -> Optional[Dict[str, Any]]:
         bh_type=bh_type,
         ip=connector_host,  # Just the hostname, connector adds ports
         username=args.bh_user,
-        password=args.bh_password
+        password=args.bh_password,
+        api_key=getattr(args, 'bh_api_key', None),
+        api_key_id=getattr(args, 'bh_api_key_id', None)
     )
 
     if connector.connect_and_query():

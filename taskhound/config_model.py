@@ -23,6 +23,8 @@ class BloodHoundConfig:
     bh_connector: Optional[str] = None
     bh_username: Optional[str] = None
     bh_password: Optional[str] = None
+    bh_api_key: Optional[str] = None  # API key for BHCE HMAC authentication
+    bh_api_key_id: Optional[str] = None  # API key ID for BHCE HMAC authentication
     bh_type: Optional[str] = None  # 'bhce' or 'legacy'
     
     # Icon configuration
@@ -91,6 +93,13 @@ class BloodHoundConfig:
             if not config.bh_password and 'password' in config_data:
                 config.bh_password = config_data['password']
             
+            # Set API key and key ID if present in config
+            if not config.bh_api_key and 'api_key' in config_data:
+                config.bh_api_key = config_data['api_key']
+            
+            if not config.bh_api_key_id and 'api_key_id' in config_data:
+                config.bh_api_key_id = config_data['api_key_id']
+            
             # Set type if not determined
             if not config.bh_type and 'type' in config_data:
                 config.bh_type = config_data['type']
@@ -106,6 +115,10 @@ class BloodHoundConfig:
     
     def has_credentials(self) -> bool:
         """Check if BloodHound credentials are available."""
+        # API key + key ID pair is sufficient for BHCE
+        if self.bh_api_key and self.bh_api_key_id:
+            return True
+        # Otherwise need username and password
         return bool(self.bh_username and self.bh_password)
     
     def is_bhce(self) -> bool:

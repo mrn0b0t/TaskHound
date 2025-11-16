@@ -4,6 +4,10 @@ BloodHound OpenGraph Upload Module
 Handles upload of OpenGraph files to BloodHound CE via API.
 """
 
+import base64
+import datetime
+import hashlib
+import hmac
 import json
 import os
 import sys
@@ -20,6 +24,63 @@ except ImportError:
 
 # HTTP timeout for all requests (seconds)
 TIMEOUT = 30
+
+
+def _bhce_signed_request(method: str, uri: str, base_url: str, api_key: str, api_key_id: str, body: Optional[bytes] = None) -> requests.Response:
+    """
+    Make a signed request to BloodHound CE API using HMAC-SHA256 authentication.
+    
+    According to BloodHound CE API documentation, API key authentication uses
+    hash-based message authentication code (HMAC) with the following signature chain:
+    1. OperationKey: HMAC(api_key, method + uri)
+    2. DateKey: HMAC(OperationKey, RFC3339_datetime[:13])  # truncated to hour
+    3. Signature: HMAC(DateKey, body)  # body can be empty
+    
+    Args:
+        method: HTTP method (GET, POST, etc.)
+        uri: API endpoint path (e.g., '/api/version')
+        base_url: Base URL of BloodHound CE instance
+        api_key: API key for HMAC signing
+        api_key_id: API key ID for Authorization header
+        body: Optional request body as bytes
+        
+    Returns:
+        requests.Response object
+    """
+    # Initialize HMAC digester with API key as secret
+    digester = hmac.new(api_key.encode(), None, hashlib.sha256)
+    
+    # OperationKey: HMAC digest of method + URI (no delimiter)
+    digester.update(f'{method}{uri}'.encode())
+    digester = hmac.new(digester.digest(), None, hashlib.sha256)
+    
+    # DateKey: HMAC digest of RFC3339 datetime truncated to hour
+    datetime_formatted = datetime.datetime.now().astimezone().isoformat('T')
+    digester.update(datetime_formatted[:13].encode())
+    digester = hmac.new(digester.digest(), None, hashlib.sha256)
+    
+    # Body signing: HMAC digest of request body (or empty)
+    if body is not None:
+        digester.update(body)
+    
+    # Build headers with HMAC signature
+    headers = {
+        'Authorization': f'bhesignature {api_key_id}',
+        'RequestDate': datetime_formatted,
+        'Signature': base64.b64encode(digester.digest()).decode(),
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+    }
+    
+    # Make the signed request
+    return requests.request(
+        method=method,
+        url=f'{base_url}{uri}',
+        headers=headers,
+        data=body,
+        timeout=TIMEOUT
+    )
+
 
 def normalize_bloodhound_connector(connector: str, is_legacy: bool = False) -> str:
     """
@@ -159,8 +220,10 @@ def find_model_json() -> Path:
 def upload_opengraph_to_bloodhound(
     opengraph_file: str,
     bloodhound_url: str,
-    username: str,
-    password: str,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_key_id: Optional[str] = None,
     set_icon: bool = False,
     force_icon: bool = False,
     icon_name: str = "heart",
@@ -172,13 +235,12 @@ def upload_opengraph_to_bloodhound(
     Args:
         opengraph_file: Path to the OpenGraph JSON file (contains both nodes and edges)
         bloodhound_url: BloodHound connector URI (various formats supported)
-        username: BloodHound username
-        password: BloodHound password
+        username: BloodHound username (not needed if api_key/api_key_id provided)
+        password: BloodHound password (not needed if api_key/api_key_id provided)
+        api_key: BloodHound API key for HMAC authentication (requires api_key_id)
+        api_key_id: BloodHound API key ID for HMAC authentication (requires api_key)
         set_icon: Whether to set custom icon for ScheduledTask nodes
         force_icon: Force icon update even if already exists (requires set_icon=True)
-        icon_name: Icon name (if set_icon=True)
-        icon_color: Icon color in hex format (if set_icon=True)
-        set_icon: Whether to set custom icon for ScheduledTask nodes
         icon_name: Icon name (if set_icon=True)
         icon_color: Icon color in hex format (if set_icon=True)
         
@@ -195,23 +257,37 @@ def upload_opengraph_to_bloodhound(
     
     # Authenticate
     try:
-        login_response = requests.post(
-            f"{bloodhound_url}/api/v2/login",
-            json={"login_method": "secret", "secret": password, "username": username},
-            timeout=TIMEOUT
-        )
+        use_api_key = api_key and api_key_id
         
-        if login_response.status_code != 200:
-            print(f"[!] BloodHound authentication failed - HTTP {login_response.status_code}")
-            return False
-        
-        token = login_response.json()["data"]["session_token"]
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        print(f"[+] Authenticated to BloodHound at {bloodhound_url}")
+        if use_api_key:
+            # Use HMAC-signed API key authentication (no login needed)
+            print(f"[+] Using API key authentication for BloodHound at {bloodhound_url}")
+            # We'll use _bhce_signed_request for all API calls
+            headers = None  # Will be generated per-request with HMAC signature
+            token = None
+        else:
+            # Use username/password authentication
+            if not username or not password:
+                print("[!] BloodHound authentication requires either API key/ID pair or username/password")
+                return False
+                
+            login_response = requests.post(
+                f"{bloodhound_url}/api/v2/login",
+                json={"login_method": "secret", "secret": password, "username": username},
+                timeout=TIMEOUT
+            )
+            
+            if login_response.status_code != 200:
+                print(f"[!] BloodHound authentication failed - HTTP {login_response.status_code}")
+                return False
+            
+            token = login_response.json()["data"]["session_token"]
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            print(f"[+] Authenticated to BloodHound at {bloodhound_url}")
     except requests.Timeout:
         print(f"[!] Timeout authenticating to BloodHound (request took longer than {TIMEOUT}s)")
         return False
@@ -227,11 +303,11 @@ def upload_opengraph_to_bloodhound(
     
     # Set custom icon if requested
     if set_icon:
-        _set_custom_icon(bloodhound_url, headers, icon_name, icon_color, force_icon)
+        _set_custom_icon(bloodhound_url, headers, icon_name, icon_color, force_icon, api_key, api_key_id)
     
     # Upload the OpenGraph file
     print(f"[*] Uploading OpenGraph data...")
-    success = _upload_file(bloodhound_url, headers, opengraph_file, "OpenGraph")
+    success = _upload_file(bloodhound_url, headers, opengraph_file, "OpenGraph", api_key, api_key_id)
     
     return success
 

@@ -37,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Use live BloodHound connection (parameters can be provided via CLI or bh_connector.config file)")
     bh_group.add_argument("--bh-user", help="BloodHound username (or set in config file)")
     bh_group.add_argument("--bh-password", help="BloodHound password (or set in config file)")
+    bh_group.add_argument("--bh-api-key", help="BloodHound API key for HMAC authentication (requires --bh-api-key-id, or set api_key in config file)")
+    bh_group.add_argument("--bh-api-key-id", help="BloodHound API key ID for HMAC authentication (requires --bh-api-key, or set api_key_id in config file)")
     bh_group.add_argument("--bh-connector", default="http://127.0.0.1:8080",
                          help="BloodHound connector URI (default: http://127.0.0.1:8080, or set in config file). "
                               "Examples: localhost, http://localhost:8080, https://bh.domain.com, bolt://neo4j.local:7687. "
@@ -172,7 +174,7 @@ def load_bloodhound_config():
 
                     # Extract configuration values
                     # Support both 'url' (new) and 'ip' (legacy) for backward compatibility
-                    for key in ['url', 'ip', 'username', 'password', 'type', 'save_file']:
+                    for key in ['url', 'ip', 'username', 'password', 'api_key', 'api_key_id', 'type', 'save_file']:
                         if key in bh_section:
                             value = bh_section[key].strip()
                             # Handle environment variable substitution
@@ -244,10 +246,11 @@ def validate_args(args):
         # Check if all parameters are provided via command line
         has_user = args.bh_user is not None
         has_password = args.bh_password is not None
+        has_api_key = args.bh_api_key is not None and args.bh_api_key_id is not None
         has_type = args.bhce or args.legacy
 
         # If not all parameters provided, try to load from config file
-        if not (has_user and has_password and has_type):
+        if not ((has_user and has_password) or has_api_key) or not has_type:
             try:
                 if config_data:
                     # Fill in missing parameters from config
@@ -258,6 +261,11 @@ def validate_args(args):
                     if not has_password and 'password' in config_data:
                         args.bh_password = config_data['password']
                         has_password = True
+                    
+                    if not has_api_key and 'api_key' in config_data and 'api_key_id' in config_data:
+                        args.bh_api_key = config_data['api_key']
+                        args.bh_api_key_id = config_data['api_key_id']
+                        has_api_key = True
 
                     if not has_type and 'type' in config_data:
                         bh_type = config_data['type'].lower()
@@ -293,13 +301,11 @@ def validate_args(args):
                 print(f"[!] Error loading BloodHound config: {e}")
 
         # Final validation - ensure all required parameters are now available
-        if not has_user:
-            print("[!] ERROR: --bh-user is required when using --bh-live")
-            print("[!] Provide via command line or in bh_connector.config file")
-            sys.exit(1)
-        if not has_password:
-            print("[!] ERROR: --bh-password is required when using --bh-live")
-            print("[!] Provide via command line or in bh_connector.config file")
+        # Either API key OR username+password required
+        if not has_api_key and not (has_user and has_password):
+            print("[!] ERROR: BloodHound authentication requires either:")
+            print("[!]   - API key: --bh-api-key (or api_key in bh_connector.config)")
+            print("[!]   - Username + password: --bh-user and --bh-password (or in config file)")
             sys.exit(1)
         if not has_type:
             print("[!] ERROR: Must specify either --bhce or --legacy when using --bh-live")
