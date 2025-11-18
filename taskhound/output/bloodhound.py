@@ -314,35 +314,49 @@ def upload_opengraph_to_bloodhound(
 
 def _wait_for_job_completion(
     bloodhound_url: str,
-    headers: Dict,
+    headers: Optional[Dict],
     job_id: int,
-    max_retries: int = 10,
-    initial_delay: float = 1.0
+    api_key: Optional[str] = None,
+    api_key_id: Optional[str] = None,
+    max_wait_time: int = 300,  # 5 minutes
+    initial_delay: float = 1.0,
+    max_delay: float = 10.0
 ) -> bool:
     """
     Poll BloodHound for job completion with exponential backoff.
     
     Args:
         bloodhound_url: BloodHound base URL
-        headers: Authentication headers
+        headers: Authentication headers (for username/password auth)
         job_id: Upload job ID to check
-        max_retries: Maximum number of polling attempts
+        api_key: Optional API key for HMAC-signed authentication
+        api_key_id: Optional API key ID for HMAC-signed authentication
+        max_wait_time: Maximum time to wait for job completion (seconds)
         initial_delay: Initial delay between polls (will increase exponentially)
+        max_delay: Maximum delay between polls (seconds)
         
     Returns:
         True if job completed successfully, False otherwise
     """
+    use_api_key = api_key and api_key_id
     retry_delay = initial_delay
+    max_retries = int(max_wait_time / initial_delay)  # Calculate max retries from wait time
     
     for attempt in range(max_retries):
         time.sleep(retry_delay)
         
         try:
-            status_response = requests.get(
-                f"{bloodhound_url}/api/v2/file-upload?skip=0&limit=20",
-                headers=headers,
-                timeout=TIMEOUT
-            )
+            if use_api_key:
+                status_response = _bhce_signed_request(
+                    'GET', '/api/v2/file-upload?skip=0&limit=20',
+                    bloodhound_url, api_key, api_key_id
+                )
+            else:
+                status_response = requests.get(
+                    f"{bloodhound_url}/api/v2/file-upload?skip=0&limit=20",
+                    headers=headers,
+                    timeout=TIMEOUT
+                )
             status_response.raise_for_status()
             
             jobs = status_response.json().get("data", [])
@@ -412,27 +426,37 @@ def _wait_for_job_completion(
     return False
 
 
-def _upload_file(bloodhound_url: str, headers: Dict, file_path: str, file_type: str) -> bool:
+def _upload_file(bloodhound_url: str, headers: Optional[Dict], file_path: str, file_type: str,
+                api_key: Optional[str] = None, api_key_id: Optional[str] = None) -> bool:
     """
     Upload a single file to BloodHound with proper error handling and job polling.
     
     Args:
         bloodhound_url: BloodHound base URL
-        headers: Authentication headers
+        headers: Authentication headers (for username/password auth)
         file_path: Path to file to upload
         file_type: Description of file type for logging
+        api_key: Optional API key for HMAC-signed authentication
+        api_key_id: Optional API key ID for HMAC-signed authentication
         
     Returns:
         True if upload and processing succeeded, False otherwise
     """
+    use_api_key = api_key and api_key_id
     try:
         # Start upload job
-        job_response = requests.post(
-            f"{bloodhound_url}/api/v2/file-upload/start",
-            headers=headers,
-            json={},
-            timeout=TIMEOUT
-        )
+        if use_api_key:
+            job_response = _bhce_signed_request(
+                'POST', '/api/v2/file-upload/start',
+                bloodhound_url, api_key, api_key_id, b'{}'
+            )
+        else:
+            job_response = requests.post(
+                f"{bloodhound_url}/api/v2/file-upload/start",
+                headers=headers,
+                json={},
+                timeout=TIMEOUT
+            )
         job_response.raise_for_status()
         job_id = job_response.json()["data"]["id"]
         print(f"[*] Started upload job {job_id}")
@@ -442,25 +466,37 @@ def _upload_file(bloodhound_url: str, headers: Dict, file_path: str, file_type: 
             file_data = f.read()
         
         print(f"[*] Uploading {file_type} data ({len(file_data)} bytes)...")
-        upload_response = requests.post(
-            f"{bloodhound_url}/api/v2/file-upload/{job_id}",
-            headers={**headers, "Content-Type": "application/json"},
-            data=file_data,
-            timeout=TIMEOUT
-        )
+        if use_api_key:
+            upload_response = _bhce_signed_request(
+                'POST', f'/api/v2/file-upload/{job_id}',
+                bloodhound_url, api_key, api_key_id, file_data.encode()
+            )
+        else:
+            upload_response = requests.post(
+                f"{bloodhound_url}/api/v2/file-upload/{job_id}",
+                headers={**headers, "Content-Type": "application/json"},
+                data=file_data,
+                timeout=TIMEOUT
+            )
         upload_response.raise_for_status()
         
         # End job
-        end_response = requests.post(
-            f"{bloodhound_url}/api/v2/file-upload/{job_id}/end",
-            headers=headers,
-            timeout=TIMEOUT
-        )
+        if use_api_key:
+            end_response = _bhce_signed_request(
+                'POST', f'/api/v2/file-upload/{job_id}/end',
+                bloodhound_url, api_key, api_key_id, b''
+            )
+        else:
+            end_response = requests.post(
+                f"{bloodhound_url}/api/v2/file-upload/{job_id}/end",
+                headers=headers,
+                timeout=TIMEOUT
+            )
         end_response.raise_for_status()
         
         # Wait for processing with exponential backoff
         print(f"[*] Waiting for BloodHound to process the upload...")
-        return _wait_for_job_completion(bloodhound_url, headers, job_id)
+        return _wait_for_job_completion(bloodhound_url, headers, job_id, api_key, api_key_id)
         
     except requests.Timeout:
         print(f"[!] Timeout uploading {file_type} file (request took longer than {TIMEOUT}s)")
@@ -476,27 +512,37 @@ def _upload_file(bloodhound_url: str, headers: Dict, file_path: str, file_type: 
         return False
 
 
-def _set_custom_icon(bloodhound_url: str, headers: Dict, icon_name: str, icon_color: str, force: bool = False):
+def _set_custom_icon(bloodhound_url: str, headers: Optional[Dict], icon_name: str, icon_color: str, 
+                    force: bool = False, api_key: Optional[str] = None, api_key_id: Optional[str] = None):
     """
     Set custom icon for ScheduledTask nodes by uploading model.json.
     
     Args:
         bloodhound_url: BloodHound base URL
-        headers: Authentication headers
+        headers: Authentication headers (for username/password auth)
         icon_name: Font Awesome icon name
         icon_color: Hex color code
         force: If True, delete existing icon before creating new one
+        api_key: Optional API key for HMAC-signed authentication
+        api_key_id: Optional API key ID for HMAC-signed authentication
     """
+    use_api_key = api_key and api_key_id
     import json
     from pathlib import Path
     
     try:
         # First, check if icon already exists
-        check_response = requests.get(
-            f"{bloodhound_url}/api/v2/custom-nodes",
-            headers=headers,
-            timeout=TIMEOUT
-        )
+        if use_api_key:
+            check_response = _bhce_signed_request(
+                'GET', '/api/v2/custom-nodes',
+                bloodhound_url, api_key, api_key_id
+            )
+        else:
+            check_response = requests.get(
+                f"{bloodhound_url}/api/v2/custom-nodes",
+                headers=headers,
+                timeout=TIMEOUT
+            )
         
         if check_response.status_code == 200:
             response_data = check_response.json()
@@ -524,11 +570,17 @@ def _set_custom_icon(bloodhound_url: str, headers: Dict, icon_name: str, icon_co
                             print(f"[*] Deleting existing icon configuration...")
                             
                             try:
-                                delete_response = requests.delete(
-                                    f"{bloodhound_url}/api/v2/custom-nodes/{node_id}",
-                                    headers=headers,
-                                    timeout=TIMEOUT
-                                )
+                                if use_api_key:
+                                    delete_response = _bhce_signed_request(
+                                        'DELETE', f'/api/v2/custom-nodes/{node_id}',
+                                        bloodhound_url, api_key, api_key_id
+                                    )
+                                else:
+                                    delete_response = requests.delete(
+                                        f"{bloodhound_url}/api/v2/custom-nodes/{node_id}",
+                                        headers=headers,
+                                        timeout=TIMEOUT
+                                    )
                                 
                                 if delete_response.status_code in [200, 204]:
                                     print(f"[+] Deleted existing icon configuration")
@@ -572,12 +624,19 @@ def _set_custom_icon(bloodhound_url: str, headers: Dict, icon_name: str, icon_co
             with open(model_file, 'r', encoding='utf-8') as f:
                 model_data = json.load(f)
         
-        response = requests.post(
-            f"{bloodhound_url}/api/v2/custom-nodes",
-            headers={**headers, "Content-Type": "application/json"},
-            json=model_data,
-            timeout=TIMEOUT
-        )
+        if use_api_key:
+            response = _bhce_signed_request(
+                'POST', '/api/v2/custom-nodes',
+                bloodhound_url, api_key, api_key_id,
+                json.dumps(model_data).encode()
+            )
+        else:
+            response = requests.post(
+                f"{bloodhound_url}/api/v2/custom-nodes",
+                headers={**headers, "Content-Type": "application/json"},
+                json=model_data,
+                timeout=TIMEOUT
+            )
         
         if response.status_code in [200, 201]:
             print(f"[+] Custom icon set for 'scheduledtask': {icon_name} ({icon_color})")

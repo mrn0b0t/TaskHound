@@ -321,6 +321,8 @@ def main():
             bh_api_url=bh_config.bh_connector if bh_config.has_credentials() else None,
             bh_username=bh_config.bh_username,
             bh_password=bh_config.bh_password,
+            bh_api_key=bh_config.bh_api_key,
+            bh_api_key_id=bh_config.bh_api_key_id,
             ldap_config=ldap_config
         )
         

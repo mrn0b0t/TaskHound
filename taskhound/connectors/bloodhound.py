@@ -610,6 +610,261 @@ class BloodHoundConnector:
             'lastlogon': all_props.get('lastlogon'),
         }
 
+    def search_node_by_name(self, name: str, node_type: str = "Computer") -> Optional[Dict[str, str]]:
+        """
+        Search for a node in BloodHound by name and return its node_id and objectId.
+        
+        Args:
+            name: Node name to search for (e.g., "DC01.DOMAIN.LOCAL" or "ADMIN@DOMAIN.LOCAL")
+            node_type: Type of node ("Computer" or "User")
+            
+        Returns:
+            Dict with 'node_id' and 'object_id' keys, or None if not found
+            Example: {"node_id": "19", "object_id": "S-1-5-21-...-1105"}
+        """
+        if self.bh_type != 'bhce':
+            warn("search_node_by_name only supported for BHCE")
+            return None
+            
+        base_url = f"http://{self.ip}:8080"
+        query = f'MATCH (n:{node_type} {{name: "{name}"}}) RETURN n'
+        
+        try:
+            # Use API key authentication if available
+            if self.api_key and self.api_key_id:
+                body = json.dumps({"query": query}, separators=(',', ':')).encode()
+                response = self._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            else:
+                # Fall back to token authentication (would need to implement token storage)
+                warn("Token authentication for search_node_by_name not implemented yet")
+                return None
+                
+            if response.status_code == 200:
+                data = response.json()
+                nodes = data.get("data", {}).get("nodes", {})
+                
+                if nodes:
+                    # Get first (and should be only) node
+                    node_id = list(nodes.keys())[0]
+                    node_data = nodes[node_id]
+                    
+                    return {
+                        "node_id": node_id,
+                        "object_id": node_data.get("objectId", ""),
+                        "label": node_data.get("label", "")
+                    }
+            else:
+                warn(f"BloodHound search failed: HTTP {response.status_code}")
+                return None
+                
+        except Exception as e:
+            warn(f"Error searching for {node_type} {name}: {e}")
+            return None
+
+    def query_domain_by_netbios(self, netbios_name: str) -> Optional[Dict[str, str]]:
+        """
+        Query BloodHound for domain by NETBIOS name using STARTS WITH matching.
+        
+        This handles NETBIOS → FQDN resolution for cross-domain tasks:
+        - "THESIMPSONS" → "THESIMPSONS.SPRINGFIELD.LOCAL"
+        - "DEV" → "DEV.CONTOSO.COM"
+        
+        Args:
+            netbios_name: NETBIOS domain name (e.g., "THESIMPSONS", "DEV")
+            
+        Returns:
+            Dict with 'name' (FQDN) and 'objectid' (domain SID), or None if not found
+        """
+        if self.bh_type != 'bhce':
+            warn("Domain query only supported for BloodHound CE")
+            return None
+            
+        try:
+            # Handle both "hostname" and "http://hostname:port" formats
+            if self.ip.startswith('http://') or self.ip.startswith('https://'):
+                base_url = self.ip.rstrip('/')
+            else:
+                base_url = f"http://{self.ip}:8080"
+            
+            # Build Cypher query with case-insensitive STARTS WITH
+            # Note: Must add '.' after NETBIOS to avoid matching parent domains
+            # Example: "SPRINGFIELD." matches "SPRINGFIELD.LOCAL" not "THESIMPSONS.SPRINGFIELD.LOCAL"
+            query_data = {
+                "query": f"MATCH (d:Domain) WHERE toLower(d.name) STARTS WITH '{netbios_name.lower()}.' RETURN d"
+            }
+            
+            # Choose authentication method
+            use_api_key = self.api_key and self.api_key_id
+            
+            if use_api_key:
+                body = json.dumps(query_data).encode('utf-8')
+                response = self._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            else:
+                # Use Bearer token authentication (not implemented here, needs login flow)
+                warn("Domain query requires API key authentication")
+                return None
+            
+            # Handle response
+            if response.status_code == 404:
+                # BloodHound returns 404 for empty results - not an error
+                return None
+            elif response.status_code == 200:
+                data = response.json()
+                nodes = data.get('data', {}).get('nodes', {})
+                
+                if len(nodes) == 0:
+                    return None
+                elif len(nodes) == 1:
+                    # Perfect match!
+                    node = list(nodes.values())[0]
+                    return {
+                        'name': node.get('label'),
+                        'objectid': node.get('objectId')
+                    }
+                else:
+                    # Multiple matches - extremely rare but possible
+                    # Log warning and return first match
+                    domain_names = [n.get('label') for n in nodes.values()]
+                    warn(f"Multiple domains match NETBIOS '{netbios_name}': {domain_names}")
+                    node = list(nodes.values())[0]
+                    return {
+                        'name': node.get('label'),
+                        'objectid': node.get('objectId')
+                    }
+            else:
+                warn(f"Domain query failed: HTTP {response.status_code}")
+                return None
+                
+        except Exception as e:
+            warn(f"Error querying domain '{netbios_name}': {e}")
+            return None
+
+    def query_user_by_upn(self, upn: str) -> Optional[Dict[str, str]]:
+        """
+        Query BloodHound for user by UPN (User Principal Name).
+        
+        Validates that a user exists in BloodHound and retrieves their node info.
+        Used for cross-domain user validation without requiring LDAP queries.
+        
+        Args:
+            upn: User Principal Name (e.g., "ADMINISTRATOR@THESIMPSONS.SPRINGFIELD.LOCAL")
+            
+        Returns:
+            Dict with 'name' (UPN), 'objectid' (user SID), and 'node_id' (BH node ID), or None if not found
+        """
+        if self.bh_type != 'bhce':
+            warn("User query only supported for BloodHound CE")
+            return None
+            
+        try:
+            # Handle both "hostname" and "http://hostname:port" formats
+            if self.ip.startswith('http://') or self.ip.startswith('https://'):
+                base_url = self.ip.rstrip('/')
+            else:
+                base_url = f"http://{self.ip}:8080"
+            
+            # Build Cypher query - match by name (which is UPN for users in BloodHound)
+            # Use case-insensitive matching for reliability
+            query_data = {
+                "query": f"MATCH (u:User) WHERE toLower(u.name) = '{upn.lower()}' RETURN u"
+            }
+            
+            # Choose authentication method
+            use_api_key = self.api_key and self.api_key_id
+            
+            if use_api_key:
+                body = json.dumps(query_data).encode('utf-8')
+                response = self._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            else:
+                warn("User query requires API key authentication")
+                return None
+            
+            # Handle response
+            if response.status_code == 404:
+                # BloodHound returns 404 for empty results - not an error
+                return None
+            elif response.status_code == 200:
+                data = response.json()
+                nodes = data.get('data', {}).get('nodes', {})
+                
+                if len(nodes) == 0:
+                    return None
+                elif len(nodes) == 1:
+                    # User found!
+                    node_id = list(nodes.keys())[0]
+                    node = list(nodes.values())[0]
+                    return {
+                        'name': node.get('label'),
+                        'objectid': node.get('objectId'),
+                        'node_id': node_id
+                    }
+                else:
+                    # Multiple matches - should never happen for UPN (unique), but handle it
+                    warn(f"Multiple users match UPN '{upn}': {[n.get('label') for n in nodes.values()]}")
+                    node_id = list(nodes.keys())[0]
+                    node = list(nodes.values())[0]
+                    return {
+                        'name': node.get('label'),
+                        'objectid': node.get('objectId'),
+                        'node_id': node_id
+                    }
+            else:
+                warn(f"User query failed: HTTP {response.status_code}")
+                return None
+                
+        except Exception as e:
+            warn(f"Error querying user '{upn}': {e}")
+            return None
+
+    def validate_and_resolve_cross_domain_user(self, netbios_domain: str, username: str) -> Optional[Dict[str, str]]:
+        """
+        Complete cross-domain user resolution workflow:
+        1. Resolve NETBIOS domain to FQDN via BloodHound
+        2. Construct UPN with resolved FQDN
+        3. Validate user exists in BloodHound
+        4. Return user info with SID and node ID
+        
+        This replaces LDAP-based resolution and works across domain trusts
+        without requiring additional credentials or network access.
+        
+        Args:
+            netbios_domain: NETBIOS domain name (e.g., "THESIMPSONS", "DEV")
+            username: Username without domain (e.g., "ADMINISTRATOR")
+            
+        Returns:
+            Dict with 'name' (full UPN), 'objectid' (SID), 'node_id', 'domain_fqdn', and 'error_reason', 
+            or None if not found (with error_reason indicating what failed)
+        """
+        # Step 1: Resolve domain
+        domain_info = self.query_domain_by_netbios(netbios_domain)
+        if not domain_info:
+            return {'error_reason': 'domain_not_found', 'domain': netbios_domain}
+        
+        domain_fqdn = domain_info['name']
+        
+        # Step 2: Construct UPN and query for user
+        upn = f"{username.upper()}@{domain_fqdn}"
+        user_info = self.query_user_by_upn(upn)
+        
+        if not user_info:
+            return {
+                'error_reason': 'user_not_found', 
+                'domain': netbios_domain,
+                'domain_fqdn': domain_fqdn,
+                'username': username,
+                'upn': upn
+            }
+        
+        # Step 3: Return combined info
+        return {
+            'name': user_info['name'],
+            'objectid': user_info['objectid'],
+            'node_id': user_info['node_id'],
+            'domain_fqdn': domain_fqdn,
+            'domain_sid': domain_info['objectid'],
+            'error_reason': None  # Success
+        }
+
     def get_users_data(self) -> Dict[str, Any]:
         """Get the retrieved users data"""
         return self.users_data

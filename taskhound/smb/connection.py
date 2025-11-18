@@ -69,6 +69,136 @@ def smb_connect(target: str, domain: str, username: str, password: str = None,
     return smb
 
 
+def get_server_sid(smb: SMBConnection, dc_ip: Optional[str] = None, 
+                   username: Optional[str] = None, password: Optional[str] = None,
+                   hashes: Optional[str] = None, kerberos: bool = False) -> Optional[str]:
+    """
+    Extract the server's machine account SID using SAMR RPC.
+    
+    This queries the machine account SID via SAMR protocol. While this requires
+    an RPC call, it's more reliable than trying to extract it from SMB negotiation
+    (which doesn't expose it in newer SMB versions).
+    
+    Args:
+        smb: Established SMBConnection
+        dc_ip: Domain controller IP (optional, for LDAP fallback)
+        username: Username for LDAP fallback
+        password: Password for LDAP fallback
+        hashes: NTLM hashes for LDAP fallback
+        kerberos: Use Kerberos for LDAP fallback
+    
+    Returns:
+        SID string (e.g., "S-1-5-21-3570960105-1792075822-554663251-1002") or None
+        
+    Example:
+        >>> smb = smb_connect("DC01.corp.local", "CORP", "user", "pass")
+        >>> sid = get_server_sid(smb)
+        >>> print(sid)
+        S-1-5-21-3570960105-1792075822-554663251-1002
+    """
+    try:
+        from impacket.dcerpc.v5 import transport, samr
+        
+        # Get computer name from SMB
+        computer_name = smb.getServerName()
+        if not computer_name:
+            return None
+        
+        # Try SAMR RPC to get machine account SID
+        try:
+            rpctransport = transport.SMBTransport(
+                smb.getRemoteName(), 
+                smb.getRemoteHost(), 
+                filename=r'\samr', 
+                smb_connection=smb
+            )
+            dce = rpctransport.get_dce_rpc()
+            dce.connect()
+            dce.bind(samr.MSRPC_UUID_SAMR)
+            
+            # Connect to SAMR
+            resp = samr.hSamrConnect(dce)
+            serverHandle = resp['ServerHandle']
+            
+            # Enumerate domains
+            resp = samr.hSamrEnumerateDomainsInSamServer(dce, serverHandle)
+            domains = resp['Buffer']['Buffer']
+            
+            # Try each domain
+            for domain in domains:
+                try:
+                    domain_name = domain['Name']
+                    
+                    # Skip Builtin domain
+                    if domain_name.lower() == 'builtin':
+                        continue
+                    
+                    # Open domain
+                    resp = samr.hSamrLookupDomainInSamServer(dce, serverHandle, domain_name)
+                    domain_sid = resp['DomainId']
+                    
+                    resp = samr.hSamrOpenDomain(dce, serverHandle, domainId=domain_sid)
+                    domainHandle = resp['DomainHandle']
+                    
+                    # Look up machine account (computer accounts end with $)
+                    machine_account = f"{computer_name}$"
+                    resp = samr.hSamrLookupNamesInDomain(dce, domainHandle, [machine_account])
+                    
+                    # Extract RID from NDRULONG object
+                    rid_obj = resp['RelativeIds']['Element'][0]
+                    rid = rid_obj.fields['Data']  # Integer value
+                    
+                    # Build full SID
+                    machine_sid = f"{domain_sid.formatCanonical()}-{rid}"
+                    dce.disconnect()
+                    return machine_sid
+                    
+                except Exception:
+                    # Try next domain
+                    continue
+            
+            dce.disconnect()
+            
+        except Exception:
+            # SAMR failed, fall back to LDAP if credentials available
+            pass
+        
+        # Fallback: Use LDAP to lookup the computer account SID
+        if dc_ip and username and (password or hashes):
+            from ..utils.sid_resolver import resolve_name_to_sid_via_ldap
+            
+            # Get FQDN for LDAP lookup
+            try:
+                fqdn = smb.getServerDNSHostName()
+                if not fqdn:
+                    server_name = smb.getServerName()
+                    server_domain = smb.getServerDNSDomainName()
+                    if server_name and server_domain:
+                        fqdn = f"{server_name}.{server_domain}"
+                
+                if fqdn:
+                    domain = smb.getServerDNSDomainName()
+                    if domain:
+                        sid = resolve_name_to_sid_via_ldap(
+                            name=fqdn,
+                            domain=domain,
+                            is_computer=True,
+                            dc_ip=dc_ip,
+                            username=username,
+                            password=password,
+                            hashes=hashes,
+                            kerberos=kerberos
+                        )
+                        return sid
+            except Exception:
+                pass
+        
+        return None
+        
+    except Exception:
+        return None
+
+
 def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, 
                     dc_ip: Optional[str] = None) -> str:
     """

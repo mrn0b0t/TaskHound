@@ -382,11 +382,12 @@ def _sort_tasks_by_priority(lines: List[str]) -> List[str]:
 
 
 def _build_row(host: str, rel_path: str, meta: Dict[str, str], 
-               target_ip: Optional[str] = None) -> Dict[str, Optional[str]]:
+               target_ip: Optional[str] = None, computer_sid: Optional[str] = None) -> Dict[str, Optional[str]]:
     # Create a structured dict for CSV/JSON export representing a task.
     #
     # Keeps the same keys used by the writer so rows can be dumped directly.
     # Now includes both FQDN (host) and IP address (target_ip) for flexibility.
+    # Also stores computer_sid for efficient BloodHound lookups without LDAP.
 
     # Determine credentials hint based on logon type
     logon_type_raw = meta.get("logon_type")
@@ -401,6 +402,7 @@ def _build_row(host: str, rel_path: str, meta: Dict[str, str],
     return {
         "host": host,
         "target_ip": target_ip,  # Store the original target (IP or hostname)
+        "computer_sid": computer_sid,  # Computer account SID from SMB (enables SID-based lookups)
         "path": rel_path,
         "type": "TASK",
         "runas": meta.get("runas"),
@@ -660,7 +662,7 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
         # Resolve the actual FQDN from SMB connection
         # This is critical when target is an IP address - BloodHound needs FQDNs
         # Tries: 1) SMB hostname, 2) DNS via DC, 3) System DNS
-        from .smb.connection import get_server_fqdn
+        from .smb.connection import get_server_fqdn, get_server_sid
         server_fqdn = get_server_fqdn(smb, target_ip=target, dc_ip=dc_ip)
         if server_fqdn and server_fqdn != "UNKNOWN_HOST":
             if server_fqdn.upper() != target.upper():
@@ -668,6 +670,22 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
         else:
             warn(f"{target}: Could not resolve FQDN - using target as-is")
             server_fqdn = target
+        
+        # Extract the computer account SID via SAMR RPC (with LDAP fallback)
+        # This enables SID-validated BloodHound lookups
+        server_sid = get_server_sid(
+            smb, 
+            dc_ip=dc_ip, 
+            username=username, 
+            password=password, 
+            hashes=hashes, 
+            kerberos=kerberos
+        )
+        if debug:
+            if server_sid:
+                print(f"[DEBUG] {target}: Computer SID: {server_sid}")
+            else:
+                print(f"[DEBUG] {target}: Could not retrieve computer SID")
         
         # Credential Guard detection (EXPERIMENTAL, only if enabled)
         if credguard_detect:
@@ -824,7 +842,7 @@ def process_target(target: str, domain: str, username: str, password: Optional[s
         # Use resolved FQDN as host, keep original target as IP
         # This ensures BloodHound gets proper FQDNs even when connecting via IP
         hostname = server_fqdn if server_fqdn else target
-        row = _build_row(hostname, rel_path, meta, target_ip=target)
+        row = _build_row(hostname, rel_path, meta, target_ip=target, computer_sid=server_sid)
         
         # Add Credential Guard status to each row
         row["credential_guard"] = credguard_status

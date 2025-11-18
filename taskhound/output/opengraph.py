@@ -66,35 +66,38 @@ def _get_bloodhound_token(api_url: str, username: str, password: str) -> Optiona
 def resolve_object_ids_chunked(
     computer_names: Set[str],
     user_names: Set[str],
-    bh_api_url: str,
-    bh_token: str,
+    bh_connector,  # BloodHoundConnector instance
     ldap_config: Optional[Dict] = None,
-    chunk_size: int = 10
-) -> Tuple[Dict[str, str], Dict[str, str]]:
+    chunk_size: int = 10,
+    computer_sids: Optional[Dict[str, str]] = None
+) -> Tuple[Dict[str, Tuple[str, str]], Dict[str, Tuple[str, str]]]:
     """
-    Resolve computer and user names to their objectIds (SIDs) using BloodHound API.
-    Falls back to LDAP if API queries fail.
+    Resolve computer and user names to their node IDs and objectIds (SIDs) using BloodHound API.
+    Falls back to LDAP if API queries fail (LDAP only provides objectId, not node_id).
     
-    Workflow:
-    1. Query BloodHound API in chunks using WHERE IN clause
-    2. Build name→objectId mappings from results
-    3. If API fails, fallback to LDAP for missing entries
+    Workflow (optimized for SID-based lookup):
+    1. If computer_sids provided: Query by objectId (SID) - most reliable!
+    2. Otherwise: Query by name using WHERE IN clause
+    3. Build name→(node_id, objectId) mappings from results
+    4. If API fails, fallback to LDAP for missing entries (provides objectId only)
     
     Args:
         computer_names: Set of computer FQDNs (e.g., {"DC.CORP.LOCAL", "WEB01.CORP.LOCAL"})
         user_names: Set of user names in USER@DOMAIN.TLD format (e.g., {"ADMIN@CORP.LOCAL"})
-        bh_api_url: BloodHound CE API base URL (e.g., "http://127.0.0.1:8080")
-        bh_token: API authentication token
+        bh_connector: BloodHoundConnector instance for API queries
         ldap_config: Optional LDAP configuration for fallback
                     Expected keys: domain, dc_ip, username, password, hashes, kerberos
         chunk_size: Number of items per WHERE IN clause (default: 10)
+        computer_sids: Optional mapping of FQDN→SID from SMB connections (preferred!)
+                      Example: {"DC.CORP.LOCAL": "S-1-5-21-...-1000"}
         
     Returns:
-        Tuple of (computer_sid_map, user_sid_map) where:
-        - computer_sid_map: {"DC.CORP.LOCAL": "S-1-5-21-...-1000"}
-        - user_sid_map: {"ADMIN@CORP.LOCAL": "S-1-5-21-...-500"}
+        Tuple of (computer_map, user_map) where:
+        - computer_map: {"DC.CORP.LOCAL": ("19", "S-1-5-21-...-1000")}
+        - user_map: {"ADMIN@CORP.LOCAL": ("42", "S-1-5-21-...-500")}
+        
+        Note: If resolved via LDAP fallback, node_id will be empty string: ("", "S-1-5-21-...")
     """
-    import requests
     
     computer_sid_map = {}
     user_sid_map = {}
@@ -104,17 +107,111 @@ def resolve_object_ids_chunked(
         items_list = sorted(list(items))  # Sort for consistent ordering
         return [items_list[i:i + size] for i in range(0, len(items_list), size)]
     
-    def _query_bloodhound_chunk(names: List[str], node_type: str) -> Dict[str, str]:
+    def _query_bloodhound_with_sid_validation(names_with_sids: Dict[str, str], node_type: str) -> Dict[str, Tuple[str, str]]:
         """
-        Query BloodHound API for a chunk of names.
+        Query BloodHound API by name but VALIDATE with SID for correctness.
+        
+        This hybrid approach:
+        - Queries by name (works reliably in BloodHound CE)
+        - Validates returned node has matching SID (prevents wrong node)
+        - Detects duplicate names (multiple nodes with same name)
+        
+        Args:
+            names_with_sids: Dict mapping name→SID (e.g., {"DC.CORP.LOCAL": "S-1-5-21-...-1000"})
+            node_type: "Computer" or "User"
+            
+        Returns:
+            Mapping of name→(node_id, objectId)
+            Example: {"DC.CORP.LOCAL": ("19", "S-1-5-21-...-1000")}
+        """
+        import json
+        mapping = {}
+        
+        if not names_with_sids:
+            return {}
+        
+        # Build Cypher query with WHERE IN clause for names
+        names_list = list(names_with_sids.keys())
+        names_list_str = ', '.join([f'"{name}"' for name in names_list])
+        query = f'MATCH (n:{node_type}) WHERE n.name IN [{names_list_str}] RETURN n'
+        
+        try:
+            debug(f"Querying {node_type} chunk with SID validation: {len(names_with_sids)} items")
+            
+            # Use the connector's _bhce_signed_request method directly
+            base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
+            body = json.dumps({"query": query}, separators=(',', ':')).encode()
+            response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            
+            if response.status_code == 200:
+                data = response.json()
+                nodes = data.get("data", {}).get("nodes", {})
+                
+                # Group nodes by name to detect duplicates
+                nodes_by_name = {}
+                for node_id, node in nodes.items():
+                    name = node.get("label")
+                    object_id = node.get("objectId")
+                    
+                    if name not in nodes_by_name:
+                        nodes_by_name[name] = []
+                    nodes_by_name[name].append((node_id, object_id))
+                
+                # Process each name and validate SID
+                for name, expected_sid in names_with_sids.items():
+                    node_list = nodes_by_name.get(name, [])
+                    
+                    if len(node_list) == 0:
+                        debug(f"No {node_type} node found for {name}")
+                        continue
+                    
+                    if len(node_list) > 1:
+                        # DUPLICATE NAMES DETECTED!
+                        warn(f"⚠️  Duplicate {node_type} nodes found for {name}: {len(node_list)} nodes")
+                        warn(f"   Node IDs: {[n[0] for n in node_list]}")
+                        warn(f"   SIDs: {[n[1] for n in node_list]}")
+                    
+                    # Find node with matching SID
+                    matched_node = None
+                    for node_id, object_id in node_list:
+                        if object_id == expected_sid:
+                            matched_node = (node_id, object_id)
+                            break
+                    
+                    if matched_node:
+                        mapping[name] = matched_node
+                        debug(f"✓ Validated {name} → node_id={matched_node[0]}, SID={matched_node[1]}")
+                    else:
+                        # SID mismatch - wrong computer!
+                        warn(f"⚠️  SID mismatch for {name}:")
+                        warn(f"   Expected SID: {expected_sid}")
+                        warn(f"   BloodHound returned: {[n[1] for n in node_list]}")
+                        warn(f"   Skipping this node (possible stale data or wrong computer)")
+                
+                return mapping
+            else:
+                warn(f"BloodHound API returned status {response.status_code}: {response.text}")
+                return {}
+        except Exception as e:
+            warn(f"Error querying BloodHound with SID validation: {e}")
+            if debug:
+                import traceback
+                traceback.print_exc()
+            return {}
+    
+    def _query_bloodhound_chunk(names: List[str], node_type: str) -> Dict[str, Tuple[str, str]]:
+        """
+        Query BloodHound API for a chunk of names using the connector.
         
         Args:
             names: List of names to query
             node_type: "Computer" or "User"
             
         Returns:
-            Mapping of name→objectId
+            Mapping of name→(node_id, objectId)
+            Example: {"DC01.DOMAIN.LOCAL": ("19", "S-1-5-21-...-1000")}
         """
+        import json
         mapping = {}
         
         # Build Cypher query with WHERE IN clause
@@ -123,29 +220,25 @@ def resolve_object_ids_chunked(
         
         try:
             debug(f"Querying {node_type} chunk: {len(names)} items")
-            response = requests.post(
-                f"{bh_api_url}/api/v2/graphs/cypher",
-                headers={
-                    "Authorization": f"Bearer {bh_token}",
-                    "Content-Type": "application/json"
-                },
-                json={"query": query},
-                timeout=30
-            )
+            
+            # Use the connector's _bhce_signed_request method directly
+            base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
+            body = json.dumps({"query": query}, separators=(',', ':')).encode()
+            response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
             
             if response.status_code == 200:
                 data = response.json()
                 nodes = data.get("data", {}).get("nodes", {})
                 
-                # Nodes are returned as dict keyed by node ID
+                # Nodes are returned as dict keyed by node ID (THIS is the graph database ID!)
                 for node_id, node in nodes.items():
                     # Properties are at top level of node, not nested
                     name = node.get("label")  # 'label' contains the name
                     object_id = node.get("objectId")  # 'objectId' not 'objectid'
                     
                     if name and object_id:
-                        mapping[name] = object_id
-                        debug(f"Resolved {name} → {object_id}")
+                        mapping[name] = (node_id, object_id)  # Return BOTH IDs
+                        debug(f"Resolved {name} → node_id={node_id}, objectId={object_id}")
                 
                 return mapping
             else:
@@ -154,18 +247,21 @@ def resolve_object_ids_chunked(
                 
         except Exception as e:
             warn(f"BloodHound API query failed: {e}")
+            import traceback
+            debug(traceback.format_exc())
             return {}
     
-    def _ldap_fallback(names: List[str], is_computer: bool) -> Dict[str, str]:
+    def _ldap_fallback(names: List[str], is_computer: bool) -> Dict[str, Tuple[str, str]]:
         """
         Fallback to LDAP for resolving names to SIDs.
+        Note: LDAP can only provide objectId (SID), not the BloodHound node_id.
         
         Args:
             names: List of names that couldn't be resolved via API
             is_computer: True for computers, False for users
             
         Returns:
-            Mapping of name→SID
+            Mapping of name→("", SID)  # Empty node_id since LDAP doesn't provide it
         """
         mapping = {}
         
@@ -192,7 +288,7 @@ def resolve_object_ids_chunked(
                 )
                 
                 if sid:
-                    mapping[name] = sid
+                    mapping[name] = ("", sid)  # Empty node_id, only objectId from LDAP
                     info(f"LDAP fallback resolved {name} → {sid}")
                 else:
                     debug(f"LDAP fallback failed for {name}")
@@ -205,12 +301,48 @@ def resolve_object_ids_chunked(
     # Process computers in chunks
     if computer_names:
         info(f"Resolving {len(computer_names)} computer names to objectIds...")
-        computer_chunks = _chunk_list(computer_names, chunk_size)
         
-        for i, chunk in enumerate(computer_chunks, 1):
-            debug(f"Processing computer chunk {i}/{len(computer_chunks)}")
+        # OPTIMIZATION: Use SID validation if available (captured from SMB connection)
+        if computer_sids:
+            # Split into: computers with known SIDs vs computers without SIDs
+            computers_with_sids = {name: sid for name, sid in computer_sids.items() if name in computer_names and sid}
+            computers_without_sids = computer_names - set(computers_with_sids.keys())
             
-            # Try BloodHound API first
+            if computers_with_sids:
+                info(f"Using SID validation for {len(computers_with_sids)} computers (from SMB connection)")
+                
+                # Chunk the computers with SIDs
+                computers_list = list(computers_with_sids.keys())
+                name_chunks = [computers_list[i:i + chunk_size] for i in range(0, len(computers_list), chunk_size)]
+                
+                for i, chunk in enumerate(name_chunks, 1):
+                    debug(f"Processing computer chunk {i}/{len(name_chunks)} with SID validation")
+                    
+                    # Build name→SID mapping for this chunk
+                    chunk_name_sid_map = {name: computers_with_sids[name] for name in chunk}
+                    
+                    # Query by name BUT validate with SID
+                    chunk_mapping = _query_bloodhound_with_sid_validation(chunk_name_sid_map, "Computer")
+                    computer_sid_map.update(chunk_mapping)
+                    
+                    info(f"[*] Chunk {i}/{len(name_chunks)}: {len(chunk_mapping)}/{len(chunk)} resolved and validated")
+            
+            # Fall back to name-based lookup WITHOUT validation for computers without SIDs
+            if computers_without_sids:
+                info(f"Using name-based lookup for {len(computers_without_sids)} computers (no SID for validation)")
+                computer_chunks = _chunk_list(computers_without_sids, chunk_size)
+            else:
+                computer_chunks = []
+        else:
+            # No SIDs available, use traditional name-based lookup
+            info("No computer SIDs available - using name-based lookup (may have duplicates)")
+            computer_chunks = _chunk_list(computer_names, chunk_size)
+        
+        # Process any remaining computers via name-based lookup
+        for i, chunk in enumerate(computer_chunks, 1):
+            debug(f"Processing computer name chunk {i}/{len(computer_chunks)}")
+            
+            # Try BloodHound API by name
             chunk_mapping = _query_bloodhound_chunk(chunk, "Computer")
             computer_sid_map.update(chunk_mapping)
             
@@ -274,6 +406,8 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
                             bh_api_url: Optional[str] = None,
                             bh_username: Optional[str] = None,
                             bh_password: Optional[str] = None,
+                            bh_api_key: Optional[str] = None,
+                            bh_api_key_id: Optional[str] = None,
                             ldap_config: Optional[Dict] = None) -> str:
     """
     Main function to generate OpenGraph file using bhopengraph library.
@@ -283,6 +417,8 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
     :param bh_api_url: BloodHound API URL for objectId resolution (optional)
     :param bh_username: BloodHound username for API authentication (optional)
     :param bh_password: BloodHound password for API authentication (optional)
+    :param bh_api_key: BloodHound API key for HMAC authentication (optional)
+    :param bh_api_key_id: BloodHound API key ID for HMAC authentication (optional)
     :param ldap_config: LDAP configuration for fallback resolution (optional)
     :return: Path to the generated OpenGraph file
     """
@@ -311,16 +447,49 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
     # Resolve objectIds if BloodHound API is available
     computer_sid_map = {}
     user_sid_map = {}
+    computer_map = {}
+    user_map = {}
     
-    if bh_api_url and bh_username and bh_password:
-        # Extract unique computer and user names from tasks
+    # Check if BloodHound credentials are available (either username/password or API key)
+    has_bh_credentials = bh_api_url and ((bh_username and bh_password) or (bh_api_key and bh_api_key_id))
+    
+    # Initialize connector early so it can be used for cross-domain validation
+    connector = None
+    if has_bh_credentials:
+        # Use BloodHoundConnector for API queries (supports both username/password and API key auth)
+        from ..connectors.bloodhound import BloodHoundConnector
+        
+        try:
+            connector = BloodHoundConnector(
+                bh_type='bhce',  # OpenGraph is only for BHCE
+                ip=bh_api_url,
+                username=bh_username,
+                password=bh_password,
+                api_key=bh_api_key,
+                api_key_id=bh_api_key_id
+            )
+            info("BloodHound connector initialized for cross-domain validation")
+        except Exception as e:
+            warn(f"Failed to initialize BloodHound connector: {e}")
+            warn("Cross-domain tasks will be skipped")
+            connector = None
+    
+    if has_bh_credentials and connector:
+        # Extract unique computer names, user names, AND computer SIDs from tasks
         computer_names = set()
         user_names = set()
+        computer_sids_map = {}  # FQDN → SID mapping from SMB connections
         
         for task in tasks:
             hostname = task.get("host", "").strip().upper()
             if hostname and hostname not in ("UNKNOWN_HOST", "UNKNOWN", ""):
                 computer_names.add(hostname)
+                
+                # OPTIMIZATION: Capture computer SID if available (from SMB connection)
+                computer_sid = task.get("computer_sid")
+                if computer_sid and hostname not in computer_sids_map:
+                    computer_sids_map[hostname] = computer_sid
+                    debug(f"Captured SID for {hostname}: {computer_sid}")
             
             runas_user = task.get("runas", "").strip()
             if runas_user and runas_user not in ("N/A", "", "SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE"):
@@ -333,35 +502,38 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
                     return "WORKGROUP"
                 
                 fqdn_domain = _extract_domain_from_fqdn(hostname)
-                principal_id = _create_principal_id(runas_user, fqdn_domain, task)
+                # Pass connector for cross-domain validation
+                principal_id = _create_principal_id(runas_user, fqdn_domain, task, connector)
                 
                 if principal_id:  # Only add if it passed filtering
                     user_names.add(principal_id)
         
         info(f"Extracted {len(computer_names)} unique computers and {len(user_names)} unique users")
         
-        # Get API token
-        bh_token = _get_bloodhound_token(bh_api_url, bh_username, bh_password)
-        
-        if bh_token:
-            # Resolve names to objectIds using chunked queries
-            computer_sid_map, user_sid_map = resolve_object_ids_chunked(
+        try:
+            
+            # Resolve names to node IDs and objectIds using chunked queries
+            # OPTIMIZATION: Pass computer_sids_map for SID-based lookup (faster & more reliable!)
+            if computer_sids_map:
+                info(f"Found {len(computer_sids_map)} computers with SIDs from SMB connections")
+            
+            computer_map, user_map = resolve_object_ids_chunked(
                 computer_names=computer_names,
                 user_names=user_names,
-                bh_api_url=bh_api_url,
-                bh_token=bh_token,
+                bh_connector=connector,
                 ldap_config=ldap_config,
-                chunk_size=10
+                chunk_size=10,
+                computer_sids=computer_sids_map  # Pass SIDs for optimized lookup!
             )
-        else:
-            warn("Failed to get BloodHound API token - edges will use name matching (may create duplicates)")
+        except Exception as e:
+            warn(f"Failed to initialize BloodHound connector: {e}")
+            warn("Edges will use name matching (may create duplicates)")
+            computer_map = {}
+            user_map = {}
     
-    # TESTING: Skip stub nodes when using name matching
-    # Name matching should find existing Computer/User nodes directly
-    
-    # Create and add relationship edges
+    # Create and add relationship edges with node ID-based matching
     for task in tasks:
-        task_edges = _create_relationship_edges(task, computer_sid_map, user_sid_map)
+        task_edges = _create_relationship_edges(task, computer_map, user_map, connector)
         for edge in task_edges:
             # Use add_edge_without_validation to allow edges to reference
             # Computer/User nodes that exist in BloodHound but not in our local graph
@@ -509,14 +681,14 @@ def _create_task_node(task: Dict) -> Node:
     return node
 
 
-def _create_principal_id(runas_user: str, local_domain: str, task: Dict) -> Optional[str]:
+def _create_principal_id(runas_user: str, local_domain: str, task: Dict, bh_connector=None) -> Optional[str]:
     """
     Create BloodHound-compatible principal ID from RunAs user.
     
     Handles various formats and filters out accounts that should not have edges:
     - Built-in accounts (NT AUTHORITY\\SYSTEM, etc.)
     - SID format (S-1-5-*)
-    - Cross-domain users (with warning)
+    - Cross-domain users (validates domain exists in BloodHound)
     
     Supported input formats:
     - UPN: user@domain.lab
@@ -526,6 +698,7 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict) -> Opti
     :param runas_user: RunAs user from task (various formats)
     :param local_domain: FQDN domain of the computer (e.g., DOMAIN.LAB)
     :param task: Full task dict for logging context
+    :param bh_connector: Optional BloodHoundConnector for cross-domain validation
     :return: Principal ID in BloodHound format (USER@DOMAIN.LAB) or None if should skip
     """
     # Skip empty/invalid
@@ -564,13 +737,48 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict) -> Opti
         
         # Check if domain matches local domain (case-insensitive)
         if domain_part != local_domain.upper():
-            # Cross-domain UPN!
-            task_path = task.get("path", "unknown")
-            hostname = task.get("host", "unknown")
-            warn(f"Cross-domain task detected on {hostname}: {task_path}")
-            warn(f"  RunAs user: {runas_user} (local domain: {local_domain})")
-            warn(f"  Edge will not be created unless '{domain_part}' domain exists in BloodHound")
-            return None
+            # Cross-domain UPN - validate both domain and user exist in BloodHound
+            if bh_connector:
+                # Extract first component of FQDN for NETBIOS lookup
+                netbios_name = domain_part.split(".")[0] if "." in domain_part else domain_part
+                
+                # Use complete validation workflow: domain + user
+                user_info = bh_connector.validate_and_resolve_cross_domain_user(netbios_name, user_part)
+                
+                if user_info and not user_info.get('error_reason'):
+                    # Both domain and user exist! Create edge with validated UPN
+                    task_path = task.get("path", "unknown")
+                    hostname = task.get("host", "unknown")
+                    info(f"Cross-domain task on {hostname}: {task_path}")
+                    info(f"  RunAs: {user_part}@{domain_part} → {user_info['name']} (validated in BH)")
+                    info(f"  Domain: {user_info['domain_fqdn']}, User SID: {user_info['objectid']}")
+                    return user_info['name']
+                else:
+                    # Domain or user doesn't exist in BloodHound
+                    task_path = task.get("path", "unknown")
+                    hostname = task.get("host", "unknown")
+                    error_reason = user_info.get('error_reason') if user_info else 'unknown'
+                    
+                    if error_reason == 'domain_not_found':
+                        warn(f"Cross-domain task on {hostname}: {task_path}")
+                        warn(f"  RunAs: {runas_user}")
+                        warn(f"  ✗ Domain '{netbios_name}' not found in BloodHound")
+                        warn(f"  → Import '{netbios_name}' domain data to BloodHound to enable this edge")
+                    elif error_reason == 'user_not_found':
+                        warn(f"Cross-domain task on {hostname}: {task_path}")
+                        warn(f"  RunAs: {runas_user}")
+                        warn(f"  ✓ Domain '{user_info['domain_fqdn']}' exists")
+                        warn(f"  ✗ User '{user_info['username']}' not found in domain")
+                        warn(f"  → Likely orphaned task (user deleted) - enable orphaned node creation to capture")
+                    else:
+                        warn(f"Cross-domain task on {hostname}: {task_path}")
+                        warn(f"  RunAs: {runas_user} (validation failed)")
+                    
+                    return None
+            else:
+                # No connector - can't validate, skip for safety
+                warn(f"Cross-domain UPN {runas_user} - skipping (no BloodHound connector)")
+                return None
         
         # UPN domain matches - return normalized format
         return f"{user_part}@{local_domain}"
@@ -596,15 +804,45 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict) -> Opti
         
         # Check if cross-domain (domain doesn't match local domain AND not a local account)
         if domain_prefix_short != local_domain_short and not is_local_account:
-            # Cross-domain task!
-            task_path = task.get("path", "unknown")
-            hostname = task.get("host", "unknown")
-            warn(f"Cross-domain task detected on {hostname}: {task_path}")
-            warn(f"  RunAs user: {runas_user} (local domain: {local_domain})")
-            warn(f"  Edge will not be created unless '{domain_prefix_short}' domain exists in BloodHound")
-            # TODO: Check if domain exists in BloodHound data
-            # For now, skip cross-domain tasks to avoid broken edges
-            return None
+            # Cross-domain task - validate both domain and user exist in BloodHound
+            if bh_connector:
+                # Use complete validation workflow: domain + user
+                user_info = bh_connector.validate_and_resolve_cross_domain_user(domain_prefix_short, user)
+                
+                if user_info and not user_info.get('error_reason'):
+                    # Both domain and user exist! Create edge with validated UPN
+                    task_path = task.get("path", "unknown")
+                    hostname = task.get("host", "unknown")
+                    info(f"Cross-domain task on {hostname}: {task_path}")
+                    info(f"  RunAs: {domain_prefix_short}\\{user} → {user_info['name']} (validated in BH)")
+                    info(f"  Domain: {user_info['domain_fqdn']}, User SID: {user_info['objectid']}")
+                    return user_info['name']
+                else:
+                    # Domain or user doesn't exist in BloodHound
+                    task_path = task.get("path", "unknown")
+                    hostname = task.get("host", "unknown")
+                    error_reason = user_info.get('error_reason') if user_info else 'unknown'
+                    
+                    if error_reason == 'domain_not_found':
+                        warn(f"Cross-domain task on {hostname}: {task_path}")
+                        warn(f"  RunAs: {runas_user}")
+                        warn(f"  ✗ Domain '{domain_prefix_short}' not found in BloodHound")
+                        warn(f"  → Import '{domain_prefix_short}' domain data to BloodHound to enable this edge")
+                    elif error_reason == 'user_not_found':
+                        warn(f"Cross-domain task on {hostname}: {task_path}")
+                        warn(f"  RunAs: {runas_user}")
+                        warn(f"  ✓ Domain '{user_info['domain_fqdn']}' exists")
+                        warn(f"  ✗ User '{user_info['username']}' not found in domain")
+                        warn(f"  → Likely orphaned task (user deleted) - enable orphaned node creation to capture")
+                    else:
+                        warn(f"Cross-domain task on {hostname}: {task_path}")
+                        warn(f"  RunAs: {runas_user} (validation failed)")
+                    
+                    return None
+            else:
+                # No connector - can't validate, skip for safety
+                warn(f"Cross-domain task {runas_user} - skipping (no BloodHound connector)")
+                return None
         
         # If it's a local account, skip creating edge (local accounts aren't in BloodHound)
         if is_local_account:
@@ -620,17 +858,21 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict) -> Opti
 
 
 def _create_relationship_edges(task: Dict, 
-                              computer_sid_map: Dict[str, str] = None,
-                              user_sid_map: Dict[str, str] = None) -> List[Edge]:
+                              computer_map: Dict[str, Tuple[str, str]] = None,
+                              user_map: Dict[str, Tuple[str, str]] = None,
+                              bh_connector=None) -> List[Edge]:
     """
     Creates HasTask and RunsAs edges for a single task using bhopengraph.
     
-    If SID mappings are provided, uses objectIds directly (best practice).
-    Otherwise falls back to name matching (may create duplicate nodes).
+    Uses BloodHound node IDs (graph database IDs) for reliable edge creation.
+    Falls back to name matching if node IDs are not available.
     
     :param task: Task dictionary from TaskHound engine
-    :param computer_sid_map: Optional mapping of computer FQDN → objectId (SID)
-    :param user_sid_map: Optional mapping of user principal → objectId (SID)
+    :param computer_map: Optional mapping of computer FQDN → (node_id, objectId)
+                        Example: {"DC01.DOMAIN.LAB": ("19", "S-1-5-21-...-1000")}
+    :param user_map: Optional mapping of user principal → (node_id, objectId)
+                    Example: {"ADMIN@DOMAIN.LAB": ("42", "S-1-5-21-...-500")}
+    :param bh_connector: Optional BloodHoundConnector for cross-domain validation
     :return: List of Edge instances
     """
     edges = []
@@ -661,31 +903,58 @@ def _create_relationship_edges(task: Dict,
     # Use different edge kind based on credential storage
     edge_kind = "HasTaskWithStoredCreds" if has_stored_creds else "HasTask"
     
+    # Prefer id (objectid/SID) matching, fall back to name matching
+    # Note: In BloodHound, a node's 'id' property IS the objectid (SID for users/computers)
+    computer_object_id = None
+    computer_match_by = "name"  # Default fallback
+    
+    if computer_map and hostname in computer_map:
+        node_id, object_id = computer_map[hostname]
+        if object_id:  # If we have an objectid (SID)
+            computer_object_id = object_id
+            computer_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
+            debug(f"Using id (objectid) for Computer: {hostname} → {object_id}")
+        else:
+            debug(f"No objectid for {hostname}, falling back to name matching")
+    
     has_task_edge = Edge(
-        start_node=hostname,  # Computer name (FQDN from SMB resolution)
+        start_node=computer_object_id if computer_object_id else hostname,  # Use objectid (SID) or name
         end_node=task_object_id,
         kind=edge_kind,
-        start_match_by="name",  # Match existing Computer node by name property
+        start_match_by=computer_match_by,  # "id" if we have SID, else "name"
         end_match_by="id"  # Match ScheduledTask node by id field
     )
-    debug(f"Created {edge_kind} edge: {hostname} → {task_path}")
+    debug(f"Created {edge_kind} edge: {hostname} → {task_path} (match_by={computer_match_by})")
     
     edges.append(has_task_edge)
 
     # 2. Create (ScheduledTask)-[RunsAs]->(Principal) edge
     # Use helper function to create principal ID with proper filtering
-    principal_id = _create_principal_id(runas_user, fqdn_domain, task)
+    principal_id = _create_principal_id(runas_user, fqdn_domain, task, bh_connector)
     
     if principal_id:
-        # TESTING: Force name matching to see if objectId matching is the issue
+        # Prefer id (objectid/SID) matching, fall back to name matching
+        # Note: In BloodHound, a node's 'id' property IS the objectid (SID for users/computers)
+        user_object_id = None
+        user_match_by = "name"  # Default fallback
+        
+        if user_map and principal_id in user_map:
+            node_id, object_id = user_map[principal_id]
+            if object_id:  # If we have an objectid (SID)
+                user_object_id = object_id
+                user_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
+                debug(f"Using id (objectid) for User: {principal_id} → {object_id}")
+            else:
+                debug(f"No objectid for {principal_id}, falling back to name matching")
+        
         runs_as_edge = Edge(
             start_node=task_object_id,
-            end_node=principal_id,  # Principal ID (USER@DOMAIN.LAB format)
+            end_node=user_object_id if user_object_id else principal_id,  # Use objectid (SID) or name
             kind="RunsAs",
             start_match_by="id",  # Match ScheduledTask node by id field
-            end_match_by="name"  # Match existing User node by name property
+            end_match_by=user_match_by  # "id" if we have SID, else "name"
         )
-        debug(f"Created RunsAs edge with name matching: {task_path} → {principal_id}")
+        debug(f"Created RunsAs edge: {task_path} → {principal_id} (match_by={user_match_by})")
         
         edges.append(runs_as_edge)
 
