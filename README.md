@@ -231,7 +231,7 @@ taskhound -u Administrator -p L0c@lAdm1n! -d . -t moe.thesimpsons.local --ldap-u
 ```
 
 **Why separate LDAP credentials?**
-- The ldap3 library doesn't support NTLM hash authentication in current versions
+- LDAP SID resolution now uses Impacket's LDAP implementation with NTLM hash support
 - You might only have local admin access but need domain LDAP for SID resolution
 - Allows using lower-privilege accounts specifically for SID lookups
 
