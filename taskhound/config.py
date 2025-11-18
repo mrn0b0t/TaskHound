@@ -70,6 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Font Awesome icon name for ScheduledTask nodes (default: heart)")
     bhog.add_argument("--bh-color", default="#8B5CF6",
                      help="Hex color code for ScheduledTask node icon (default: #8B5CF6 - vibrant purple)")
+    bhog.add_argument("--allow-orphans", action="store_true",
+                     help="Create edges even when Computer/User nodes are missing from BloodHound (may create orphaned edges)")
 
     scan.add_argument("--include-ms", action="store_true",
                     help="Also include \\Microsoft scheduled tasks (WARNING: very slow)")

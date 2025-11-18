@@ -323,7 +323,8 @@ def main():
             bh_password=bh_config.bh_password,
             bh_api_key=bh_config.bh_api_key,
             bh_api_key_id=bh_config.bh_api_key_id,
-            ldap_config=ldap_config
+            ldap_config=ldap_config,
+            allow_orphans=getattr(args, 'allow_orphans', False)
         )
         
         # Upload to BloodHound if not disabled and we have credentials

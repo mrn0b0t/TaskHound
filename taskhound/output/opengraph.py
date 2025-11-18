@@ -361,8 +361,14 @@ def resolve_object_ids_chunked(
                     still_missing = missing_names - set(fallback_mapping.keys())
                     if still_missing:
                         warn(f"Could not resolve computers: {', '.join(sorted(still_missing))}")
+                        # Mark missing computers as None so we can detect them later
+                        for missing_name in still_missing:
+                            computer_sid_map[missing_name] = None
                 else:
                     warn(f"No LDAP config for fallback. Missing computers: {', '.join(sorted(missing_names))}")
+                    # Mark missing computers as None so we can detect them later
+                    for missing_name in missing_names:
+                        computer_sid_map[missing_name] = None
             else:
                 info(f"Chunk {i}/{len(computer_chunks)}: {len(chunk_mapping)}/{len(chunk)} resolved via API")
     
@@ -393,8 +399,14 @@ def resolve_object_ids_chunked(
                     still_missing = missing_names - set(fallback_mapping.keys())
                     if still_missing:
                         warn(f"Could not resolve users: {', '.join(sorted(still_missing))}")
+                        # Mark missing users as None so we can detect them later
+                        for missing_name in still_missing:
+                            user_sid_map[missing_name] = None
                 else:
                     warn(f"No LDAP config for fallback. Missing users: {', '.join(sorted(missing_names))}")
+                    # Mark missing users as None so we can detect them later
+                    for missing_name in missing_names:
+                        user_sid_map[missing_name] = None
             else:
                 info(f"Chunk {i}/{len(user_chunks)}: {len(chunk_mapping)}/{len(chunk)} resolved via API")
     
@@ -408,7 +420,8 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
                             bh_password: Optional[str] = None,
                             bh_api_key: Optional[str] = None,
                             bh_api_key_id: Optional[str] = None,
-                            ldap_config: Optional[Dict] = None) -> str:
+                            ldap_config: Optional[Dict] = None,
+                            allow_orphans: bool = False) -> str:
     """
     Main function to generate OpenGraph file using bhopengraph library.
 
@@ -420,6 +433,7 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
     :param bh_api_key: BloodHound API key for HMAC authentication (optional)
     :param bh_api_key_id: BloodHound API key ID for HMAC authentication (optional)
     :param ldap_config: LDAP configuration for fallback resolution (optional)
+    :param allow_orphans: If True, create edges even when nodes are missing from BloodHound (optional)
     :return: Path to the generated OpenGraph file
     """
     output_path = Path(output_dir)
@@ -532,14 +546,26 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
             user_map = {}
     
     # Create and add relationship edges with node ID-based matching
+    total_skipped = {"computers": 0, "users": 0}
     for task in tasks:
-        task_edges = _create_relationship_edges(task, computer_map, user_map, connector)
+        task_edges, skipped = _create_relationship_edges(task, computer_map, user_map, connector, allow_orphans)
+        total_skipped["computers"] += skipped["computers"]
+        total_skipped["users"] += skipped["users"]
         for edge in task_edges:
             # Use add_edge_without_validation to allow edges to reference
             # Computer/User nodes that exist in BloodHound but not in our local graph
             graph.add_edge_without_validation(edge)
     
     info(f"Created {graph.get_edge_count()} relationships (HasTask + RunsAs)")
+    
+    # Report skipped edges if any
+    if total_skipped["computers"] > 0 or total_skipped["users"] > 0:
+        warn(f"Skipped edges due to missing nodes:")
+        if total_skipped["computers"] > 0:
+            warn(f"  - {total_skipped['computers']} edges to missing Computer nodes")
+        if total_skipped["users"] > 0:
+            warn(f"  - {total_skipped['users']} edges to missing User nodes")
+        info(f"Tip: Use --allow-orphans to create edges to missing nodes (may create orphaned edges)")
 
     # Export to single file - bhopengraph includes both nodes and edges automatically
     output_file = output_path / "taskhound_opengraph.json"
@@ -858,9 +884,10 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict, bh_conn
 
 
 def _create_relationship_edges(task: Dict, 
-                              computer_map: Dict[str, Tuple[str, str]] = None,
-                              user_map: Dict[str, Tuple[str, str]] = None,
-                              bh_connector=None) -> List[Edge]:
+                              computer_map: Dict[str, Optional[Tuple[str, str]]] = None,
+                              user_map: Dict[str, Optional[Tuple[str, str]]] = None,
+                              bh_connector=None,
+                              allow_orphans: bool = False) -> Tuple[List[Edge], Dict[str, int]]:
     """
     Creates HasTask and RunsAs edges for a single task using bhopengraph.
     
@@ -868,14 +895,16 @@ def _create_relationship_edges(task: Dict,
     Falls back to name matching if node IDs are not available.
     
     :param task: Task dictionary from TaskHound engine
-    :param computer_map: Optional mapping of computer FQDN → (node_id, objectId)
-                        Example: {"DC01.DOMAIN.LAB": ("19", "S-1-5-21-...-1000")}
-    :param user_map: Optional mapping of user principal → (node_id, objectId)
-                    Example: {"ADMIN@DOMAIN.LAB": ("42", "S-1-5-21-...-500")}
+    :param computer_map: Optional mapping of computer FQDN → (node_id, objectId) or None if not found
+                        Example: {"DC01.DOMAIN.LAB": ("19", "S-1-5-21-...-1000"), "MISSING.LAB": None}
+    :param user_map: Optional mapping of user principal → (node_id, objectId) or None if not found
+                    Example: {"ADMIN@DOMAIN.LAB": ("42", "S-1-5-21-...-500"), "GHOST@LAB": None}
     :param bh_connector: Optional BloodHoundConnector for cross-domain validation
-    :return: List of Edge instances
+    :param allow_orphans: If True, create edges even when nodes are missing from BloodHound
+    :return: Tuple of (List of Edge instances, Dict with skip statistics)
     """
     edges = []
+    skipped = {"computers": 0, "users": 0}
     hostname = task.get("host", "UNKNOWN_HOST").upper()
     task_path = task.get("path", "UNKNOWN_PATH")
     runas_user = task.get("runas", "N/A")
@@ -909,24 +938,61 @@ def _create_relationship_edges(task: Dict,
     computer_match_by = "name"  # Default fallback
     
     if computer_map and hostname in computer_map:
-        node_id, object_id = computer_map[hostname]
-        if object_id:  # If we have an objectid (SID)
-            computer_object_id = object_id
-            computer_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
-            debug(f"Using id (objectid) for Computer: {hostname} → {object_id}")
+        node_info = computer_map[hostname]
+        
+        if node_info is None:
+            # Node was queried but not found in BloodHound
+            if not allow_orphans:
+                warn(f"Skipping {edge_kind} edge: Computer '{hostname}' not found in BloodHound")
+                warn(f"  Task: {task_path}")
+                warn(f"  Use --allow-orphans to create edges to missing nodes")
+                skipped["computers"] += 1
+                # Don't create this edge - skip to user edge
+            else:
+                # User opted in to orphaned edges - use name matching
+                debug(f"Creating orphaned edge for missing computer: {hostname}")
+                has_task_edge = Edge(
+                    start_node=hostname,
+                    end_node=task_object_id,
+                    kind=edge_kind,
+                    start_match_by="name",
+                    end_match_by="id"
+                )
+                edges.append(has_task_edge)
         else:
-            debug(f"No objectid for {hostname}, falling back to name matching")
-    
-    has_task_edge = Edge(
-        start_node=computer_object_id if computer_object_id else hostname,  # Use objectid (SID) or name
-        end_node=task_object_id,
-        kind=edge_kind,
-        start_match_by=computer_match_by,  # "id" if we have SID, else "name"
-        end_match_by="id"  # Match ScheduledTask node by id field
-    )
-    debug(f"Created {edge_kind} edge: {hostname} → {task_path} (match_by={computer_match_by})")
-    
-    edges.append(has_task_edge)
+            # Node exists in BloodHound
+            node_id, object_id = node_info
+            if object_id:  # If we have an objectid (SID)
+                computer_object_id = object_id
+                computer_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
+                debug(f"Using id (objectid) for Computer: {hostname} → {object_id}")
+            else:
+                debug(f"No objectid for {hostname}, falling back to name matching")
+            
+            has_task_edge = Edge(
+                start_node=computer_object_id if computer_object_id else hostname,
+                end_node=task_object_id,
+                kind=edge_kind,
+                start_match_by=computer_match_by,
+                end_match_by="id"
+            )
+            debug(f"Created {edge_kind} edge: {hostname} → {task_path} (match_by={computer_match_by})")
+            edges.append(has_task_edge)
+    else:
+        # Computer not in map - wasn't queried (shouldn't happen in normal flow)
+        if not allow_orphans:
+            warn(f"Computer '{hostname}' not in resolution map - skipping {edge_kind} edge")
+            skipped["computers"] += 1
+        else:
+            # Fallback for orphaned mode
+            has_task_edge = Edge(
+                start_node=hostname,
+                end_node=task_object_id,
+                kind=edge_kind,
+                start_match_by="name",
+                end_match_by="id"
+            )
+            edges.append(has_task_edge)
 
     # 2. Create (ScheduledTask)-[RunsAs]->(Principal) edge
     # Use helper function to create principal ID with proper filtering
@@ -939,23 +1005,60 @@ def _create_relationship_edges(task: Dict,
         user_match_by = "name"  # Default fallback
         
         if user_map and principal_id in user_map:
-            node_id, object_id = user_map[principal_id]
-            if object_id:  # If we have an objectid (SID)
-                user_object_id = object_id
-                user_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
-                debug(f"Using id (objectid) for User: {principal_id} → {object_id}")
+            node_info = user_map[principal_id]
+            
+            if node_info is None:
+                # User was queried but not found in BloodHound
+                if not allow_orphans:
+                    warn(f"Skipping RunsAs edge: User '{principal_id}' not found in BloodHound")
+                    warn(f"  Task: {task_path}")
+                    warn(f"  Use --allow-orphans to create edges to missing nodes")
+                    skipped["users"] += 1
+                    # Don't create this edge
+                else:
+                    # User opted in to orphaned edges - use name matching
+                    debug(f"Creating orphaned edge for missing user: {principal_id}")
+                    runs_as_edge = Edge(
+                        start_node=task_object_id,
+                        end_node=principal_id,
+                        kind="RunsAs",
+                        start_match_by="id",
+                        end_match_by="name"
+                    )
+                    edges.append(runs_as_edge)
             else:
-                debug(f"No objectid for {principal_id}, falling back to name matching")
-        
-        runs_as_edge = Edge(
-            start_node=task_object_id,
-            end_node=user_object_id if user_object_id else principal_id,  # Use objectid (SID) or name
-            kind="RunsAs",
-            start_match_by="id",  # Match ScheduledTask node by id field
-            end_match_by=user_match_by  # "id" if we have SID, else "name"
-        )
-        debug(f"Created RunsAs edge: {task_path} → {principal_id} (match_by={user_match_by})")
-        
-        edges.append(runs_as_edge)
+                # User exists in BloodHound
+                node_id, object_id = node_info
+                if object_id:  # If we have an objectid (SID)
+                    user_object_id = object_id
+                    user_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
+                    debug(f"Using id (objectid) for User: {principal_id} → {object_id}")
+                else:
+                    debug(f"No objectid for {principal_id}, falling back to name matching")
+                
+                runs_as_edge = Edge(
+                    start_node=task_object_id,
+                    end_node=user_object_id if user_object_id else principal_id,
+                    kind="RunsAs",
+                    start_match_by="id",
+                    end_match_by=user_match_by
+                )
+                debug(f"Created RunsAs edge: {task_path} → {principal_id} (match_by={user_match_by})")
+                edges.append(runs_as_edge)
+        else:
+            # User not in map - wasn't queried (shouldn't happen in normal flow)
+            if not allow_orphans:
+                warn(f"User '{principal_id}' not in resolution map - skipping RunsAs edge")
+                skipped["users"] += 1
+            else:
+                # Fallback for orphaned mode
+                runs_as_edge = Edge(
+                    start_node=task_object_id,
+                    end_node=principal_id,
+                    kind="RunsAs",
+                    start_match_by="id",
+                    end_match_by="name"
+                )
+                edges.append(runs_as_edge)
 
-    return edges
+    return edges, skipped
