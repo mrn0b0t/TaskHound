@@ -138,10 +138,42 @@ def resolve_object_ids_chunked(
         try:
             debug(f"Querying {node_type} chunk with SID validation: {len(names_with_sids)} items")
             
-            # Use the connector's _bhce_signed_request method directly
+            # Build base URL
             base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
-            body = json.dumps({"query": query}, separators=(',', ':')).encode()
-            response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            query_data = {"query": query}
+            
+            # Use appropriate authentication method
+            import requests
+            if bh_connector.api_key and bh_connector.api_key_id:
+                # API key authentication - use HMAC-signed request
+                body = json.dumps(query_data, separators=(',', ':')).encode()
+                response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            elif bh_connector.username and bh_connector.password:
+                # Username/password authentication - get token and use Bearer auth
+                login_data = {
+                    "login_method": "secret",
+                    "username": bh_connector.username,
+                    "secret": bh_connector.password
+                }
+                login_response = requests.post(f"{base_url}/api/v2/login", json=login_data, timeout=10)
+                if login_response.status_code != 200:
+                    warn(f"BloodHound login failed - HTTP {login_response.status_code}")
+                    return {}
+                
+                token_data = login_response.json()
+                token = token_data.get('data', {}).get('session_token')
+                if not token:
+                    warn("BloodHound login failed - no token in response")
+                    return {}
+                
+                headers = {
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json'
+                }
+                response = requests.post(f"{base_url}/api/v2/graphs/cypher", headers=headers, json=query_data, timeout=bh_connector.timeout)
+            else:
+                warn(f"BloodHound authentication not configured properly")
+                return {}
             
             if response.status_code == 200:
                 data = response.json()
@@ -212,6 +244,7 @@ def resolve_object_ids_chunked(
             Example: {"DC01.DOMAIN.LOCAL": ("19", "S-1-5-21-...-1000")}
         """
         import json
+        import requests
         mapping = {}
         
         # Build Cypher query with WHERE IN clause
@@ -221,10 +254,46 @@ def resolve_object_ids_chunked(
         try:
             debug(f"Querying {node_type} chunk: {len(names)} items")
             
-            # Use the connector's _bhce_signed_request method directly
             base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
             body = json.dumps({"query": query}, separators=(',', ':')).encode()
-            response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            
+            # Handle both authentication types: API key (HMAC) and username/password (Bearer token)
+            if bh_connector.api_key and bh_connector.api_key_id:
+                # Use API key authentication with HMAC signature
+                response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+            elif bh_connector.username and bh_connector.password:
+                # Use username/password authentication with Bearer token
+                login_url = f"{base_url}/api/v2/login"
+                login_payload = {
+                    "login_method": "secret",
+                    "username": bh_connector.username,
+                    "secret": bh_connector.password
+                }
+                login_response = requests.post(login_url, json=login_payload, timeout=bh_connector.timeout)
+                
+                if login_response.status_code == 200:
+                    token = login_response.json().get('data', {}).get('session_token')
+                    if not token:
+                        warn("Failed to retrieve session token from login response")
+                        return {}
+                    
+                    # Make authenticated query with Bearer token
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {token}'
+                    }
+                    response = requests.post(
+                        f"{base_url}/api/v2/graphs/cypher",
+                        data=body,
+                        headers=headers,
+                        timeout=bh_connector.timeout
+                    )
+                else:
+                    warn(f"BloodHound login failed: {login_response.status_code}")
+                    return {}
+            else:
+                warn("No valid BloodHound authentication configured (need API key or username/password)")
+                return {}
             
             if response.status_code == 200:
                 data = response.json()
