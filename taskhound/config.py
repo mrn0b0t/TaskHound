@@ -44,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
                               "Examples: localhost, http://localhost:8080, https://bh.domain.com, bolt://neo4j.local:7687. "
                               "Supports both BHCE (http/https) and Legacy (bolt) protocols. "
                               "If no protocol specified: defaults to http:// for BHCE, bolt:// for Legacy.")
+    bh_group.add_argument("--bh-timeout", type=int, default=120,
+                         help="Timeout in seconds for BloodHound API queries (default: 120). Increase for large environments.")
 
     # BloodHound type selection (mutually exclusive)
     bh_type = bh_group.add_mutually_exclusive_group()

@@ -197,19 +197,27 @@ def resolve_sid_via_ldap(sid: str, domain: str, dc_ip: Optional[str] = None,
                 conn = ldap_impacket.LDAPConnection(ldap_url, dstIp=dc_ip)
 
                 # Authenticate based on available credentials
+                # Priority: explicit hashes/password > Kerberos
+                # This allows using --ldap-user/--ldap-password even when -k is set
                 if hashes:
                     # NTLM hash authentication (NEW CAPABILITY!)
                     debug(f"Authenticating with NTLM hash as {domain}\\{username}")
                     conn.login(user=username, password="", domain=domain, lmhash=lmhash, nthash=nthash)
-                elif kerberos:
-                    # Kerberos authentication
-                    debug(f"Authenticating with Kerberos as {username}@{domain}")
-                    # Impacket's LDAP Kerberos requires ticket in cache
-                    conn.kerberosLogin(username, password, domain, lmhash, nthash)
-                else:
-                    # Password authentication
+                elif password:
+                    # Password authentication (prefer explicit password over Kerberos)
                     debug(f"Authenticating with password as {domain}\\{username}")
                     conn.login(user=username, password=password, domain=domain)
+                elif kerberos:
+                    # Kerberos authentication (only if no explicit credentials)
+                    debug(f"Authenticating with Kerberos as {username}@{domain}")
+                    # Impacket's LDAP Kerberos requires TGT in cache (not just service ticket)
+                    # Note: This will fail if only CIFS/other service ticket is available
+                    conn.kerberosLogin(username, "", domain, lmhash, nthash)
+                else:
+                    # No credentials available
+                    debug(f"No credentials available for LDAP authentication")
+                    conn = None
+                    continue
 
                 debug(f"Successfully authenticated to LDAP server {dc_ip}")
                 break  # Success, exit loop

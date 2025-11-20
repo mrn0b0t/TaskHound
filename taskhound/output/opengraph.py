@@ -480,7 +480,8 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
                 username=bh_username,
                 password=bh_password,
                 api_key=bh_api_key,
-                api_key_id=bh_api_key_id
+                api_key_id=bh_api_key_id,
+                timeout=getattr(args, 'bh_timeout', 120)
             )
             info("BloodHound connector initialized for cross-domain validation")
         except Exception as e:

@@ -116,13 +116,14 @@ class BloodHoundConnector:
     """Simple BloodHound connector for both BHCE and Legacy"""
 
     def __init__(self, bh_type: str, ip: str, username: Optional[str] = None, 
-                 password: Optional[str] = None, api_key: Optional[str] = None, api_key_id: Optional[str] = None):
+                 password: Optional[str] = None, api_key: Optional[str] = None, api_key_id: Optional[str] = None, timeout: int = 120):
         self.bh_type = bh_type  # 'bhce' or 'legacy'
         self.ip = ip
         self.username = username
         self.password = password
         self.api_key = api_key
         self.api_key_id = api_key_id
+        self.timeout = timeout
         self.users_data = {}
 
     def _bhce_signed_request(self, method: str, uri: str, base_url: str, body: Optional[bytes] = None) -> requests.Response:
@@ -177,7 +178,7 @@ class BloodHoundConnector:
             url=f'{base_url}{uri}',
             headers=headers,
             data=body,
-            timeout=30
+            timeout=self.timeout
         )
 
     def connect_and_query(self) -> bool:
@@ -289,7 +290,7 @@ class BloodHoundConnector:
                     f"{base_url}/api/v2/graphs/cypher",
                     headers=headers,
                     json=query_data,
-                    timeout=30
+                    timeout=self.timeout
                 )
 
             if response.status_code != 200:
@@ -918,7 +919,8 @@ def connect_bloodhound(args) -> Optional[Dict[str, Any]]:
         username=args.bh_user,
         password=args.bh_password,
         api_key=getattr(args, 'bh_api_key', None),
-        api_key_id=getattr(args, 'bh_api_key_id', None)
+        api_key_id=getattr(args, 'bh_api_key_id', None),
+        timeout=getattr(args, 'bh_timeout', 120)
     )
 
     if connector.connect_and_query():
