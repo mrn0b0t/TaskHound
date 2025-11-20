@@ -414,6 +414,7 @@ When caffeine intake and free time align:
 - **Node Caching System**: Multi-tier caching to reduce API calls by 80% and speed up repeated runs
 - ~~**API Key Authentication**: Support for BloodHound API tokens instead of username/password~~ **DONE (v1.1.0)**
 - **Enhanced SID Resolution**: Improved fallback chain combining BloodHound, LDAP, and local SID databases
+  - *Partial*: Infrastructure exists for BloodHound API fallback, needs connector refactoring to pass through call chain
 - **Unreachable Hosts Tracking**: Show failed connections in summary with detailed error reasons
 
 ### when i find time

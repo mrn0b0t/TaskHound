@@ -132,6 +132,91 @@ def resolve_sid_from_bloodhound(sid: str, hv_loader: Optional[HighValueLoader]) 
     return None
 
 
+def resolve_sid_via_bloodhound_api(sid: str, bh_connector) -> Optional[str]:
+    """
+    Resolve SID to username using live BloodHound API queries.
+    
+    This extends offline BloodHound data by querying the live database for SIDs
+    that may exist in BloodHound but weren't in the offline export.
+    
+    **Roadmap Feature:** Enhanced SID Resolution fallback chain
+    Combines BloodHound offline data, live API queries, and LDAP for comprehensive SID lookups.
+    
+    Args:
+        sid: Windows SID to resolve
+        bh_connector: BloodHoundConnector instance with active connection
+        
+    Returns:
+        Username if found via BloodHound API, None otherwise
+    """
+    if not bh_connector:
+        return None
+    
+    try:
+        import json
+        import requests
+        
+        # Build Cypher query to find user or computer by objectId (SID)
+        query = f'MATCH (n) WHERE n.objectid = "{sid}" RETURN n.name AS name LIMIT 1'
+        
+        base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
+        body = json.dumps({"query": query}, separators=(',', ':')).encode()
+        
+        # Handle both authentication types
+        if bh_connector.api_key and bh_connector.api_key_id:
+            # Use API key authentication
+            response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
+        elif bh_connector.username and bh_connector.password:
+            # Use username/password authentication
+            login_url = f"{base_url}/api/v2/login"
+            login_payload = {
+                "login_method": "secret",
+                "username": bh_connector.username,
+                "secret": bh_connector.password
+            }
+            login_response = requests.post(login_url, json=login_payload, timeout=bh_connector.timeout)
+            
+            if login_response.status_code == 200:
+                token = login_response.json().get('data', {}).get('session_token')
+                if not token:
+                    debug("Failed to get session token for BloodHound API SID resolution")
+                    return None
+                
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {token}'
+                }
+                response = requests.post(
+                    f"{base_url}/api/v2/graphs/cypher",
+                    data=body,
+                    headers=headers,
+                    timeout=bh_connector.timeout
+                )
+            else:
+                debug(f"BloodHound login failed for SID resolution: {login_response.status_code}")
+                return None
+        else:
+            debug("No valid BloodHound authentication for API SID resolution")
+            return None
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Extract name from Cypher query result
+            if 'data' in data and 'data' in data['data'] and len(data['data']['data']) > 0:
+                result = data['data']['data'][0]
+                if result and 'name' in result:
+                    username = result['name']
+                    info(f"Resolved SID {sid} to {username} via BloodHound API")
+                    return username
+        else:
+            debug(f"BloodHound API SID query returned {response.status_code}")
+            
+    except Exception as e:
+        debug(f"BloodHound API SID resolution failed: {e}")
+    
+    return None
+
+
 def resolve_sid_via_ldap(sid: str, domain: str, dc_ip: Optional[str] = None,
                          username: Optional[str] = None, password: Optional[str] = None,
                          hashes: Optional[str] = None, kerberos: bool = False) -> Optional[str]:
@@ -446,6 +531,7 @@ def resolve_name_to_sid_via_ldap(name: str, domain: str, is_computer: bool = Fal
 
 
 def resolve_sid(sid: str, hv_loader: Optional[HighValueLoader] = None,
+               bh_connector = None,
                no_ldap: bool = False, domain: Optional[str] = None,
                dc_ip: Optional[str] = None, username: Optional[str] = None,
                password: Optional[str] = None, hashes: Optional[str] = None,
@@ -453,11 +539,17 @@ def resolve_sid(sid: str, hv_loader: Optional[HighValueLoader] = None,
                ldap_user: Optional[str] = None, ldap_password: Optional[str] = None,
                ldap_hashes: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """
-    Comprehensive SID resolution with fallback chain.
+    Comprehensive SID resolution with 3-tier fallback chain.
+    
+    Fallback order:
+    1. BloodHound offline data (JSON file from --bloodhound flag)
+    2. BloodHound live API (if bh_connector provided and has active connection)
+    3. LDAP queries to domain controller (if credentials provided and not disabled)
     
     Args:
         sid: Windows SID to resolve
         hv_loader: BloodHound data loader (optional)
+        bh_connector: BloodHound API connector (optional, for live queries)
         no_ldap: Disable LDAP resolution
         domain: Domain name for LDAP
         dc_ip: Domain controller IP
@@ -481,13 +573,20 @@ def resolve_sid(sid: str, hv_loader: Optional[HighValueLoader] = None,
 
     debug(f"Attempting to resolve SID: {sid}")
 
-    # Try BloodHound first
+    # Tier 1: Try BloodHound offline data first
     resolved = resolve_sid_from_bloodhound(sid, hv_loader)
     if resolved:
-        debug(f"SID {sid} resolved via BloodHound: {resolved}")
+        debug(f"SID {sid} resolved via BloodHound offline data: {resolved}")
         return f"{resolved} ({sid})", resolved
 
-    # Try LDAP if enabled and we have sufficient authentication info
+    # Tier 2: Try BloodHound live API if connector available
+    if bh_connector:
+        resolved = resolve_sid_via_bloodhound_api(sid, bh_connector)
+        if resolved:
+            debug(f"SID {sid} resolved via BloodHound API: {resolved}")
+            return f"{resolved} ({sid})", resolved
+
+    # Tier 3: Try LDAP if enabled and we have sufficient authentication info
     # Prioritize dedicated LDAP credentials over main auth credentials
     ldap_auth_domain = ldap_domain if ldap_domain else domain
     ldap_auth_user = ldap_user if ldap_user else username
@@ -513,11 +612,12 @@ def resolve_sid(sid: str, hv_loader: Optional[HighValueLoader] = None,
         debug(f"SID {sid} not resolved: insufficient authentication information")
         return f"{sid} (SID - insufficient auth for LDAP resolution)", None
     else:
-        debug(f"SID {sid} not resolved: could not find in BloodHound or LDAP")
+        debug(f"SID {sid} not resolved: could not find in BloodHound offline, BloodHound API, or LDAP")
         return f"{sid} (SID - could not resolve: deleted user, cross-domain, or access denied)", None
 
 
 def format_runas_with_sid_resolution(runas: str, hv_loader: Optional[HighValueLoader] = None,
+                                   bh_connector = None,
                                    no_ldap: bool = False, domain: Optional[str] = None,
                                    dc_ip: Optional[str] = None, username: Optional[str] = None,
                                    password: Optional[str] = None, hashes: Optional[str] = None,
@@ -530,6 +630,7 @@ def format_runas_with_sid_resolution(runas: str, hv_loader: Optional[HighValueLo
     Args:
         runas: The RunAs field value to potentially resolve
         hv_loader: BloodHound data loader (optional)
+        bh_connector: BloodHound API connector (optional, for live queries)
         no_ldap: Disable LDAP resolution
         domain: Domain name for LDAP
         dc_ip: Domain controller IP
@@ -552,7 +653,7 @@ def format_runas_with_sid_resolution(runas: str, hv_loader: Optional[HighValueLo
 
     # Check if it's a SID
     if is_sid(runas):
-        return resolve_sid(runas, hv_loader, no_ldap, domain, dc_ip, username, password, hashes, kerberos, ldap_domain, ldap_user, ldap_password, ldap_hashes)
+        return resolve_sid(runas, hv_loader, bh_connector, no_ldap, domain, dc_ip, username, password, hashes, kerberos, ldap_domain, ldap_user, ldap_password, ldap_hashes)
     else:
         # Regular username, return as-is
         return runas, None

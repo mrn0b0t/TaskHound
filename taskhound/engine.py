@@ -514,7 +514,7 @@ def _format_trigger_info(meta: Dict[str, str]) -> Optional[str]:
 
 def _format_block(kind: str, rel_path: str, runas: str, what: str, author: str, date: str,
                   extra_reason: Optional[str] = None, password_analysis: Optional[str] = None,
-                  hv: Optional[HighValueLoader] = None, no_ldap: bool = False,
+                  hv: Optional[HighValueLoader] = None, bh_connector = None, no_ldap: bool = False,
                   domain: Optional[str] = None, dc_ip: Optional[str] = None, username: Optional[str] = None,
                   password: Optional[str] = None, hashes: Optional[str] = None,
                   enabled: Optional[str] = None, ldap_domain: Optional[str] = None, ldap_user: Optional[str] = None,
@@ -530,9 +530,9 @@ def _format_block(kind: str, rel_path: str, runas: str, what: str, author: str, 
     else:
         header = "[TASK]"
 
-    # Resolve SID in RunAs field for better display
+    # Resolve SID in RunAs field for better display (uses 3-tier fallback: offline BH → API → LDAP)
     display_runas, resolved_username = format_runas_with_sid_resolution(
-        runas, hv, no_ldap, domain, dc_ip, username, password, hashes, False, ldap_domain, ldap_user, ldap_password, ldap_hashes
+        runas, hv, bh_connector, no_ldap, domain, dc_ip, username, password, hashes, False, ldap_domain, ldap_user, ldap_password, ldap_hashes
     )
 
     base = [f"\n{header} {rel_path}"]
