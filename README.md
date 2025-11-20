@@ -20,7 +20,7 @@ For Backstory/Lore, and more explanations: see my associated: [Blog Post](https:
 - **SID Resolution**: Supports LDAP for SID lookups when encountered in tasks
 - **Password Analysis**: Analyzes password age relative to task creation date
 - **Offline Analysis**: Process previously collected XML files
-- **BOF**: BOF implementation for AdaptixC2 (see [BOF/README.md](BOF/README.md))
+- **AdaptixC2 Integration**: BOF available in Extension-Kit for C2 operations
 
 ## Quick Start
 
@@ -34,6 +34,10 @@ pip install .
 # Basic usage
 taskhound -u homer.simpson -p P@ssw0rd -d thesimpsons.local -t moe.thesimpsons.local
 ```
+
+## AdaptixC2 Integration
+
+TaskHound's BOF is included in the [Adaptix Extension-Kit](https://github.com/Adaptix-Framework/Extension-Kit) under `SAR-BOF/taskhound/`.
 
 ## Demo Output
 
@@ -263,9 +267,6 @@ taskhound --offline dpapi_loot/moe.thesimpsons.local --dpapi-key 0x51e43225...
 ### Credential Guard Detection
 
 Checks remote registry for Credential Guard status to determine DPAPI dump feasibility. Results include `"credential_guard": true/false` in output.
-
-### BOF Implementation
-See [BOF/README.md](BOF/README.md) for a Beacon Object File implementation of the core collection functionality.
 
 ## Full Usage Reference
 
