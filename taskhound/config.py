@@ -357,6 +357,18 @@ def validate_args(args):
     if not (args.target or args.targets_file):
         print("[!] Either --target or --targets-file is required for online mode")
         sys.exit(1)
+    
+    # Authentication method validation - require either password, hash, or Kerberos
+    if not args.password and not args.hashes and not args.kerberos:
+        print("[!] ERROR: Authentication required for online mode")
+        print("[!] You must specify one of:")
+        print("[!]   -p PASSWORD     (password authentication)")
+        print("[!]   --hashes HASH   (NTLM hash authentication)")
+        print("[!]   -k              (Kerberos authentication with ccache)")
+        print()
+        if "KRB5CCNAME" in os.environ:
+            print("[!] Detected KRB5CCNAME environment variable - did you forget the -k flag?")
+        sys.exit(1)
 
     # LDAP password and hashes mutual exclusivity
     if args.ldap_password and args.ldap_hashes:
