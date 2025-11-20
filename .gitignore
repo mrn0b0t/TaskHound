@@ -17,6 +17,9 @@ krb5cc_*
 targets.txt
 targets_*.txt
 
+# Internal planning documents
+planning/
+
 
 # Real/production test data
 tests/test_data/*_real.json
