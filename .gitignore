@@ -3,9 +3,19 @@
 # =============================================================================
 # Configuration and output files with credentials/sensitive data
 config/bh_connector.config
+config/bh_connector.config.*
+config/*.bak
 tests/live_test_config.json
 tests/LIVE_TESTS.md
 .github/copilot-instructions.md
+
+# Kerberos credential caches
+*.ccache
+krb5cc_*
+
+# Target lists
+targets.txt
+targets_*.txt
 
 
 # Real/production test data
