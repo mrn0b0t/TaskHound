@@ -179,7 +179,9 @@ class TestRelationshipEdges:
     """Tests for _create_relationship_edges function."""
     
     def test_edges_with_stored_creds(self, sample_task_with_creds):
-        edges = _create_relationship_edges(sample_task_with_creds, {}, {})
+        edges, skipped = _create_relationship_edges(
+            sample_task_with_creds, {}, {}, allow_orphans=True
+        )
         assert len(edges) == 2
         assert edges[0].kind == "HasTaskWithStoredCreds"
         assert edges[1].kind == "RunsAs"
