@@ -421,7 +421,8 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
                             bh_api_key: Optional[str] = None,
                             bh_api_key_id: Optional[str] = None,
                             ldap_config: Optional[Dict] = None,
-                            allow_orphans: bool = False) -> str:
+                            allow_orphans: bool = False,
+                            bh_timeout: int = 120) -> str:
     """
     Main function to generate OpenGraph file using bhopengraph library.
 
@@ -481,7 +482,7 @@ def generate_opengraph_files(output_dir: str, tasks: List[Dict],
                 password=bh_password,
                 api_key=bh_api_key,
                 api_key_id=bh_api_key_id,
-                timeout=getattr(args, 'bh_timeout', 120)
+                timeout=bh_timeout
             )
             info("BloodHound connector initialized for cross-domain validation")
         except Exception as e:
