@@ -493,10 +493,14 @@ def resolve_sid(sid: str, hv_loader: Optional[HighValueLoader] = None,
     ldap_auth_user = ldap_user if ldap_user else username
     ldap_auth_password = ldap_password if ldap_password else password
     ldap_auth_hashes = ldap_hashes if ldap_hashes else hashes
+    
+    # Only use Kerberos for LDAP if no explicit LDAP credentials provided
+    # This prevents using wrong service ticket (CIFS vs LDAP)
+    use_kerberos_for_ldap = kerberos and not (ldap_password or ldap_hashes)
 
     if not no_ldap and ldap_auth_domain and ldap_auth_user:
         debug(f"Attempting LDAP resolution for SID {sid}")
-        resolved = resolve_sid_via_ldap(sid, ldap_auth_domain, dc_ip, ldap_auth_user, ldap_auth_password, ldap_auth_hashes, kerberos)
+        resolved = resolve_sid_via_ldap(sid, ldap_auth_domain, dc_ip, ldap_auth_user, ldap_auth_password, ldap_auth_hashes, use_kerberos_for_ldap)
         if resolved:
             debug(f"SID {sid} resolved via LDAP: {resolved}")
             return f"{resolved} ({sid})", resolved
