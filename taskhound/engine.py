@@ -531,6 +531,7 @@ def process_target(
     dpapi_key: Optional[str] = None,
     bh_connector: Optional[Any] = None,
     concise: bool = False,
+    timeout: int = 60,
 ) -> List[str]:
     # Connect to `target`, enumerate scheduled tasks, and return printable lines.
     #
@@ -553,7 +554,9 @@ def process_target(
     server_fqdn = None  # Will store the resolved FQDN from SMB
     try:
         # Prefer explicit hashes parameter over password when provided
-        smb = smb_connect(target, domain, username, hashes or password, kerberos=kerberos, dc_ip=dc_ip)
+        smb = smb_connect(
+            target, domain, username, hashes or password, kerberos=kerberos, dc_ip=dc_ip, timeout=timeout
+        )
         good(f"{target}: Connected via SMB")
 
         # Resolve the actual FQDN from SMB connection

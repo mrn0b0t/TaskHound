@@ -15,12 +15,17 @@
 [target]
 # Default domain controller
 # dc_ip = "10.0.0.1"
+# target = "10.0.0.1"
+# targets_file = "targets.txt"
+# timeout = 60
 
 [scanning]
 # Default scan options
 # offline = "./offline_data"
 # include_local = true
 # unsaved_creds = true
+# credguard_detect = false
+# bh_data = "path/to/data.json"
 
 [cache]
 # Caching options for SID resolution and BloodHound queries
@@ -37,6 +42,7 @@ connector = "http://127.0.0.1:8080"
 # api_key_id = "key_secret"
 timeout = 120
 type = "bhce" # or "legacy"
+# save_file = "bh_queries.json"
 
 [bloodhound.opengraph]
 # OpenGraph generation settings
@@ -44,7 +50,7 @@ enabled = true
 output_dir = "./opengraph"
 no_upload = false
 set_icon = true
-icon = "heart"
+icon = "clock"
 color = "#8B5CF6"
 
 [ldap]
@@ -52,6 +58,8 @@ color = "#8B5CF6"
 # no_ldap = false
 # user = "svc_ldap"
 # password = "password"
+# hashes = "LM:NT"
+# domain = "domain.local"
 
 [output]
 # plain = "./output/plain"
@@ -61,3 +69,4 @@ color = "#8B5CF6"
 # backup = "./output/xml_backup"
 # no_summary = false
 # debug = false
+# verbose = false

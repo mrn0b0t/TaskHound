@@ -85,6 +85,12 @@ def load_config() -> Dict[str, Any]:
     target = config_data.get("target", {})
     if "dc_ip" in target:
         defaults["dc_ip"] = target["dc_ip"]
+    if "timeout" in target:
+        defaults["timeout"] = target["timeout"]
+    if "target" in target:
+        defaults["target"] = target["target"]
+    if "targets_file" in target:
+        defaults["targets_file"] = target["targets_file"]
 
     # Scanning
     scan = config_data.get("scanning", {})
@@ -98,6 +104,10 @@ def load_config() -> Dict[str, Any]:
         defaults["include_ms"] = scan["include_ms"]
     if "include_all" in scan:
         defaults["include_all"] = scan["include_all"]
+    if "credguard_detect" in scan:
+        defaults["credguard_detect"] = scan["credguard_detect"]
+    if "bh_data" in scan:
+        defaults["bh_data"] = scan["bh_data"]
 
     # Cache
     cache = config_data.get("cache", {})
@@ -124,6 +134,8 @@ def load_config() -> Dict[str, Any]:
         defaults["bh_api_key_id"] = bh["api_key_id"]
     if "timeout" in bh:
         defaults["bh_timeout"] = bh["timeout"]
+    if "save_file" in bh:
+        defaults["bh_save"] = bh["save_file"]
 
     if "type" in bh:
         if bh["type"].lower() == "bhce":
@@ -179,6 +191,8 @@ def load_config() -> Dict[str, Any]:
         defaults["no_summary"] = output["no_summary"]
     if "debug" in output:
         defaults["debug"] = output["debug"]
+    if "verbose" in output:
+        defaults["verbose"] = output["verbose"]
 
     return defaults
 
@@ -204,6 +218,12 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("-t", "--target", action=OnceOnly, help="Single target")
     target.add_argument("--targets-file", help="File with targets, one per line")
     target.add_argument("--dc-ip", help="Domain controller IP (required when using Kerberos without DNS)")
+    target.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="Connection timeout in seconds (default: 60). Lower this to speed up scans of dead hosts.",
+    )
 
     # High value / scanning options
     scan = ap.add_argument_group("Scanning options")

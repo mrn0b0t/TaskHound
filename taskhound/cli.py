@@ -161,6 +161,7 @@ def main():
                 dpapi_key=args.dpapi_key,
                 bh_connector=bh_connector,
                 concise=not args.verbose,
+                timeout=args.timeout,
             )
             print_results(lines)
             if args.plain and lines:

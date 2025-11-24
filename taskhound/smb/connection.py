@@ -39,14 +39,20 @@ def _parse_hashes(password: str):
 
 
 def smb_connect(
-    target: str, domain: str, username: str, password: str = None, kerberos: bool = False, dc_ip: str = None
+    target: str,
+    domain: str,
+    username: str,
+    password: str = None,
+    kerberos: bool = False,
+    dc_ip: str = None,
+    timeout: int = 60,
 ) -> SMBConnection:
     # Create and authenticate an SMBConnection to `target`.
     #
     # This function prefers passing an explicit lm/nthash when provided and
     # falls back to a cleartext password. For Kerberos mode we delegate to
     # Impacket's kerberosLogin (which supports a KDC host if provided).
-    smb = SMBConnection(remoteName=target, remoteHost=target, sess_port=445)
+    smb = SMBConnection(remoteName=target, remoteHost=target, sess_port=445, timeout=timeout)
 
     pwd, lmhash, nthash = _parse_hashes(password)
 
