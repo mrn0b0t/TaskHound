@@ -98,6 +98,8 @@ def load_config() -> Dict[str, Any]:
         defaults["offline"] = scan["offline"]
     if "include_local" in scan:
         defaults["include_local"] = scan["include_local"]
+    if "opsec" in scan:
+        defaults["opsec"] = scan["opsec"]
     if "unsaved_creds" in scan:
         defaults["unsaved_creds"] = scan["unsaved_creds"]
     if "include_ms" in scan:
@@ -316,6 +318,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     scan.add_argument(
+        "--opsec",
+        action="store_true",
+        help="OPSEC safe mode: Disable noisy operations (SAMR SID lookup, LDAP SID lookup, Credential Guard check)",
+    )
+    scan.add_argument(
         "--include-ms", action="store_true", help="Also include \\Microsoft scheduled tasks (WARNING: very slow)"
     )
     scan.add_argument(
@@ -409,6 +416,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(args):
+    # Handle OPSEC mode precedence
+    if args.opsec:
+        if args.credguard_detect:
+            print("[!] OPSEC mode enabled: Disabling Credential Guard detection")
+            args.credguard_detect = False
+        
+        # Note: SID lookups are handled dynamically in engine.py, but we can warn here
+        if not args.no_ldap:
+            # We don't force no_ldap=True because engine handles it, but good to know
+            pass
+
     # Handle --include-all flag expansion and warnings
     if args.include_all:
         print("[!] WARNING: --include-all flag detected!")

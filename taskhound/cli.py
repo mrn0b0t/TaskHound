@@ -162,6 +162,7 @@ def main():
                 bh_connector=bh_connector,
                 concise=not args.verbose,
                 timeout=args.timeout,
+                opsec=args.opsec,
             )
             print_results(lines)
             if args.plain and lines:

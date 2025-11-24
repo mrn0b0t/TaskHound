@@ -25,6 +25,7 @@
 # offline = "./offline_data"
 # include_local = true
 # unsaved_creds = true
+# opsec = false
 # credguard_detect = false
 # bh_data = "path/to/data.json"
 

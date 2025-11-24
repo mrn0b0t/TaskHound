@@ -14,7 +14,7 @@ from impacket.smbconnection import SessionError
 from .output.printer import format_block
 from .parsers.highvalue import HighValueLoader
 from .parsers.task_xml import parse_task_xml
-from .smb.connection import smb_connect
+from .smb.connection import smb_connect, get_server_fqdn, get_server_sid
 from .smb.credguard import check_credential_guard
 from .smb.tasks import crawl_tasks, smb_listdir
 from .utils.logging import debug as log_debug, good, info, status, warn
@@ -532,6 +532,7 @@ def process_target(
     bh_connector: Optional[Any] = None,
     concise: bool = False,
     timeout: int = 60,
+    opsec: bool = False,
 ) -> List[str]:
     # Connect to `target`, enumerate scheduled tasks, and return printable lines.
     #
@@ -549,6 +550,8 @@ def process_target(
     out_lines: List[str] = []
 
     status(f"[Collecting] {target} ...")
+    if opsec:
+        info(f"{target}: OPSEC mode enabled - skipping risky operations")
 
     credguard_status = None
     server_fqdn = None  # Will store the resolved FQDN from SMB
@@ -562,7 +565,6 @@ def process_target(
         # Resolve the actual FQDN from SMB connection
         # This is critical when target is an IP address - BloodHound needs FQDNs
         # Tries: 1) SMB hostname, 2) DNS via DC, 3) System DNS
-        from .smb.connection import get_server_fqdn, get_server_sid
 
         server_fqdn = get_server_fqdn(smb, target_ip=target, dc_ip=dc_ip)
         if server_fqdn and server_fqdn != "UNKNOWN_HOST":
@@ -574,22 +576,30 @@ def process_target(
 
         # Extract the computer account SID via SAMR RPC (with LDAP fallback)
         # This enables SID-validated BloodHound lookups
-        server_sid = get_server_sid(
-            smb, dc_ip=dc_ip, username=username, password=password, hashes=hashes, kerberos=kerberos
-        )
-        if debug:
-            if server_sid:
-                log_debug(f"{target}: Computer SID: {server_sid}")
-            else:
-                log_debug(f"{target}: Could not retrieve computer SID")
+        # Skipped in OPSEC mode to avoid noisy SAMR/LDAP calls
+        server_sid = None
+        if not opsec:
+            server_sid = get_server_sid(
+                smb, dc_ip=dc_ip, username=username, password=password, hashes=hashes, kerberos=kerberos
+            )
+            if debug:
+                if server_sid:
+                    log_debug(f"{target}: Computer SID: {server_sid}")
+                else:
+                    log_debug(f"{target}: Could not retrieve computer SID")
+        elif debug:
+            log_debug(f"{target}: Skipping SID lookup (OPSEC mode)")
 
         # Credential Guard detection (EXPERIMENTAL, only if enabled)
-        if credguard_detect:
+        # Skipped in OPSEC mode
+        if credguard_detect and not opsec:
             credguard_status = check_credential_guard(smb, target)
             if credguard_status:
                 info(f"{target}: Credential Guard detected (LsaCfgFlags/IsolatedUserMode)")
             else:
                 info(f"{target}: Credential Guard not detected")
+        elif credguard_detect and opsec:
+            info(f"{target}: Skipping Credential Guard check (OPSEC mode)")
     except Exception as e:
         if debug:
             traceback.print_exc()
