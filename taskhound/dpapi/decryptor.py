@@ -18,6 +18,7 @@ Workflow:
 
 import contextlib
 import logging
+from ..utils.logging import good, info, status
 import ntpath
 from binascii import unhexlify
 from typing import Dict, List, Optional
@@ -95,19 +96,19 @@ class ScheduledTaskCredential:
 
     def dump(self) -> None:
         """Print credential in detailed format"""
-        print("\n[SCHEDULED TASK CREDENTIAL]")
-        print(f"Task Name:     {self.task_name}")
-        print(f"Target:        {self.target or 'N/A'}")
+        good("SCHEDULED TASK CREDENTIAL")
+        info(f"Task Name:     {self.task_name}")
+        info(f"Target:        {self.target or 'N/A'}")
         if self.username:
-            print(f"Username:      {self.username}")
+            info(f"Username:      {self.username}")
         if self.password:
-            print(f"Password:      {self.password}")
-        print(f"Blob Path:     {self.blob_path}")
+            info(f"Password:      {self.password}")
+        info(f"Blob Path:     {self.blob_path}")
 
     def dump_quiet(self) -> None:
         """Print credential in quiet format"""
         cred_str = f"{self.username}:{self.password}" if self.username and self.password else "DECRYPTION_FAILED"
-        print(f"[SCHED_TASK] {self.task_name} - {cred_str}")
+        status(f"[SCHED_TASK] {self.task_name} - {cred_str}")
 
 
 class DPAPIDecryptor:

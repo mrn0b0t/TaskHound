@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Set
 
 from bhopengraph import Node, OpenGraph, Properties
 
-from ..utils.logging import debug, error, good, info, warn
+from ..utils.logging import debug, error, good, info, status, warn
 from .builder import _create_principal_id, _create_relationship_edges, _create_task_node, resolve_object_ids_chunked
 
 
@@ -218,7 +218,7 @@ def generate_opengraph_files(
             # Write with indentation for readability
             json.dump(graph_dict, f, indent=2)
 
-        good(f"Successfully wrote {len(graph.nodes)} nodes and {len(graph.edges)} edges")
+        status(f"[+] OpenGraph json generated. {len(graph.nodes)} nodes and {len(graph.edges)} edges")
 
         # Also write raw data for debugging/manual import
         data_path = output_path / "taskhound_data.json"

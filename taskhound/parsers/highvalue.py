@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..utils.date_parser import parse_iso_date, parse_timestamp
 from ..utils.helpers import sanitize_json_string
-from ..utils.logging import warn
+from ..utils.logging import good, info, warn
 
 
 def _analyze_password_freshness(task_date: Optional[str], pwd_change_date: Optional[datetime]) -> Tuple[str, str]:
@@ -118,10 +118,36 @@ class HighValueLoader:
     @staticmethod
     def _schema_help():
         # Print a simple help if the schema is wrong
-        print("[!] Invalid schema in custom HV file!")
-        print("    Required fields: SamAccountName + (sid OR objectid)")
-        print("    Optional fields: groups, group_names, pwdlastset, lastlogon")
-        print("    Additional fields: Any BloodHound attribute will be preserved")
+        warn("Invalid schema in custom HV file!")
+        warn("    Required fields: SamAccountName + (sid OR objectid)")
+        warn("    Optional fields: groups, group_names, pwdlastset, lastlogon")
+        warn("    Additional fields: Any BloodHound attribute will be preserved")
+
+    def _parse_list_field(self, data: Any) -> List[str]:
+        """
+        Parse a field that might be a list, a JSON string array, or a simple string.
+        Returns a list of strings.
+        """
+        if not data:
+            return []
+
+        result = []
+        if isinstance(data, list):
+            result = [str(x).strip() for x in data if x]
+        elif isinstance(data, str):
+            s = data.strip().strip('"')
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, list):
+                        result = [str(x) for x in parsed]
+                except Exception:
+                    # Fallback: treat as single item stripped of brackets
+                    result = [s.strip("[]")]
+            else:
+                # Treat as single item
+                result = [s]
+        return result
 
     def _process_user_data(self, row: Dict[str, Any]) -> bool:
         # Process a single user record from JSON or CSV data.
@@ -202,40 +228,9 @@ class HighValueLoader:
         sid = sid_raw.upper()
 
         # Process group information from the separate fields
-        groups = []
-        group_names = []
-
-        # Handle groups array (group names)
-        groups_data = row.get("groups")
-        if groups_data:
-            if isinstance(groups_data, list):
-                group_names = [str(g).strip() for g in groups_data if g]
-            elif isinstance(groups_data, str):
-                # Handle JSON array format in CSV
-                groups_str = groups_data.strip().strip('"')
-                if groups_str.startswith("[") and groups_str.endswith("]"):
-                    try:
-                        parsed = json.loads(groups_str)
-                        if isinstance(parsed, list):
-                            group_names = [str(x) for x in parsed]
-                    except Exception:
-                        group_names = [groups_str.strip("[]")]
-
-        # Handle group_sids array
-        group_sids_data = row.get("group_sids")
-        if group_sids_data:
-            if isinstance(group_sids_data, list):
-                groups = [str(g).strip() for g in group_sids_data if g]
-            elif isinstance(group_sids_data, str):
-                # Handle JSON array format in CSV
-                sids_str = group_sids_data.strip().strip('"')
-                if sids_str.startswith("[") and sids_str.endswith("]"):
-                    try:
-                        parsed = json.loads(sids_str)
-                        if isinstance(parsed, list):
-                            groups = [str(x) for x in parsed]
-                    except Exception:
-                        groups = [sids_str.strip("[]")]
+        # Use helper to parse potential JSON arrays or lists
+        group_names = self._parse_list_field(row.get("groups"))
+        groups = self._parse_list_field(row.get("group_sids"))
 
         # Create user data starting with all_props and add our additional fields
         user_data = dict(all_props)  # Copy all BloodHound properties
@@ -275,37 +270,15 @@ class HighValueLoader:
         group_names = []
 
         # Handle group_names field (preferred for human-readable names)
-        group_names_data = row.get("group_names") or row.get("groups")
-        if group_names_data:
-            if isinstance(group_names_data, list):
-                potential_names = [str(g).strip() for g in group_names_data if g]
-                # If it looks like SIDs, treat as groups; otherwise as group names
-                if potential_names and potential_names[0].startswith("S-1-5-"):
-                    groups = potential_names
-                else:
-                    group_names = potential_names
-            elif isinstance(group_names_data, str):
-                data_str = group_names_data.strip().strip('"')
-                # Handle JSON array format in CSV
-                if data_str.startswith("[") and data_str.endswith("]"):
-                    try:
-                        parsed = json.loads(data_str)
-                        if isinstance(parsed, list):
-                            if parsed and str(parsed[0]).startswith("S-1-5-"):
-                                groups = [str(x) for x in parsed]
-                            else:
-                                group_names = [str(x) for x in parsed]
-                    except Exception:
-                        # Fallback to single item
-                        if data_str.startswith("S-1-5-"):
-                            groups = [data_str.strip("[]")]
-                        else:
-                            group_names = [data_str.strip("[]")]
-                else:
-                    if data_str.startswith("S-1-5-"):
-                        groups = [data_str]
-                    else:
-                        group_names = [data_str]
+        raw_data = row.get("group_names") or row.get("groups")
+        parsed_list = self._parse_list_field(raw_data)
+
+        if parsed_list:
+            # Heuristic: check if first item looks like a SID
+            if parsed_list[0].upper().startswith("S-1-5-"):
+                groups = parsed_list
+            else:
+                group_names = parsed_list
 
         # Create user data with core fields
         user_data = {
@@ -341,13 +314,13 @@ class HighValueLoader:
         # Detect format type
         if self._is_bhce_format(data):
             self.format_type = "bhce"
-            print("[+] BloodHound Community Edition export detected")
+            good("BloodHound Community Edition export detected")
             return self._load_bhce_json(data)
         elif isinstance(data, list) and len(data) > 0:
             # Check if it's legacy format
             if self._has_fields(data[0].keys()):
                 self.format_type = "legacy"
-                print("[+] Legacy BloodHound export detected")
+                good("Legacy BloodHound export detected")
                 return self._load_legacy_json(data)
             else:
                 self._schema_help()

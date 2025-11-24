@@ -18,9 +18,9 @@ try:
     from neo4j import GraphDatabase
 except ImportError:
     GraphDatabase = None
-from ..utils.bh_api import bhce_signed_request, get_bloodhound_token
+from ..utils.bh_auth import BloodHoundAuthenticator
 from ..utils.helpers import sanitize_json_string
-from ..utils.logging import good, info, warn
+from ..utils.logging import good, info, status, warn
 
 
 def _safe_get_sam(data: dict, key: str) -> str:
@@ -75,11 +75,49 @@ class BloodHoundConnector:
         self.timeout = timeout
         self.users_data = {}
 
-    def _bhce_signed_request(self, method, path, base_url, body=None):
-        """Wrapper for bhce_signed_request using instance credentials"""
-        return bhce_signed_request(
-            method, path, base_url, self.api_key, self.api_key_id, body, timeout=self.timeout
+        # Initialize authenticator for BHCE
+        base_url = self.ip if "://" in self.ip else f"http://{self.ip}:8080"
+        self.authenticator = BloodHoundAuthenticator(
+            base_url=base_url,
+            username=username,
+            password=password,
+            api_key=api_key,
+            api_key_id=api_key_id,
+            timeout=timeout,
         )
+
+    def run_cypher_query(self, query: str) -> Optional[Dict]:
+        """
+        Execute a Cypher query against BloodHound CE, handling authentication automatically.
+
+        Args:
+            query: The Cypher query string
+
+        Returns:
+            JSON response data (dict) or None if failed
+        """
+        if self.bh_type != "bhce":
+            warn("run_cypher_query only supports BHCE type")
+            return None
+
+        # Prepare Query Body
+        body = {"query": query}
+
+        try:
+            response = self.authenticator.request("POST", "/api/v2/graphs/cypher", body)
+
+            if response and response.status_code == 200:
+                return response.json()
+            elif response:
+                warn(f"BloodHound API returned status {response.status_code}: {response.text}")
+                return None
+            else:
+                # Error already logged by authenticator
+                return None
+
+        except Exception as e:
+            warn(f"Error executing Cypher query: {e}")
+            return None
 
     def connect_and_query(self) -> bool:
         """Connect to BloodHound and query high-value users"""
@@ -98,47 +136,20 @@ class BloodHoundConnector:
     def _query_bhce(self) -> bool:
         """Query BHCE via API"""
         # BHCE typically runs on port 8080
-        base_url = f"http://{self.ip}:8080"
+        # base_url is handled by authenticator
 
         # Get authentication headers
         try:
-            # Choose authentication method
-            use_api_key = self.api_key and self.api_key_id
-
-            if use_api_key:
-                info("Using API key authentication for BloodHound CE")
-                # Test connection with HMAC-signed request
-                response = bhce_signed_request(
-                    "GET", "/api/version", base_url, self.api_key, self.api_key_id, timeout=self.timeout
-                )
-            else:
-                # BHCE uses token-based authentication with username/password
-                if not self.username or not self.password:
-                    warn("BloodHound authentication requires either API key/ID pair or username/password")
-                    return False
-
-                try:
-                    token = get_bloodhound_token(base_url, self.username, self.password, timeout=10)
-                except Exception as e:
-                    warn(f"BloodHound login failed: {e}")
-                    return False
-
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "accept": "application/json",
-                    "Prefer": "0",
-                }
-
-                # Test connection with token
-                response = requests.get(f"{base_url}/api/version", headers=headers, timeout=10)
-            if response.status_code != 200:
-                warn(f"BloodHound connection failed - HTTP {response.status_code}")
+            # Test connection
+            response = self.authenticator.request("GET", "/api/version")
+            
+            if not response or response.status_code != 200:
+                warn(f"BloodHound connection failed - HTTP {response.status_code if response else 'No Response'}")
                 return False
 
-            good(f"Connected to BHCE at {self.ip}:8080")
-            info(
-                "Collecting high-value user data - this may take a moment depending on database size and connection speed..."
+            status(f"[+] Connected to BHCE at {self.ip}:8080")
+            status(
+                "[*] Collecting high-value user data - this may take a moment depending on database size and connection speed..."
             )
 
         except requests.exceptions.ConnectionError:
@@ -164,21 +175,11 @@ class BloodHoundConnector:
         query_data = {"query": comprehensive_query, "include_properties": True}
 
         try:
-            if use_api_key:
-                # Use HMAC-signed request for API key authentication
-                body = json.dumps(query_data).encode("utf-8")
-                response = bhce_signed_request(
-                    "POST", "/api/v2/graphs/cypher", base_url, self.api_key, self.api_key_id, body, timeout=self.timeout
-                )
-            else:
-                # Use Bearer token for username/password authentication
-                response = requests.post(
-                    f"{base_url}/api/v2/graphs/cypher", headers=headers, json=query_data, timeout=self.timeout
-                )
+            response = self.authenticator.request("POST", "/api/v2/graphs/cypher", query_data)
 
-            if response.status_code != 200:
-                warn(f"BloodHound BHCE query failed - HTTP {response.status_code}")
-                if response.status_code == 400:
+            if not response or response.status_code != 200:
+                warn(f"BloodHound BHCE query failed - HTTP {response.status_code if response else 'No Response'}")
+                if response and response.status_code == 400:
                     warn("Query format error - check Cypher syntax")
                 return False
 
@@ -200,10 +201,7 @@ class BloodHoundConnector:
                             properties = node_data.get("properties", {})
                             # Get group memberships for this user
                             username = properties.get("samaccountname", "")
-                            if use_api_key:
-                                group_sids, group_names = self._get_user_groups_bhce_hmac(username, base_url)
-                            else:
-                                group_sids, group_names = self._get_user_groups_bhce(username, headers, base_url)
+                            group_sids, group_names = self._get_user_groups_bhce(username)
                             properties["group_sids"] = group_sids
                             properties["group_names"] = group_names
                             self._process_bhce_user(properties, users_found)
@@ -279,9 +277,9 @@ class BloodHoundConnector:
                 result = session.run("MATCH (n) RETURN count(n) LIMIT 1")
                 result.single()[0]  # This will raise an exception if connection fails
 
-            good(f"Connected to Legacy BloodHound at {self.ip}:7687")
-            info(
-                "Collecting high-value user data - this may take a moment depending on database size and connection speed..."
+            status(f"[+] Connected to Legacy BloodHound at {self.ip}:7687")
+            status(
+                "[*] Collecting high-value user data - this may take a moment depending on database size and connection speed..."
             )
 
         except Exception as e:
@@ -346,51 +344,7 @@ class BloodHoundConnector:
             warn(f"BloodHound query execution failed: {e}")
             return False
 
-    def _get_user_groups_bhce_hmac(self, username: str, base_url: str) -> tuple:
-        """Get group memberships for a user in BHCE using HMAC-signed request"""
-        if not username:
-            return [], []
-
-        try:
-            # Query for this user's group memberships using samaccountname
-            group_query = f"""
-            MATCH (u:User {{samaccountname: "{username}"}})-[:MemberOf*1..]->(g:Group)
-            RETURN g
-            """
-
-            query_data = {"query": group_query, "include_properties": True}
-
-            body = json.dumps(query_data).encode("utf-8")
-            response = self._bhce_signed_request("POST", "/api/v2/graphs/cypher", base_url, body)
-
-            if response.status_code == 200:
-                # Parse response with JSON sanitization
-                sanitized_response = sanitize_json_string(response.text)
-                result = json.loads(sanitized_response)
-                group_sids = []
-                group_names = []
-
-                # Parse the response to extract group data
-                if "data" in result and "nodes" in result["data"]:
-                    nodes = result["data"]["nodes"]
-                    for _, node_data in nodes.items():
-                        if node_data.get("kind") == "Group":
-                            properties = node_data.get("properties", {}) or {}
-                            objectid = properties.get("objectid", "") or ""
-                            name = properties.get("name", "") or ""
-
-                            if objectid:
-                                group_sids.append(objectid)
-                                group_names.append(name)
-
-                return group_sids, group_names
-            else:
-                return [], []
-
-        except Exception:
-            return [], []
-
-    def _get_user_groups_bhce(self, username: str, headers: dict, base_url: str) -> tuple:
+    def _get_user_groups_bhce(self, username: str) -> tuple:
         """Get group memberships for a user in BHCE"""
         if not username:
             return [], []
@@ -402,20 +356,26 @@ class BloodHoundConnector:
             RETURN g
             """
 
-            query_data = {"query": group_query, "include_properties": True}
+            # Use run_cypher_query which handles auth automatically
+            # Note: run_cypher_query expects just the query string, not the full body
+            # But wait, run_cypher_query wraps it in {"query": query}.
+            # However, here we might need "include_properties": True?
+            # run_cypher_query implementation: body = json.dumps({"query": query}, separators=(",", ":")).encode()
+            # It does NOT include "include_properties": True.
+            # BHCE API v2 usually returns properties by default in "nodes" map if we return the node.
+            # Let's check if run_cypher_query is sufficient.
+            # The query returns 'g' (the node).
+            
+            data = self.run_cypher_query(group_query)
 
-            response = requests.post(f"{base_url}/api/v2/graphs/cypher", headers=headers, json=query_data, timeout=10)
-
-            if response.status_code == 200:
-                # Parse response with JSON sanitization
-                sanitized_response = sanitize_json_string(response.text)
-                result = json.loads(sanitized_response)
+            if data:
+                # Parse the response to extract group data
+                # run_cypher_query returns the JSON response directly
                 group_sids = []
                 group_names = []
 
-                # Parse the response to extract group data
-                if "data" in result and "nodes" in result["data"]:
-                    nodes = result["data"]["nodes"]
+                if "data" in data and "nodes" in data["data"]:
+                    nodes = data["data"]["nodes"]
                     for _, node_data in nodes.items():
                         if node_data.get("kind") == "Group":
                             properties = node_data.get("properties", {}) or {}
@@ -498,21 +458,12 @@ class BloodHoundConnector:
             warn("search_node_by_name only supported for BHCE")
             return None
 
-        base_url = f"http://{self.ip}:8080"
         query = f'MATCH (n:{node_type} {{name: "{name}"}}) RETURN n'
 
         try:
-            # Use API key authentication if available
-            if self.api_key and self.api_key_id:
-                body = json.dumps({"query": query}, separators=(",", ":")).encode()
-                response = self._bhce_signed_request("POST", "/api/v2/graphs/cypher", base_url, body)
-            else:
-                # Fall back to token authentication (would need to implement token storage)
-                warn("Token authentication for search_node_by_name not implemented yet")
-                return None
+            data = self.run_cypher_query(query)
 
-            if response.status_code == 200:
-                data = response.json()
+            if data:
                 nodes = data.get("data", {}).get("nodes", {})
 
                 if nodes:
@@ -525,9 +476,7 @@ class BloodHoundConnector:
                         "object_id": node_data.get("objectId", ""),
                         "label": node_data.get("label", ""),
                     }
-            else:
-                warn(f"BloodHound search failed: HTTP {response.status_code}")
-                return None
+            return None
 
         except Exception as e:
             warn(f"Error searching for {node_type} {name}: {e}")
@@ -552,36 +501,14 @@ class BloodHoundConnector:
             return None
 
         try:
-            # Handle both "hostname" and "http://hostname:port" formats
-            if self.ip.startswith("http://") or self.ip.startswith("https://"):
-                base_url = self.ip.rstrip("/")
-            else:
-                base_url = f"http://{self.ip}:8080"
-
             # Build Cypher query with case-insensitive STARTS WITH
             # Note: Must add '.' after NETBIOS to avoid matching parent domains
             # Example: "SPRINGFIELD." matches "SPRINGFIELD.LOCAL" not "THESIMPSONS.SPRINGFIELD.LOCAL"
-            query_data = {
-                "query": f"MATCH (d:Domain) WHERE toLower(d.name) STARTS WITH '{netbios_name.lower()}.' RETURN d"
-            }
+            query = f"MATCH (d:Domain) WHERE toLower(d.name) STARTS WITH '{netbios_name.lower()}.' RETURN d"
 
-            # Choose authentication method
-            use_api_key = self.api_key and self.api_key_id
+            data = self.run_cypher_query(query)
 
-            if use_api_key:
-                body = json.dumps(query_data).encode("utf-8")
-                response = self._bhce_signed_request("POST", "/api/v2/graphs/cypher", base_url, body)
-            else:
-                # Use Bearer token authentication (not implemented here, needs login flow)
-                warn("Domain query requires API key authentication")
-                return None
-
-            # Handle response
-            if response.status_code == 404:
-                # BloodHound returns 404 for empty results - not an error
-                return None
-            elif response.status_code == 200:
-                data = response.json()
+            if data:
                 nodes = data.get("data", {}).get("nodes", {})
 
                 if len(nodes) == 0:
@@ -597,9 +524,7 @@ class BloodHoundConnector:
                     warn(f"Multiple domains match NETBIOS '{netbios_name}': {domain_names}")
                     node = list(nodes.values())[0]
                     return {"name": node.get("label"), "objectid": node.get("objectId")}
-            else:
-                warn(f"Domain query failed: HTTP {response.status_code}")
-                return None
+            return None
 
         except Exception as e:
             warn(f"Error querying domain '{netbios_name}': {e}")
@@ -623,32 +548,13 @@ class BloodHoundConnector:
             return None
 
         try:
-            # Handle both "hostname" and "http://hostname:port" formats
-            if self.ip.startswith("http://") or self.ip.startswith("https://"):
-                base_url = self.ip.rstrip("/")
-            else:
-                base_url = f"http://{self.ip}:8080"
-
             # Build Cypher query - match by name (which is UPN for users in BloodHound)
             # Use case-insensitive matching for reliability
-            query_data = {"query": f"MATCH (u:User) WHERE toLower(u.name) = '{upn.lower()}' RETURN u"}
+            query = f"MATCH (u:User) WHERE toLower(u.name) = '{upn.lower()}' RETURN u"
 
-            # Choose authentication method
-            use_api_key = self.api_key and self.api_key_id
+            data = self.run_cypher_query(query)
 
-            if use_api_key:
-                body = json.dumps(query_data).encode("utf-8")
-                response = self._bhce_signed_request("POST", "/api/v2/graphs/cypher", base_url, body)
-            else:
-                warn("User query requires API key authentication")
-                return None
-
-            # Handle response
-            if response.status_code == 404:
-                # BloodHound returns 404 for empty results - not an error
-                return None
-            elif response.status_code == 200:
-                data = response.json()
+            if data:
                 nodes = data.get("data", {}).get("nodes", {})
 
                 if len(nodes) == 0:
@@ -664,9 +570,7 @@ class BloodHoundConnector:
                     node_id = list(nodes.keys())[0]
                     node = list(nodes.values())[0]
                     return {"name": node.get("label"), "objectid": node.get("objectId"), "node_id": node_id}
-            else:
-                warn(f"User query failed: HTTP {response.status_code}")
-                return None
+            return None
 
         except Exception as e:
             warn(f"Error querying user '{upn}': {e}")

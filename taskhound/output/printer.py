@@ -112,6 +112,7 @@ def format_block(
     ldap_hashes: Optional[str] = None,
     meta: Optional[Dict[str, str]] = None,
     decrypted_creds: Optional[List] = None,
+    concise: bool = False,
 ) -> List[str]:
     # Format a small pretty-print block used by the CLI output.
     #
@@ -141,6 +142,14 @@ def format_block(
         ldap_password,
         ldap_hashes,
     )
+
+    if concise:
+        # Concise output: One line per task
+        # Format: [KIND] RunAs | Path | What
+        line = f"{header} {display_runas} | {rel_path} | {what}"
+        if extra_reason:
+            line += f" | {extra_reason}"
+        return [line]
 
     base = [f"\n{header} {rel_path}"]
 

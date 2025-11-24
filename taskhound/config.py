@@ -17,6 +17,19 @@ except ImportError:
 from .utils.helpers import is_ipv4
 
 
+class OnceOnly(argparse.Action):
+    """
+    Custom argparse Action to prevent arguments from being specified multiple times.
+    This is critical for preventing CLI parsing bugs where a flag (e.g. -d)
+    is accidentally reused as part of another flag's value (e.g. -debug).
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest, None) is not None:
+            raise argparse.ArgumentError(self, f"Argument {option_string} can only be specified once.")
+        setattr(namespace, self.dest, values)
+
+
 def load_config() -> Dict[str, Any]:
     """
     Load configuration from TOML files.
@@ -176,15 +189,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Authentication options
     auth = ap.add_argument_group("Authentication options")
-    auth.add_argument("-u", "--username", help="Username (required for online mode)")
-    auth.add_argument("-p", "--password", help="Password (omit with -k if using Kerberos/ccache)")
-    auth.add_argument("-d", "--domain", help="Domain (required for online mode)")
-    auth.add_argument("--hashes", help="NTLM hashes in LM:NT format (or NT-only 32-hex) to use instead of password")
+    auth.add_argument("-u", "--username", action=OnceOnly, help="Username (required for online mode)")
+    auth.add_argument(
+        "-p", "--password", action=OnceOnly, help="Password (omit with -k if using Kerberos/ccache)"
+    )
+    auth.add_argument("-d", "--domain", action=OnceOnly, help="Domain (required for online mode)")
+    auth.add_argument(
+        "--hashes", help="NTLM hashes in LM:NT format (or NT-only 32-hex) to use instead of password"
+    )
     auth.add_argument("-k", "--kerberos", action="store_true", help="Use Kerberos authentication (supports ccache)")
 
     # Target selection
     target = ap.add_argument_group("Target options")
-    target.add_argument("-t", "--target", help="Single target")
+    target.add_argument("-t", "--target", action=OnceOnly, help="Single target")
     target.add_argument("--targets-file", help="File with targets, one per line")
     target.add_argument("--dc-ip", help="Domain controller IP (required when using Kerberos without DNS)")
 
@@ -435,7 +452,8 @@ def validate_args(args):
             # Default to BHCE if not specified
             args.bhce = True
             has_type = True
-            print("[*] Defaulting to BloodHound Community Edition (BHCE)")
+            from .utils.logging import status
+            status("[*] Defaulting to BloodHound Community Edition (BHCE)")
 
         if args.bh_data:
             print("[!] ERROR: Cannot use both --bh-live and --bh-data simultaneously")

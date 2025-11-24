@@ -118,6 +118,7 @@ def main():
             debug=args.debug,
             no_ldap=args.no_ldap,
             dpapi_key=args.dpapi_key,
+            concise=not args.verbose,
         )
         print_results(lines)
     else:
@@ -159,6 +160,7 @@ def main():
                 loot=args.loot,
                 dpapi_key=args.dpapi_key,
                 bh_connector=bh_connector,
+                concise=not args.verbose,
             )
             print_results(lines)
             if args.plain and lines:

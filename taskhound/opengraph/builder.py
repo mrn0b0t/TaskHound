@@ -581,35 +581,9 @@ def resolve_object_ids_chunked(
         try:
             debug(f"Querying {node_type} chunk with SID validation: {len(names_with_sids)} items")
 
-            # Build base URL
-            base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
-            query_data = {"query": query}
+            data = bh_connector.run_cypher_query(query)
 
-            # Use appropriate authentication method
-            import requests
-            if bh_connector.api_key and bh_connector.api_key_id:
-                # API key authentication - use HMAC-signed request
-                body = json.dumps(query_data, separators=(',', ':')).encode()
-                response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
-            elif bh_connector.username and bh_connector.password:
-                # Username/password authentication - get token and use Bearer auth
-                try:
-                    token = get_bloodhound_token(base_url, bh_connector.username, bh_connector.password, timeout=10)
-                except Exception as e:
-                    warn(f"BloodHound login failed: {e}")
-                    return {}
-
-                headers = {
-                    'Authorization': f'Bearer {token}',
-                    'Content-Type': 'application/json'
-                }
-                response = requests.post(f"{base_url}/api/v2/graphs/cypher", headers=headers, json=query_data, timeout=bh_connector.timeout)
-            else:
-                warn("BloodHound authentication not configured properly")
-                return {}
-
-            if response.status_code == 200:
-                data = response.json()
+            if data:
                 nodes = data.get("data", {}).get("nodes", {})
 
                 # Group nodes by name to detect duplicates
@@ -655,7 +629,6 @@ def resolve_object_ids_chunked(
 
                 return mapping
             else:
-                warn(f"BloodHound API returned status {response.status_code}: {response.text}")
                 return {}
         except Exception as e:
             warn(f"Error querying BloodHound with SID validation: {e}")
@@ -685,38 +658,9 @@ def resolve_object_ids_chunked(
         try:
             debug(f"Querying {node_type} chunk: {len(names)} items")
 
-            base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
-            body = json.dumps({"query": query}, separators=(',', ':')).encode()
+            data = bh_connector.run_cypher_query(query)
 
-            # Handle both authentication types: API key (HMAC) and username/password (Bearer token)
-            if bh_connector.api_key and bh_connector.api_key_id:
-                # Use API key authentication with HMAC signature
-                response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
-            elif bh_connector.username and bh_connector.password:
-                # Use username/password authentication with Bearer token
-                try:
-                    token = get_bloodhound_token(base_url, bh_connector.username, bh_connector.password, timeout=bh_connector.timeout)
-                except Exception as e:
-                    warn(f"BloodHound login failed: {e}")
-                    return {}
-
-                # Make authenticated query with Bearer token
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {token}'
-                }
-                response = requests.post(
-                    f"{base_url}/api/v2/graphs/cypher",
-                    data=body,
-                    headers=headers,
-                    timeout=bh_connector.timeout
-                )
-            else:
-                warn("No valid BloodHound authentication configured (need API key or username/password)")
-                return {}
-
-            if response.status_code == 200:
-                data = response.json()
+            if data:
                 nodes = data.get("data", {}).get("nodes", {})
 
                 # Nodes are returned as dict keyed by node ID (THIS is the graph database ID!)
@@ -731,7 +675,6 @@ def resolve_object_ids_chunked(
 
                 return mapping
             else:
-                warn(f"BloodHound API returned status {response.status_code}: {response.text}")
                 return {}
 
         except Exception as e:
@@ -761,35 +704,9 @@ def resolve_object_ids_chunked(
         try:
             debug(f"Querying {node_type} chunk by SID: {len(sids)} items")
 
-            base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
-            body = json.dumps({"query": query}, separators=(',', ':')).encode()
+            data = bh_connector.run_cypher_query(query)
 
-            # Handle both authentication types: API key (HMAC) and username/password (Bearer token)
-            if bh_connector.api_key and bh_connector.api_key_id:
-                response = bh_connector._bhce_signed_request('POST', '/api/v2/graphs/cypher', base_url, body)
-            elif bh_connector.username and bh_connector.password:
-                try:
-                    token = get_bloodhound_token(base_url, bh_connector.username, bh_connector.password, timeout=bh_connector.timeout)
-                except Exception as e:
-                    warn(f"BloodHound login failed: {e}")
-                    return {}
-
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {token}'
-                }
-                response = requests.post(
-                    f"{base_url}/api/v2/graphs/cypher",
-                    data=body,
-                    headers=headers,
-                    timeout=bh_connector.timeout
-                )
-            else:
-                warn("No valid BloodHound authentication configured")
-                return {}
-
-            if response.status_code == 200:
-                data = response.json()
+            if data:
                 nodes = data.get("data", {}).get("nodes", {})
 
                 for node_id, node in nodes.items():
@@ -801,7 +718,6 @@ def resolve_object_ids_chunked(
 
                 return mapping
             else:
-                warn(f"BloodHound API returned status {response.status_code}: {response.text}")
                 return {}
 
         except Exception as e:

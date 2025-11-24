@@ -229,49 +229,12 @@ def resolve_sid_via_bloodhound_api(sid: str, bh_connector) -> Optional[str]:
         return None
 
     try:
-        import json
-
-        import requests
-
         # Build Cypher query to find user or computer by objectId (SID)
         query = f'MATCH (n) WHERE n.objectid = "{sid}" RETURN n.name AS name LIMIT 1'
 
-        base_url = bh_connector.ip if "://" in bh_connector.ip else f"http://{bh_connector.ip}:8080"
-        body = json.dumps({"query": query}, separators=(",", ":")).encode()
+        data = bh_connector.run_cypher_query(query)
 
-        # Handle both authentication types
-        if bh_connector.api_key and bh_connector.api_key_id:
-            # Use API key authentication
-            response = bh_connector._bhce_signed_request("POST", "/api/v2/graphs/cypher", base_url, body)
-        elif bh_connector.username and bh_connector.password:
-            # Use username/password authentication
-            login_url = f"{base_url}/api/v2/login"
-            login_payload = {
-                "login_method": "secret",
-                "username": bh_connector.username,
-                "secret": bh_connector.password,
-            }
-            login_response = requests.post(login_url, json=login_payload, timeout=bh_connector.timeout)
-
-            if login_response.status_code == 200:
-                token = login_response.json().get("data", {}).get("session_token")
-                if not token:
-                    debug("Failed to get session token for BloodHound API SID resolution")
-                    return None
-
-                headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-                response = requests.post(
-                    f"{base_url}/api/v2/graphs/cypher", data=body, headers=headers, timeout=bh_connector.timeout
-                )
-            else:
-                debug(f"BloodHound login failed for SID resolution: {login_response.status_code}")
-                return None
-        else:
-            debug("No valid BloodHound authentication for API SID resolution")
-            return None
-
-        if response.status_code == 200:
-            data = response.json()
+        if data:
             # Extract name from Cypher query result
             if "data" in data and "data" in data["data"] and len(data["data"]["data"]) > 0:
                 result = data["data"]["data"][0]
@@ -280,7 +243,7 @@ def resolve_sid_via_bloodhound_api(sid: str, bh_connector) -> Optional[str]:
                     info(f"Resolved SID {sid} to {username} via BloodHound API")
                     return username
         else:
-            debug(f"BloodHound API SID query returned {response.status_code}")
+            debug(f"BloodHound API SID query returned no data")
 
     except Exception as e:
         debug(f"BloodHound API SID resolution failed: {e}")
@@ -791,7 +754,7 @@ def resolve_sid(
             cache.delete("sid_failures", sid)
 
     # Tier 1: Try BloodHound offline data first
-    print("DEBUG: Tier 1 check")
+    debug("Tier 1 check")
     resolved = resolve_sid_from_bloodhound(sid, hv_loader)
     if resolved:
         debug(f"SID {sid} resolved via BloodHound offline data: {resolved}")

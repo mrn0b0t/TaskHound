@@ -27,7 +27,7 @@
 import struct
 from typing import Dict, List, Optional
 
-from ..utils.logging import debug, info, warn
+from ..utils.logging import debug, info, status, warn
 
 
 class DPAPIBlobParser:
@@ -239,42 +239,42 @@ class DPAPIBlobParser:
             blob_info: Parsed blob information dictionary
         """
         if not blob_info or not blob_info.get("parsed_successfully"):
-            print("[!] Failed to parse blob")
+            warn("Failed to parse blob")
             return
 
-        print("\n" + "=" * 70)
-        print("DPAPI BLOB ANALYSIS (Without Decryption)")
-        print("=" * 70)
+        status("\n" + "=" * 70)
+        status("DPAPI BLOB ANALYSIS (Without Decryption)")
+        status("=" * 70)
 
         if blob_info.get("blob_path"):
-            print(f"File: {blob_info['blob_path']}")
+            status(f"File: {blob_info['blob_path']}")
 
-        print(f"Total Size: {blob_info['total_size']} bytes")
-        print(f"Version: {blob_info.get('version', 'Unknown')}")
+        status(f"Total Size: {blob_info['total_size']} bytes")
+        status(f"Version: {blob_info.get('version', 'Unknown')}")
 
-        print("\n--- CREDENTIAL INFORMATION ---")
+        status("\n--- CREDENTIAL INFORMATION ---")
         cred_guid = blob_info.get("credential_guid", "Unknown")
-        print(f"Credential GUID: {cred_guid}")
-        print("  → This identifies the specific credential protected by DPAPI")
+        status(f"Credential GUID: {cred_guid}")
+        status("  → This identifies the specific credential protected by DPAPI")
 
-        print("\n--- DATA STRUCTURE ---")
-        print(f"Remaining Data: {blob_info.get('remaining_data_size', 0)} bytes after GUID")
+        status("\n--- DATA STRUCTURE ---")
+        status(f"Remaining Data: {blob_info.get('remaining_data_size', 0)} bytes after GUID")
 
         if blob_info.get("algorithms_found"):
-            print("\n--- ALGORITHMS DETECTED ---")
+            status("\n--- ALGORITHMS DETECTED ---")
             for alg in blob_info["algorithms_found"]:
-                print(f"  • {alg['name']} ({alg['id']}) at offset {alg['offset']}")
+                status(f"  • {alg['name']} ({alg['id']}) at offset {alg['offset']}")
 
         if blob_info.get("description"):
-            print(f"\nDescription: {blob_info['description']}")
+            status(f"\nDescription: {blob_info['description']}")
 
-        print("\n--- FORENSIC VALUE ---")
-        print("  • GUID identifies which scheduled task credential this protects")
-        print("  • Blob requires user/SYSTEM DPAPI master key to decrypt")
-        print("  • Extract master keys from: C:\\Users\\[user]\\AppData\\Roaming\\Microsoft\\Protect\\[SID]\\")
-        print("  • Or from: C:\\Windows\\System32\\Microsoft\\Protect\\S-1-5-18\\ (SYSTEM)")
+        status("\n--- FORENSIC VALUE ---")
+        status("  • GUID identifies which scheduled task credential this protects")
+        status("  • Blob requires user/SYSTEM DPAPI master key to decrypt")
+        status("  • Extract master keys from: C:\\Users\\[user]\\AppData\\Roaming\\Microsoft\\Protect\\[SID]\\")
+        status("  • Or from: C:\\Windows\\System32\\Microsoft\\Protect\\S-1-5-18\\ (SYSTEM)")
 
-        print("=" * 70)
+        status("=" * 70)
 
     def print_collection_summary(self, analysis: Dict) -> None:
         """
@@ -283,34 +283,34 @@ class DPAPIBlobParser:
         Args:
             analysis: Analysis results from analyze_blob_collection
         """
-        print("\n" + "=" * 70)
-        print("DPAPI BLOB COLLECTION ANALYSIS")
-        print("=" * 70)
+        status("\n" + "=" * 70)
+        status("DPAPI BLOB COLLECTION ANALYSIS")
+        status("=" * 70)
 
-        print(f"Total Blobs Analyzed: {analysis['total_blobs']}")
-        print(f"Successfully Parsed: {analysis['successfully_parsed']}")
-        print(f"Failed to Parse: {analysis['failed_to_parse']}")
+        status(f"Total Blobs Analyzed: {analysis['total_blobs']}")
+        status(f"Successfully Parsed: {analysis['successfully_parsed']}")
+        status(f"Failed to Parse: {analysis['failed_to_parse']}")
 
-        print("\n--- CREDENTIAL GUID USAGE ---")
-        print(f"Unique Credential GUIDs Found: {len(analysis['credential_guids'])}")
+        status("\n--- CREDENTIAL GUID USAGE ---")
+        status(f"Unique Credential GUIDs Found: {len(analysis['credential_guids'])}")
         for cred_guid in list(analysis["credential_guids"])[:10]:  # Show first 10
             count = sum(1 for b in analysis["blob_details"] if b.get("credential_guid") == cred_guid)
-            print(f"  • {cred_guid[:50]}... ({count} blobs)")
+            status(f"  • {cred_guid[:50]}... ({count} blobs)")
 
-        print("\n--- ENCRYPTION ALGORITHMS ---")
+        status("\n--- ENCRYPTION ALGORITHMS ---")
         for alg, count in analysis["cipher_algorithms"].items():
-            print(f"  • {alg}: {count} blobs")
+            status(f"  • {alg}: {count} blobs")
 
-        print("\n--- HASH ALGORITHMS ---")
+        status("\n--- HASH ALGORITHMS ---")
         for alg, count in analysis["hash_algorithms"].items():
-            print(f"  • {alg}: {count} blobs")
+            status(f"  • {alg}: {count} blobs")
 
-        print("\n--- KEY FINDINGS ---")
-        print("[+] Credential GUIDs identify specific protected credentials")
-        print("[+] Encryption algorithms show Windows DPAPI protection strength")
-        print("[+] These blobs require user/system master keys for decryption")
-        print(
+        status("\n--- KEY FINDINGS ---")
+        status("[+] Credential GUIDs identify specific protected credentials")
+        status("[+] Encryption algorithms show Windows DPAPI protection strength")
+        status("[+] These blobs require user/system master keys for decryption")
+        status(
             "[+] Extract blobs + master keys from C:\\Users\\[user]\\AppData\\Roaming\\Microsoft\\Protect for offline attack"
         )
 
-        print("=" * 70)
+        status("=" * 70)

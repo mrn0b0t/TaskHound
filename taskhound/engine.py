@@ -17,7 +17,7 @@ from .parsers.task_xml import parse_task_xml
 from .smb.connection import smb_connect
 from .smb.credguard import check_credential_guard
 from .smb.tasks import crawl_tasks, smb_listdir
-from .utils.logging import good, info, status, warn
+from .utils.logging import debug as log_debug, good, info, status, warn
 from .utils.sid_resolver import looks_like_domain_user
 
 
@@ -55,6 +55,7 @@ def process_offline_directory(
     debug: bool,
     no_ldap: bool = False,
     dpapi_key: Optional[str] = None,
+    concise: bool = False,
 ) -> List[str]:
     # Process previously collected XML files from a directory structure.
     #
@@ -85,7 +86,7 @@ def process_offline_directory(
 
         # Also process any XML files in this directory
         lines = _process_offline_host(
-            hostname, offline_dir, hv, show_unsaved_creds, include_local, all_rows, debug, no_ldap
+            hostname, offline_dir, hv, show_unsaved_creds, include_local, all_rows, debug, no_ldap, concise
         )
         out_lines.extend(lines)
         return out_lines
@@ -115,9 +116,11 @@ def process_offline_directory(
             out_lines.extend(dpapi_lines)
 
     # Process task XML files
-    for host in host_dirs:
-        host_path = os.path.join(offline_dir, host)
-        lines = _process_offline_host(host, host_path, hv, show_unsaved_creds, include_local, all_rows, debug, no_ldap)
+    for host_dir in host_dirs:
+        host_path = os.path.join(offline_dir, host_dir)
+        lines = _process_offline_host(
+            host_dir, host_path, hv, show_unsaved_creds, include_local, all_rows, debug, no_ldap, concise
+        )
         out_lines.extend(lines)
 
     return out_lines
@@ -198,6 +201,7 @@ def _process_offline_host(
     all_rows: List[Dict],
     debug: bool,
     no_ldap: bool = False,
+    concise: bool = False,
 ) -> List[str]:
     # Process XML files for a single host from offline directory
     out_lines: List[str] = []
@@ -249,7 +253,7 @@ def _process_offline_host(
         # For offline processing, target_ip is not applicable (already offline)
         row = _build_row(hostname, rel_path, meta, target_ip=None)
 
-        # Determine if the task stores credentials or runs with token/S4U (no stored credentials)
+        # Determine if the task stores credentials or runs with token/S4U (no saved credentials)
         logon_type = (meta.get("logon_type") or "").strip()
         no_saved_creds = (not logon_type) or logon_type.lower() in (
             "interactivetoken",
@@ -302,6 +306,7 @@ def _process_offline_host(
                             ldap_user=None,
                             ldap_password=None,
                             meta=meta,
+                            concise=concise,
                         )
                     )
                     priv_count += 1
@@ -347,6 +352,7 @@ def _process_offline_host(
                             ldap_user=None,
                             ldap_password=None,
                             meta=meta,
+                            concise=concise,
                         )
                     )
                     priv_count += 1
@@ -394,8 +400,9 @@ def _process_offline_host(
                             ldap_user=None,
                             ldap_password=None,
                             meta=meta,
-                        )
+                            concise=concise,
                     )
+                )
             row["password_analysis"] = password_analysis
 
         # By default omit tasks that explicitly have no saved credentials unless the user asked to show them
@@ -523,6 +530,7 @@ def process_target(
     loot: bool = False,
     dpapi_key: Optional[str] = None,
     bh_connector: Optional[Any] = None,
+    concise: bool = False,
 ) -> List[str]:
     # Connect to `target`, enumerate scheduled tasks, and return printable lines.
     #
@@ -568,9 +576,9 @@ def process_target(
         )
         if debug:
             if server_sid:
-                print(f"[DEBUG] {target}: Computer SID: {server_sid}")
+                log_debug(f"{target}: Computer SID: {server_sid}")
             else:
-                print(f"[DEBUG] {target}: Could not retrieve computer SID")
+                log_debug(f"{target}: Could not retrieve computer SID")
 
         # Credential Guard detection (EXPERIMENTAL, only if enabled)
         if credguard_detect:
@@ -751,7 +759,7 @@ def process_target(
 
         # Add Credential Guard status to each row
         row["credential_guard"] = credguard_status
-        # Determine if the task stores credentials or runs with token/S4U (no stored credentials)
+        # Determine if the task stores credentials or runs with token/S4U (no saved credentials)
         logon_type = (meta.get("logon_type") or "").strip()
         no_saved_creds = (not logon_type) or logon_type.lower() in (
             "interactivetoken",
@@ -799,19 +807,13 @@ def process_target(
                             password_analysis=password_analysis,
                             hv=hv,
                             no_ldap=no_ldap,
-                            domain=domain,
-                            dc_ip=dc_ip,
-                            username=username,
-                            password=password,
-                            hashes=hashes,
+                            dc_ip=None,
                             enabled=meta.get("enabled"),
-                            ldap_domain=ldap_domain,
-                            ldap_user=ldap_user,
-                            ldap_password=ldap_password,
+                            ldap_domain=None,
+                            ldap_user=None,
+                            ldap_password=None,
                             meta=meta,
-                            decrypted_creds=decrypted_creds,
-                            smb_connection=smb,
-                            bh_connector=bh_connector,
+                            concise=concise,
                         )
                     )
                     priv_count += 1
@@ -820,6 +822,7 @@ def process_target(
                     row["password_analysis"] = password_analysis
                 classified = True
             elif hv.check_highvalue(runas):
+                # High-value match — mark as privileged if credentials are stored (or show unsaved creds)
                 reason = "High Value match found (Check BloodHound Outbound Object Control for Details)"
                 password_analysis = None
 
@@ -849,19 +852,13 @@ def process_target(
                             password_analysis=password_analysis,
                             hv=hv,
                             no_ldap=no_ldap,
-                            domain=domain,
-                            dc_ip=dc_ip,
-                            username=username,
-                            password=password,
-                            hashes=hashes,
+                            dc_ip=None,
                             enabled=meta.get("enabled"),
-                            ldap_domain=ldap_domain,
-                            ldap_user=ldap_user,
-                            ldap_password=ldap_password,
+                            ldap_domain=None,
+                            ldap_user=None,
+                            ldap_password=None,
                             meta=meta,
-                            decrypted_creds=decrypted_creds,
-                            smb_connection=smb,
-                            bh_connector=bh_connector,
+                            concise=concise,
                         )
                     )
                     priv_count += 1
@@ -904,19 +901,13 @@ def process_target(
                         password_analysis=password_analysis,
                         hv=hv,
                         no_ldap=no_ldap,
-                        domain=domain,
-                        dc_ip=dc_ip,
-                        username=username,
-                        password=password,
-                        hashes=hashes,
+                        dc_ip=None,
                         enabled=meta.get("enabled"),
-                        ldap_domain=ldap_domain,
-                        ldap_user=ldap_user,
-                        ldap_password=ldap_password,
+                        ldap_domain=None,
+                        ldap_user=None,
+                        ldap_password=None,
                         meta=meta,
-                        decrypted_creds=decrypted_creds,
-                        smb_connection=smb,
-                        bh_connector=bh_connector,
+                        concise=concise,
                     )
                 )
             row["password_analysis"] = password_analysis
