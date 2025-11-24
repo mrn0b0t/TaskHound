@@ -9,7 +9,8 @@
 # Default credentials (use with caution!)
 # username = "svc_taskhound"
 # domain = "CORP.LOCAL"
-# hashes = "aad3b435b51404eeaad3b435b51404ee:..."
+# password = "Password123!"
+# hashes = "aad3b435b51404eeaad3b435b51404ee:..." (optional)
 # kerberos = true
 
 [target]
