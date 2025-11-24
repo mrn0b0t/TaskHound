@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from ..utils.bh_api import bhce_signed_request, get_bloodhound_token
+from ..utils.logging import good, info, warn
 
 try:
     import requests
@@ -138,8 +139,8 @@ def find_model_json() -> Path:
         if path.exists():
             # Warn if using CWD (security concern)
             if path == Path.cwd() / "model.json":
-                print("[!] WARNING: Using model.json from current directory")
-                print("[!] This can be a security risk - consider moving to config/model.json")
+                warn("WARNING: Using model.json from current directory")
+                warn("This can be a security risk - consider moving to config/model.json")
             return path
 
     # None found - provide helpful error message
@@ -184,8 +185,8 @@ def upload_opengraph_to_bloodhound(
     bloodhound_url = normalize_bloodhound_connector(bloodhound_url, is_legacy=False)
 
     if not HAS_REQUESTS:
-        print("[!] ERROR: 'requests' library not installed")
-        print("[!] Install with: pip install requests")
+        warn("ERROR: 'requests' library not installed")
+        warn("Install with: pip install requests")
         return False
 
     # Authenticate
@@ -194,32 +195,32 @@ def upload_opengraph_to_bloodhound(
 
         if use_api_key:
             # Use HMAC-signed API key authentication (no login needed)
-            print(f"[+] Using API key authentication for BloodHound at {bloodhound_url}")
+            info(f"Using API key authentication for BloodHound at {bloodhound_url}")
             # We'll use bhce_signed_request for all API calls
             headers = None  # Will be generated per-request with HMAC signature
             token = None
         else:
             # Use username/password authentication
             if not username or not password:
-                print("[!] BloodHound authentication requires either API key/ID pair or username/password")
+                warn("BloodHound authentication requires either API key/ID pair or username/password")
                 return False
 
             token = get_bloodhound_token(bloodhound_url, username, password, timeout=TIMEOUT)
 
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-            print(f"[+] Authenticated to BloodHound at {bloodhound_url}")
+            good(f"Authenticated to BloodHound at {bloodhound_url}")
     except requests.Timeout:
-        print(f"[!] Timeout authenticating to BloodHound (request took longer than {TIMEOUT}s)")
+        warn(f"Timeout authenticating to BloodHound (request took longer than {TIMEOUT}s)")
         return False
     except requests.RequestException as e:
-        print(f"[!] Network error during authentication: {e}")
+        warn(f"Network error during authentication: {e}")
         return False
     except (KeyError, ValueError) as e:
-        print(f"[!] Invalid authentication response from BloodHound: {e}")
+        warn(f"Invalid authentication response from BloodHound: {e}")
         return False
     except Exception as e:
-        print(f"[!] Unexpected authentication error: {e}")
+        warn(f"Unexpected authentication error: {e}")
         return False
 
     # Set custom icon if requested
@@ -227,7 +228,7 @@ def upload_opengraph_to_bloodhound(
         _set_custom_icon(bloodhound_url, headers, icon_name, icon_color, force_icon, api_key, api_key_id)
 
     # Upload the OpenGraph file
-    print("[*] Uploading OpenGraph data...")
+    info("Uploading OpenGraph data...")
     success = _upload_file(bloodhound_url, headers, opengraph_file, "OpenGraph", api_key, api_key_id)
 
     return success
@@ -307,47 +308,47 @@ def _wait_for_job_completion(
                         # Check for failed files
                         failed = job.get("failed_files_count", job.get("failed_files", 0))
                         if failed == 0:
-                            print(f"[+] Upload job {job_id} completed successfully")
+                            good(f"Upload job {job_id} completed successfully")
                             return True
                         else:
-                            print(f"[!] Job {job_id} completed with {failed} failed files")
+                            warn(f"Job {job_id} completed with {failed} failed files")
                             # Try to get error details
                             if "errors" in job:
                                 for error in job["errors"][:3]:  # Show first 3 errors
-                                    print(f"[!]   Error: {error}")
+                                    warn(f"  Error: {error}")
                             return False
 
                     elif status_name in ["failed", "error"] or status == 3:
                         error_msg = job.get("error", "Unknown error")
-                        print(f"[!] Job {job_id} failed: {error_msg}")
+                        warn(f"Job {job_id} failed: {error_msg}")
                         return False
 
                     elif status_name in ["running", "ingesting", "analyzing"] or status in [0, 6, 7]:
                         # Still processing, continue polling
-                        print(f"[*] Job {job_id} status: {status_name} (attempt {attempt + 1}/{max_retries})")
+                        info(f"Job {job_id} status: {status_name} (attempt {attempt + 1}/{max_retries})")
                         break
 
                     else:
                         # Unknown status - log but don't fail immediately
-                        print(
-                            f"[*] Job {job_id} status: {status} ({status_name}) (attempt {attempt + 1}/{max_retries})"
+                        info(
+                            f"Job {job_id} status: {status} ({status_name}) (attempt {attempt + 1}/{max_retries})"
                         )
                         # Continue polling in case it transitions to a known state
 
                     break
 
             if not job_found:
-                print(f"[*] Job {job_id} not found in recent jobs list (attempt {attempt + 1}/{max_retries})")
+                info(f"Job {job_id} not found in recent jobs list (attempt {attempt + 1}/{max_retries})")
 
         except requests.Timeout:
-            print(f"[!] Timeout checking job status (attempt {attempt + 1}/{max_retries})")
+            warn(f"Timeout checking job status (attempt {attempt + 1}/{max_retries})")
         except requests.RequestException as e:
-            print(f"[!] Error checking job status (attempt {attempt + 1}/{max_retries}): {e}")
+            warn(f"Error checking job status (attempt {attempt + 1}/{max_retries}): {e}")
 
         # Exponential backoff, cap at 10 seconds
         retry_delay = min(retry_delay * 1.5, 10.0)
 
-    print(f"[!] Timeout waiting for job {job_id} after {max_retries} attempts")
+    warn(f"Timeout waiting for job {job_id} after {max_retries} attempts")
     return False
 
 
@@ -386,13 +387,13 @@ def _upload_file(
             )
         job_response.raise_for_status()
         job_id = job_response.json()["data"]["id"]
-        print(f"[*] Started upload job {job_id}")
+        info(f"Started upload job {job_id}")
 
         # Upload file
         with open(file_path) as f:
             file_data = f.read()
 
-        print(f"[*] Uploading {file_type} data ({len(file_data)} bytes)...")
+        info(f"Uploading {file_type} data ({len(file_data)} bytes)...")
         if use_api_key:
             upload_response = bhce_signed_request(
                 "POST",
@@ -424,20 +425,20 @@ def _upload_file(
         end_response.raise_for_status()
 
         # Wait for processing with exponential backoff
-        print("[*] Waiting for BloodHound to process the upload...")
+        info("Waiting for BloodHound to process the upload...")
         return _wait_for_job_completion(bloodhound_url, headers, job_id, api_key, api_key_id)
 
     except requests.Timeout:
-        print(f"[!] Timeout uploading {file_type} file (request took longer than {TIMEOUT}s)")
+        warn(f"Timeout uploading {file_type} file (request took longer than {TIMEOUT}s)")
         return False
     except requests.RequestException as e:
-        print(f"[!] Network error uploading {file_type} file: {e}")
+        warn(f"Network error uploading {file_type} file: {e}")
         return False
     except FileNotFoundError:
-        print(f"[!] File not found: {file_path}")
+        warn(f"File not found: {file_path}")
         return False
     except Exception as e:
-        print(f"[!] Unexpected error uploading {file_type} file: {e}")
+        warn(f"Unexpected error uploading {file_type} file: {e}")
         return False
 
 
@@ -496,7 +497,7 @@ def _set_custom_icon(
                             print("[*] scheduledtask icon exists with different settings - forcing update")
                             print(f"[*] Current: {existing_icon.get('name')} {existing_icon.get('color')}")
                             print(f"[*] Requested: {icon_name} {icon_color}")
-                            print("[*] Deleting existing icon configuration...")
+                            info("Deleting existing icon configuration...")
 
                             try:
                                 if use_api_key:
@@ -516,30 +517,30 @@ def _set_custom_icon(
                                     )
 
                                 if delete_response.status_code in [200, 204]:
-                                    print("[+] Deleted existing icon configuration")
+                                    good("Deleted existing icon configuration")
                                 else:
-                                    print(f"[!] Failed to delete icon (status {delete_response.status_code})")
-                                    print("[!] Will attempt to create new icon anyway...")
+                                    warn(f"Failed to delete icon (status {delete_response.status_code})")
+                                    warn("Will attempt to create new icon anyway...")
                             except requests.Timeout:
-                                print(f"[!] Timeout deleting icon (request took longer than {TIMEOUT}s)")
-                                print("[!] Will attempt to create new icon anyway...")
+                                warn(f"Timeout deleting icon (request took longer than {TIMEOUT}s)")
+                                warn("Will attempt to create new icon anyway...")
                             except Exception as e:
-                                print(f"[!] Error deleting icon: {e}")
-                                print("[!] Will attempt to create new icon anyway...")
+                                warn(f"Error deleting icon: {e}")
+                                warn("Will attempt to create new icon anyway...")
                         else:
-                            print("[*] scheduledtask icon exists but with different settings")
-                            print(f"[*] Current: {existing_icon.get('name')} {existing_icon.get('color')}")
-                            print(f"[*] Requested: {icon_name} {icon_color}")
-                            print("[*] Keeping existing configuration (use --bh-force-icon to override)")
+                            info("ScheduledTask icon exists but with different settings")
+                            info(f"Current: {existing_icon.get('name')} {existing_icon.get('color')}")
+                            info(f"Requested: {icon_name} {icon_color}")
+                            info("Keeping existing configuration (use --bh-force-icon to override)")
                             return
 
         # Icon doesn't exist (or was just deleted), upload model.json file
         # Find model.json in standard locations
         try:
             model_file = find_model_json()
-            print(f"[*] Loading icon configuration from: {model_file}")
+            info(f"Loading icon configuration from: {model_file}")
         except FileNotFoundError as e:
-            print(f"[!] {e}")
+            warn(f"{e}")
             # Fallback to hardcoded structure
             model_data = {
                 "custom_types": {
@@ -570,17 +571,17 @@ def _set_custom_icon(
             )
 
         if response.status_code in [200, 201]:
-            print(f"[+] Custom icon set for 'scheduledtask': {icon_name} ({icon_color})")
+            good(f"Custom icon set for 'ScheduledTask': {icon_name} ({icon_color})")
         elif response.status_code == 409:
-            print("[*] scheduledtask icon already configured")
+            info("ScheduledTask icon already configured")
         else:
             # Non-critical error - print response for debugging
-            print(f"[!] Could not set custom icon (status {response.status_code})")
+            warn(f"Could not set custom icon (status {response.status_code})")
             with contextlib.suppress(Exception):
-                print(f"[!] Response: {response.text}")
+                warn(f"Response: {response.text}")
 
     except requests.Timeout:
-        print(f"[!] Timeout setting custom icon (request took longer than {TIMEOUT}s) (non-critical)")
+        warn(f"Timeout setting custom icon (request took longer than {TIMEOUT}s) (non-critical)")
     except Exception as e:
         # Non-critical - don't fail the whole upload
-        print(f"[!] Failed to set custom icon: {e} (non-critical)")
+        warn(f"Failed to set custom icon: {e} (non-critical)")

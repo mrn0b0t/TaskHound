@@ -44,6 +44,7 @@ class CacheManager:
             cache_file = cache_dir / "cache.db"
 
         self.cache_file = cache_file
+        self.is_new_db = not cache_file.exists() if cache_file else True
 
         # Tier 1: Session cache (in-memory, cleared on exit)
         self.session: Dict[str, Any] = {}

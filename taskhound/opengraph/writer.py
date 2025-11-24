@@ -105,8 +105,11 @@ def generate_opengraph_files(
     # Add Computer Nodes
     for name in computer_names:
         sid = None
+        resolved_name = None
         if name in computer_map and computer_map[name]:
-             _, sid = computer_map[name]
+             _, sid, *rest = computer_map[name]
+             if rest:
+                 resolved_name = rest[0]
 
         if sid:
             # We have a SID - use it as ID (matches builder.py logic)
@@ -115,10 +118,10 @@ def generate_opengraph_files(
             node = Node(
                 id=sid,
                 kinds=["Computer", "Base"],
-                properties=Properties(name=name, objectid=sid)
+                properties=Properties(name=resolved_name or name, objectid=sid)
             )
             graph.add_node(node)
-            debug(f"Added placeholder node for Computer: {name} ({sid})")
+            debug(f"Added placeholder node for Computer: {resolved_name or name} ({sid})")
         elif allow_orphans:
             # No SID, but orphans allowed - use Name as ID
             node = Node(
@@ -132,17 +135,20 @@ def generate_opengraph_files(
     # Add User Nodes
     for name in user_names:
         sid = None
+        resolved_name = None
         if name in user_map and user_map[name]:
-             _, sid = user_map[name]
+             _, sid, *rest = user_map[name]
+             if rest:
+                 resolved_name = rest[0]
 
         if sid:
             node = Node(
                 id=sid,
                 kinds=["User", "Base"],
-                properties=Properties(name=name, objectid=sid)
+                properties=Properties(name=resolved_name or name, objectid=sid)
             )
             graph.add_node(node)
-            debug(f"Added placeholder node for User: {name} ({sid})")
+            debug(f"Added placeholder node for User: {resolved_name or name} ({sid})")
         elif allow_orphans:
             node = Node(
                 id=name,

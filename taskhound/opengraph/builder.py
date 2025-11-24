@@ -400,7 +400,7 @@ def _create_relationship_edges(
                 edges.append(has_task_edge)
         else:
             # Node exists in BloodHound
-            node_id, object_id = node_info
+            node_id, object_id, *rest = node_info
             if object_id:  # If we have an objectid (SID)
                 computer_object_id = object_id
                 computer_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
@@ -468,7 +468,7 @@ def _create_relationship_edges(
                     edges.append(runs_as_edge)
             else:
                 # User exists in BloodHound
-                node_id, object_id = node_info
+                node_id, object_id, *rest = node_info
                 if object_id:  # If we have an objectid (SID)
                     user_object_id = object_id
                     user_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
@@ -620,7 +620,7 @@ def resolve_object_ids_chunked(
 
                     if name not in nodes_by_name:
                         nodes_by_name[name] = []
-                    nodes_by_name[name].append((node_id, object_id))
+                    nodes_by_name[name].append((node_id, object_id, name))
 
                 # Process each name and validate SID
                 for name, expected_sid in names_with_sids.items():
@@ -638,9 +638,9 @@ def resolve_object_ids_chunked(
 
                     # Find node with matching SID
                     matched_node = None
-                    for node_id, object_id in node_list:
+                    for node_id, object_id, node_name in node_list:
                         if object_id == expected_sid:
-                            matched_node = (node_id, object_id)
+                            matched_node = (node_id, object_id, node_name)
                             break
 
                     if matched_node:
@@ -726,7 +726,7 @@ def resolve_object_ids_chunked(
                     object_id = node.get("objectId")  # 'objectId' not 'objectid'
 
                     if name and object_id:
-                        mapping[name] = (node_id, object_id)  # Return BOTH IDs
+                        mapping[name] = (node_id, object_id, name)  # Return BOTH IDs + Name
                         debug(f"Resolved {name} → node_id={node_id}, objectId={object_id}")
 
                 return mapping
@@ -794,9 +794,10 @@ def resolve_object_ids_chunked(
 
                 for node_id, node in nodes.items():
                     object_id = node.get("objectId")
+                    name = node.get("label")
                     if object_id:
-                        mapping[object_id] = (node_id, object_id)
-                        debug(f"Resolved SID {object_id} → node_id={node_id}")
+                        mapping[object_id] = (node_id, object_id, name)
+                        debug(f"Resolved SID {object_id} → node_id={node_id}, name={name}")
 
                 return mapping
             else:
@@ -846,7 +847,7 @@ def resolve_object_ids_chunked(
                 )
 
                 if sid:
-                    mapping[name] = ("", sid)  # Empty node_id, only objectId from LDAP
+                    mapping[name] = ("", sid, name)  # Empty node_id, only objectId from LDAP
                     info(f"LDAP fallback resolved {name} → {sid}")
                 else:
                     debug(f"LDAP fallback failed for {name}")
@@ -866,8 +867,13 @@ def resolve_object_ids_chunked(
             for name in computer_names:
                 cached_val = cache.get("principals", name)
                 if cached_val:
-                    # Cached value is [node_id, object_id] list/tuple
-                    computer_sid_map[name] = tuple(cached_val)
+                    # Cached value is [node_id, object_id, name] list/tuple
+                    # If looking up by name, we might have old cache entries with 2 elements
+                    # But that's fine, we can just use name as name
+                    if len(cached_val) == 2:
+                        computer_sid_map[name] = (cached_val[0], cached_val[1], name)
+                    else:
+                        computer_sid_map[name] = tuple(cached_val)
                     cached_computers.add(name)
 
             if cached_computers:
@@ -972,7 +978,14 @@ def resolve_object_ids_chunked(
             for name in user_names:
                 cached_val = cache.get("principals", name)
                 if cached_val:
-                    user_sid_map[name] = tuple(cached_val)
+                    # If looking up by SID, ensure we have the resolved name (3rd element)
+                    if name.startswith("S-1-5-") and len(cached_val) < 3:
+                        continue
+                    
+                    if len(cached_val) == 2:
+                        user_sid_map[name] = (cached_val[0], cached_val[1], name)
+                    else:
+                        user_sid_map[name] = tuple(cached_val)
                     cached_users.add(name)
 
             if cached_users:
