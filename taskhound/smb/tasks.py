@@ -47,6 +47,15 @@ def crawl_tasks(smb: SMBConnection, include_ms: bool = False) -> List[Tuple[str,
     results: List[Tuple[str, bytes]] = []
     share = "C$"
 
+    # Verify access to root first
+    try:
+        # Just list the root to ensure we have access
+        # We don't use the result here, just check for exception
+        smb.listPath(share, TASK_ROOT + "\\*")
+    except Exception as e:
+        # If we can't list the root, we can't crawl. Raise immediately.
+        raise Exception(f"Failed to access {TASK_ROOT}: {e}")
+
     def recurse(cur: str):
         for is_dir, name in smb_listdir(smb, share, cur):
             # skip Microsoft subtree for speed unless explicitly asked
