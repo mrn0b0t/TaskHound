@@ -11,101 +11,12 @@
 import csv
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from ..utils.date_parser import parse_iso_date, parse_timestamp
+from ..utils.helpers import sanitize_json_string
 from ..utils.logging import warn
-
-
-def _sanitize_json_string(json_str: str) -> str:
-    """
-    Sanitize JSON string to handle unescaped backslashes that break JSON parsing.
-    
-    This commonly occurs in Active Directory Distinguished Names like:
-    "CN=LASTNAME\\, FIRSTNAME,OU=..."
-    
-    Args:
-        json_str: Raw JSON string that may contain unescaped backslashes
-        
-    Returns:
-        Sanitized JSON string with properly escaped backslashes
-    """
-    # Replace single backslashes with double backslashes, but be careful not to
-    # double-escape already escaped sequences
-
-    # First, temporarily replace already properly escaped sequences
-    import uuid
-    placeholder = str(uuid.uuid4())
-
-    # Protect already escaped sequences (\\, \", \n, \r, \t, \/, \b, \f, \u)
-    protected = json_str.replace('\\\\', placeholder + 'BACKSLASH')
-    protected = protected.replace('\\"', placeholder + 'QUOTE')
-    protected = protected.replace('\\n', placeholder + 'NEWLINE')
-    protected = protected.replace('\\r', placeholder + 'RETURN')
-    protected = protected.replace('\\t', placeholder + 'TAB')
-    protected = protected.replace('\\/', placeholder + 'SLASH')
-    protected = protected.replace('\\b', placeholder + 'BACKSPACE')
-    protected = protected.replace('\\f', placeholder + 'FORMFEED')
-
-    # Protect unicode escapes (\uXXXX)
-    import re
-    unicode_pattern = r'\\u[0-9a-fA-F]{4}'
-    unicode_matches = re.findall(unicode_pattern, protected)
-    for i, match in enumerate(unicode_matches):
-        protected = protected.replace(match, f'{placeholder}UNICODE{i}')
-
-    # Now escape any remaining single backslashes
-    protected = protected.replace('\\', '\\\\')
-
-    # Restore the protected sequences
-    protected = protected.replace(placeholder + 'BACKSLASH', '\\\\')
-    protected = protected.replace(placeholder + 'QUOTE', '\\"')
-    protected = protected.replace(placeholder + 'NEWLINE', '\\n')
-    protected = protected.replace(placeholder + 'RETURN', '\\r')
-    protected = protected.replace(placeholder + 'TAB', '\\t')
-    protected = protected.replace(placeholder + 'SLASH', '\\/')
-    protected = protected.replace(placeholder + 'BACKSPACE', '\\b')
-    protected = protected.replace(placeholder + 'FORMFEED', '\\f')
-
-    # Restore unicode escapes
-    for i, match in enumerate(unicode_matches):
-        protected = protected.replace(f'{placeholder}UNICODE{i}', match)
-
-    return protected
-
-
-def _convert_timestamp(timestamp_value) -> Optional[datetime]:
-    # Convert various timestamp formats to datetime.
-    # Supports Windows FILETIME, Unix timestamps, and string representations.
-    # Returns None if conversion fails or timestamp is 0/invalid.
-    if not timestamp_value or timestamp_value == "0" or timestamp_value == 0:
-        return None
-
-    try:
-        # Handle different input types
-        if isinstance(timestamp_value, str):
-            if timestamp_value.strip() == "":
-                return None
-            timestamp = float(timestamp_value)
-        else:
-            timestamp = float(timestamp_value)
-
-        if timestamp == 0:
-            return None
-
-        # Detect format based on magnitude
-        # Windows FILETIME is very large (> 100 billion for dates after 1970)
-        # Unix timestamp is smaller (< 10 billion for dates before 2286)
-        if timestamp > 10000000000:  # Likely Windows FILETIME
-            # Windows FILETIME epoch: January 1, 1601 00:00:00 UTC
-            # Convert 100-nanosecond intervals to seconds
-            unix_timestamp = (timestamp - 116444736000000000) / 10000000.0
-            return datetime.fromtimestamp(unix_timestamp, tz=timezone.utc)
-        else:  # Likely Unix timestamp
-            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
-
-    except (ValueError, OSError, OverflowError):
-        return None
 
 
 def _analyze_password_freshness(task_date: Optional[str], pwd_change_date: Optional[datetime]) -> Tuple[str, str]:
@@ -116,9 +27,9 @@ def _analyze_password_freshness(task_date: Optional[str], pwd_change_date: Optio
 
     try:
         # Parse task date (format: 2025-09-18T23:04:37.3089851)
-        task_dt = datetime.fromisoformat(task_date.replace('Z', '+00:00'))
-        if task_dt.tzinfo is None:
-            task_dt = task_dt.replace(tzinfo=timezone.utc)
+        task_dt = parse_iso_date(task_date)
+        if not task_dt:
+            return "UNKNOWN", "Date parsing error: Invalid format"
 
         # Enhanced analysis with better messaging
         if task_dt < pwd_change_date:
@@ -131,19 +42,19 @@ def _analyze_password_freshness(task_date: Optional[str], pwd_change_date: Optio
 
 # Well-known Tier 0 SIDs for direct SID-based detection
 TIER0_SIDS = {
-    "S-1-5-32-544": "Administrators",           # Local Administrators
-    "S-1-5-21-{domain}-512": "Domain Admins",        # Domain Admins (domain-relative)
-    "S-1-5-21-{domain}-516": "Domain Controllers",   # Domain Controllers
-    "S-1-5-21-{domain}-518": "Schema Admins",        # Schema Admins
-    "S-1-5-21-{domain}-519": "Enterprise Admins",    # Enterprise Admins
-    "S-1-5-21-{domain}-526": "Key Admins",           # Key Admins (Windows Server 2016+)
-    "S-1-5-21-{domain}-527": "Enterprise Key Admins", # Enterprise Key Admins (Windows Server 2016+)
-    "S-1-5-21-{domain}-500": "Administrator",        # Built-in Administrator account
+    "S-1-5-32-544": "Administrators",  # Local Administrators
+    "S-1-5-21-{domain}-512": "Domain Admins",  # Domain Admins (domain-relative)
+    "S-1-5-21-{domain}-516": "Domain Controllers",  # Domain Controllers
+    "S-1-5-21-{domain}-518": "Schema Admins",  # Schema Admins
+    "S-1-5-21-{domain}-519": "Enterprise Admins",  # Enterprise Admins
+    "S-1-5-21-{domain}-526": "Key Admins",  # Key Admins (Windows Server 2016+)
+    "S-1-5-21-{domain}-527": "Enterprise Key Admins",  # Enterprise Key Admins (Windows Server 2016+)
+    "S-1-5-21-{domain}-500": "Administrator",  # Built-in Administrator account
     # Additional AdminSDHolder protected groups (lower privilege but still Tier 0)
-    "S-1-5-32-551": "Backup Operators",        # Backup Operators
-    "S-1-5-32-549": "Server Operators",        # Server Operators
-    "S-1-5-32-548": "Account Operators",       # Account Operators
-    "S-1-5-32-550": "Print Operators",         # Print Operators
+    "S-1-5-32-551": "Backup Operators",  # Backup Operators
+    "S-1-5-32-549": "Server Operators",  # Server Operators
+    "S-1-5-32-548": "Account Operators",  # Account Operators
+    "S-1-5-32-550": "Print Operators",  # Print Operators
 }
 
 
@@ -248,18 +159,18 @@ class HighValueLoader:
                     all_props["objectid"] = objectid_match.group(1)
 
                 # Extract pwdlastset timestamp
-                pwd_match = re.search(r'pwdlastset[:\s]*([0-9.]+)', all_props_str)
+                pwd_match = re.search(r"pwdlastset[:\s]*([0-9.]+)", all_props_str)
                 if pwd_match:
                     all_props["pwdlastset"] = float(pwd_match.group(1))
 
                 # Extract lastlogon timestamp
-                logon_match = re.search(r'lastlogon[:\s]*([0-9.]+)', all_props_str)
+                logon_match = re.search(r"lastlogon[:\s]*([0-9.]+)", all_props_str)
                 if logon_match:
                     all_props["lastlogon"] = float(logon_match.group(1))
 
                 # Extract common boolean fields
                 for field in ["highvalue", "enabled", "admincount", "sensitive", "pwdneverexpires"]:
-                    field_match = re.search(rf'{field}[:\s]*(\w+)', all_props_str)
+                    field_match = re.search(rf"{field}[:\s]*(\w+)", all_props_str)
                     if field_match:
                         value_str = field_match.group(1).lower()
                         all_props[field] = value_str in ("true", "yes", "1")
@@ -286,10 +197,7 @@ class HighValueLoader:
             return False
 
         # Normalize sam (handle DOMAIN\user format)
-        if "\\" in sam_raw:
-            sam = sam_raw.split("\\", 1)[1]
-        else:
-            sam = sam_raw
+        sam = sam_raw.split("\\", 1)[1] if "\\" in sam_raw else sam_raw
 
         sid = sid_raw.upper()
 
@@ -305,13 +213,13 @@ class HighValueLoader:
             elif isinstance(groups_data, str):
                 # Handle JSON array format in CSV
                 groups_str = groups_data.strip().strip('"')
-                if groups_str.startswith('[') and groups_str.endswith(']'):
+                if groups_str.startswith("[") and groups_str.endswith("]"):
                     try:
                         parsed = json.loads(groups_str)
                         if isinstance(parsed, list):
                             group_names = [str(x) for x in parsed]
                     except Exception:
-                        group_names = [groups_str.strip('[]')]
+                        group_names = [groups_str.strip("[]")]
 
         # Handle group_sids array
         group_sids_data = row.get("group_sids")
@@ -321,23 +229,25 @@ class HighValueLoader:
             elif isinstance(group_sids_data, str):
                 # Handle JSON array format in CSV
                 sids_str = group_sids_data.strip().strip('"')
-                if sids_str.startswith('[') and sids_str.endswith(']'):
+                if sids_str.startswith("[") and sids_str.endswith("]"):
                     try:
                         parsed = json.loads(sids_str)
                         if isinstance(parsed, list):
                             groups = [str(x) for x in parsed]
                     except Exception:
-                        groups = [sids_str.strip('[]')]
+                        groups = [sids_str.strip("[]")]
 
         # Create user data starting with all_props and add our additional fields
         user_data = dict(all_props)  # Copy all BloodHound properties
-        user_data.update({
-            "sid": sid,
-            "groups": groups,
-            "group_names": group_names,
-            "pwdlastset": _convert_timestamp(all_props.get("pwdlastset")),
-            "lastlogon": _convert_timestamp(all_props.get("lastlogon"))
-        })
+        user_data.update(
+            {
+                "sid": sid,
+                "groups": groups,
+                "group_names": group_names,
+                "pwdlastset": parse_timestamp(all_props.get("pwdlastset")),
+                "lastlogon": parse_timestamp(all_props.get("lastlogon")),
+            }
+        )
 
         self.hv_users[sam] = user_data
         # Create SID lookup with sam field added
@@ -356,10 +266,7 @@ class HighValueLoader:
             return False
 
         # Normalize sam (handle DOMAIN\user format)
-        if "\\" in sam_raw:
-            sam = sam_raw.split("\\", 1)[1]
-        else:
-            sam = sam_raw
+        sam = sam_raw.split("\\", 1)[1] if "\\" in sam_raw else sam_raw
 
         sid = sid_raw.upper()
 
@@ -373,29 +280,29 @@ class HighValueLoader:
             if isinstance(group_names_data, list):
                 potential_names = [str(g).strip() for g in group_names_data if g]
                 # If it looks like SIDs, treat as groups; otherwise as group names
-                if potential_names and potential_names[0].startswith('S-1-5-'):
+                if potential_names and potential_names[0].startswith("S-1-5-"):
                     groups = potential_names
                 else:
                     group_names = potential_names
             elif isinstance(group_names_data, str):
                 data_str = group_names_data.strip().strip('"')
                 # Handle JSON array format in CSV
-                if data_str.startswith('[') and data_str.endswith(']'):
+                if data_str.startswith("[") and data_str.endswith("]"):
                     try:
                         parsed = json.loads(data_str)
                         if isinstance(parsed, list):
-                            if parsed and str(parsed[0]).startswith('S-1-5-'):
+                            if parsed and str(parsed[0]).startswith("S-1-5-"):
                                 groups = [str(x) for x in parsed]
                             else:
                                 group_names = [str(x) for x in parsed]
                     except Exception:
                         # Fallback to single item
-                        if data_str.startswith('S-1-5-'):
-                            groups = [data_str.strip('[]')]
+                        if data_str.startswith("S-1-5-"):
+                            groups = [data_str.strip("[]")]
                         else:
-                            group_names = [data_str.strip('[]')]
+                            group_names = [data_str.strip("[]")]
                 else:
-                    if data_str.startswith('S-1-5-'):
+                    if data_str.startswith("S-1-5-"):
                         groups = [data_str]
                     else:
                         group_names = [data_str]
@@ -405,15 +312,12 @@ class HighValueLoader:
             "sid": sid,
             "groups": groups,
             "group_names": group_names,
-            "pwdlastset": _convert_timestamp(row.get("pwdlastset")),
-            "lastlogon": _convert_timestamp(row.get("lastlogon"))
+            "pwdlastset": parse_timestamp(row.get("pwdlastset")),
+            "lastlogon": parse_timestamp(row.get("lastlogon")),
         }
 
         # Preserve ALL additional BloodHound attributes for future extensibility
-        excluded_keys = {
-            "samaccountname", "sid", "objectid", "groups", "group_names",
-            "pwdlastset", "lastlogon"
-        }
+        excluded_keys = {"samaccountname", "sid", "objectid", "groups", "group_names", "pwdlastset", "lastlogon"}
         for key, value in row.items():
             if key.lower() not in excluded_keys:
                 # Store additional attributes (enabled, admincount, dontreqpreauth, etc.)
@@ -429,7 +333,7 @@ class HighValueLoader:
         with open(self.path, encoding="utf-8-sig") as f:
             # Read raw content and sanitize backslashes before JSON parsing
             raw_content = f.read()
-            sanitized_content = _sanitize_json_string(raw_content)
+            sanitized_content = sanitize_json_string(raw_content)
             data = json.loads(sanitized_content)
         if not data:
             return False
@@ -462,10 +366,10 @@ class HighValueLoader:
             return False
 
         # Check if any node has isTierZero field (key indicator)
-        for node_data in nodes.values():
-            if isinstance(node_data, dict) and "isTierZero" in node_data:
-                return True
-        return False
+        return any(
+            isinstance(node_data, dict) and "isTierZero" in node_data
+            for node_data in nodes.values()
+        )
 
     def _load_bhce_json(self, data: Dict[str, Any]) -> bool:
         # Load BloodHound Community Edition format
@@ -473,7 +377,7 @@ class HighValueLoader:
         edges = data.get("edges", [])
 
         # Process each node
-        for node_id, node_data in nodes.items():
+        for _, node_data in nodes.items():
             if not isinstance(node_data, dict):
                 continue
 
@@ -504,8 +408,8 @@ class HighValueLoader:
                 "sid": object_id.upper(),
                 "groups": [],  # Will be populated from edges
                 "group_names": [],  # Will be populated from edges
-                "pwdlastset": _convert_timestamp(properties.get("pwdlastset")),
-                "lastlogon": _convert_timestamp(properties.get("lastlogon")),
+                "pwdlastset": parse_timestamp(properties.get("pwdlastset")),
+                "lastlogon": parse_timestamp(properties.get("lastlogon")),
             }
 
             # Copy all properties for extensibility
@@ -536,10 +440,7 @@ class HighValueLoader:
         for node_id, node_data in nodes.items():
             if node_data.get("kind") == "Group":
                 properties = node_data.get("properties", {})
-                groups[node_id] = {
-                    "objectid": properties.get("objectid", ""),
-                    "name": properties.get("name", "")
-                }
+                groups[node_id] = {"objectid": properties.get("objectid", ""), "name": properties.get("name", "")}
 
         # Process MemberOf edges to build user group memberships
         for edge in edges:
@@ -586,10 +487,12 @@ class HighValueLoader:
 
                 # Also update the SID-based lookup
                 user_sid = self.hv_users[sam]["sid"]
-                if user_sid in self.hv_sids:
-                    if group_sid not in self.hv_sids[user_sid]["groups"]:
-                        self.hv_sids[user_sid]["groups"].append(group_sid)
-                        self.hv_sids[user_sid]["group_names"].append(group_name)
+                if (
+                    user_sid in self.hv_sids
+                    and group_sid not in self.hv_sids[user_sid]["groups"]
+                ):
+                    self.hv_sids[user_sid]["groups"].append(group_sid)
+                    self.hv_sids[user_sid]["group_names"].append(group_name)
 
     def _load_legacy_json(self, data: List[Dict[str, Any]]) -> bool:
         # Load legacy BloodHound format
@@ -625,10 +528,7 @@ class HighValueLoader:
         if val.upper().startswith("S-1-5-"):
             return val.upper() in self.hv_sids  # Convert to uppercase for consistent lookup
         # NETBIOS\sam or just sam
-        if "\\" in val:
-            sam = val.split("\\", 1)[1].lower()
-        else:
-            sam = val.lower()
+        sam = val.split("\\", 1)[1].lower() if "\\" in val else val.lower()
         return sam in self.hv_users
 
     def check_tier0(self, runas: str) -> tuple[bool, list[str]]:
@@ -649,10 +549,7 @@ class HighValueLoader:
             user_data = self.hv_sids.get(val.upper())  # Convert to uppercase for consistent lookup
         else:
             # NETBIOS\sam or just sam
-            if "\\" in val:
-                sam = val.split("\\", 1)[1].lower()
-            else:
-                sam = val.lower()
+            sam = val.split("\\", 1)[1].lower() if "\\" in val else val.lower()
             user_data = self.hv_users.get(sam)
 
         if not user_data:
@@ -766,10 +663,7 @@ class HighValueLoader:
         if val.upper().startswith("S-1-5-"):
             user_data = self.hv_sids.get(val.upper())  # Convert to uppercase for consistent lookup
         else:
-            if "\\" in val:
-                sam = val.split("\\", 1)[1].lower()
-            else:
-                sam = val.lower()
+            sam = val.split("\\", 1)[1].lower() if "\\" in val else val.lower()
             user_data = self.hv_users.get(sam)
 
         if not user_data:

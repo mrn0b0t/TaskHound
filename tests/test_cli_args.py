@@ -1,6 +1,8 @@
 """
 Test CLI argument parsing and validation.
 """
+
+import contextlib
 import sys
 from io import StringIO
 
@@ -15,19 +17,17 @@ def test_help_output_includes_dpapi():
     old_argv = sys.argv
     old_stdout = sys.stdout
     try:
-        sys.argv = ['taskhound', '--help']
+        sys.argv = ["taskhound", "--help"]
         sys.stdout = StringIO()
 
-        try:
+        with contextlib.suppress(SystemExit):
             cli.main()
-        except SystemExit:
-            pass  # --help causes sys.exit(0)
 
         output = sys.stdout.getvalue()
 
-        assert '--loot' in output, "Missing --loot flag"
-        assert '--dpapi-key' in output, "Missing --dpapi-key flag"
-        assert 'DPAPI' in output, "Missing DPAPI section"
+        assert "--loot" in output, "Missing --loot flag"
+        assert "--dpapi-key" in output, "Missing --dpapi-key flag"
+        assert "DPAPI" in output, "Missing DPAPI section"
 
     finally:
         sys.argv = old_argv
@@ -41,20 +41,18 @@ def test_help_output_includes_bloodhound():
     old_argv = sys.argv
     old_stdout = sys.stdout
     try:
-        sys.argv = ['taskhound', '--help']
+        sys.argv = ["taskhound", "--help"]
         sys.stdout = StringIO()
 
-        try:
+        with contextlib.suppress(SystemExit):
             cli.main()
-        except SystemExit:
-            pass
 
         output = sys.stdout.getvalue()
 
-        assert '--bh-live' in output, "Missing --bh-live flag"
-        assert '--bh-user' in output, "Missing --bh-user flag"
-        assert '--bhce' in output, "Missing --bhce flag"
-        assert 'BloodHound' in output, "Missing BloodHound section"
+        assert "--bh-live" in output, "Missing --bh-live flag"
+        assert "--bh-user" in output, "Missing --bh-user flag"
+        assert "--bhce" in output, "Missing --bhce flag"
+        assert "BloodHound" in output, "Missing BloodHound section"
 
     finally:
         sys.argv = old_argv
@@ -68,19 +66,17 @@ def test_help_output_includes_ldap():
     old_argv = sys.argv
     old_stdout = sys.stdout
     try:
-        sys.argv = ['taskhound', '--help']
+        sys.argv = ["taskhound", "--help"]
         sys.stdout = StringIO()
 
-        try:
+        with contextlib.suppress(SystemExit):
             cli.main()
-        except SystemExit:
-            pass
 
         output = sys.stdout.getvalue()
 
-        assert '--ldap-user' in output, "Missing --ldap-user flag"
-        assert '--ldap-password' in output, "Missing --ldap-password flag"
-        assert '--ldap-domain' in output, "Missing --ldap-domain flag"
+        assert "--ldap-user" in output, "Missing --ldap-user flag"
+        assert "--ldap-password" in output, "Missing --ldap-password flag"
+        assert "--ldap-domain" in output, "Missing --ldap-domain flag"
 
     finally:
         sys.argv = old_argv
@@ -94,14 +90,9 @@ def test_dpapi_key_validation_with_targets_file():
     parser = build_parser()
 
     # Test args that should trigger validation error
-    args = parser.parse_args([
-        '--targets-file', 'fake.txt',
-        '--dpapi-key', '0x123',
-        '--loot',
-        '-u', 'user',
-        '-p', 'pass',
-        '-d', 'domain'
-    ])
+    args = parser.parse_args(
+        ["--targets-file", "fake.txt", "--dpapi-key", "0x123", "--loot", "-u", "user", "-p", "pass", "-d", "domain"]
+    )
 
     # The validation condition is:
     # if args.dpapi_key and args.targets_file and not args.offline
@@ -119,20 +110,15 @@ def test_bloodhound_live_requires_user(capsys):
 
     old_argv = sys.argv
     try:
-        sys.argv = [
-            'taskhound',
-            '--bh-live',
-            '--bhce'
-        ]
+        sys.argv = ["taskhound", "--bh-live", "--bhce"]
 
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        # When using --bh-live, SMB credentials are still required for target scanning
-        # Even if BloodHound auth is loaded from config, username is needed for SMB
-        assert 'Username' in captured.out and 'required' in captured.out
+        # When using --bh-live, we need auth
+        assert "BloodHound authentication requires either" in captured.out
 
     finally:
         sys.argv = old_argv

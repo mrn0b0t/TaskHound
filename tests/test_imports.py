@@ -6,37 +6,40 @@ Test that all modules can be imported without errors.
 def test_import_cli():
     """Test CLI module imports."""
     from taskhound import cli
-    assert hasattr(cli, 'main')
+
+    assert hasattr(cli, "main")
 
 
 def test_import_engine():
     """Test engine module imports."""
     from taskhound import engine
-    assert hasattr(engine, 'process_target')
-    assert hasattr(engine, 'process_offline_directory')
+
+    assert hasattr(engine, "process_target")
+    assert hasattr(engine, "process_offline_directory")
 
 
 def test_import_dpapi_modules():
     """Test DPAPI module imports."""
     from taskhound.dpapi import decryptor, looter, parser
 
-    assert hasattr(looter, 'loot_credentials')
-    assert hasattr(parser, 'DPAPIBlobParser')
-    assert hasattr(decryptor, 'DPAPIDecryptor')
+    assert hasattr(looter, "loot_credentials")
+    assert hasattr(parser, "DPAPIBlobParser")
+    assert hasattr(decryptor, "DPAPIDecryptor")
 
 
 def test_import_bloodhound_connector():
     """Test BloodHound connector imports."""
     from taskhound.connectors import bloodhound
-    assert hasattr(bloodhound, 'connect_bloodhound')
+
+    assert hasattr(bloodhound, "connect_bloodhound")
 
 
 def test_import_parsers():
     """Test parser modules."""
     from taskhound.parsers import highvalue, task_xml
 
-    assert hasattr(task_xml, 'parse_task_xml')
-    assert hasattr(highvalue, 'HighValueLoader')
+    assert hasattr(task_xml, "parse_task_xml")
+    assert hasattr(highvalue, "HighValueLoader")
 
 
 def test_import_utils():

@@ -16,29 +16,29 @@ def check_credential_guard(smb_conn, host):
     #
     # Returns True if either key is set to 1, False otherwise or on error.
     try:
-        stringBinding = rf'ncacn_np:{host}[\pipe\winreg]'
+        stringBinding = rf"ncacn_np:{host}[\pipe\winreg]"
         rpctransport = transport.DCERPCTransportFactory(stringBinding)
         rpctransport.set_smb_connection(smb_conn)
         dce = rpctransport.get_dce_rpc()
         dce.connect()
         dce.bind(rrp.MSRPC_UUID_RRP)
         # Open HKLM
-        reg_handle = rrp.hOpenLocalMachine(dce)['phKey']
+        reg_handle = rrp.hOpenLocalMachine(dce)["phKey"]
         # Open LSA key
-        lsa_path = 'SYSTEM\\CurrentControlSet\\Control\\Lsa'
+        lsa_path = "SYSTEM\\CurrentControlSet\\Control\\Lsa"
         ans = rrp.hBaseRegOpenKey(dce, reg_handle, lsa_path, samDesired=rrp.KEY_READ)
-        lsa_handle = ans['phkResult']
+        lsa_handle = ans["phkResult"]
         # Check LsaCfgFlags
         try:
-            val = rrp.hBaseRegQueryValue(dce, lsa_handle, 'LsaCfgFlags')
-            if int.from_bytes(val['lpData'], 'little') == 1:
+            val = rrp.hBaseRegQueryValue(dce, lsa_handle, "LsaCfgFlags")
+            if int.from_bytes(val["lpData"], "little") == 1:
                 return True
         except DCERPCException:
             pass
         # Check IsolatedUserMode
         try:
-            val = rrp.hBaseRegQueryValue(dce, lsa_handle, 'IsolatedUserMode')
-            if int.from_bytes(val['lpData'], 'little') == 1:
+            val = rrp.hBaseRegQueryValue(dce, lsa_handle, "IsolatedUserMode")
+            if int.from_bytes(val["lpData"], "little") == 1:
                 return True
         except DCERPCException:
             pass

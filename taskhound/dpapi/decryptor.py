@@ -16,6 +16,7 @@ Workflow:
 4. Decrypt credentials with decrypted masterkeys
 """
 
+import contextlib
 import logging
 import ntpath
 from binascii import unhexlify
@@ -46,10 +47,10 @@ class MasterkeyInfo:
         """Decrypt masterkey using SYSTEM dpapi_userkey"""
         try:
             mkf = MasterKeyFile(self.blob)
-            data = self.blob[len(mkf):]
+            data = self.blob[len(mkf) :]
 
             if mkf["MasterKeyLen"] > 0:
-                mk = MasterKey(data[:mkf["MasterKeyLen"]])
+                mk = MasterKey(data[: mkf["MasterKeyLen"]])
 
                 # Try to decrypt with dpapi_userkey
                 decrypted = mk.decrypt(dpapi_userkey)
@@ -57,6 +58,7 @@ class MasterkeyInfo:
                     self.key = decrypted
                     # Generate SHA1 hash for key
                     from hashlib import sha1
+
                     self._sha1 = sha1(self.key).hexdigest()
                     return True
 
@@ -77,12 +79,14 @@ class MasterkeyInfo:
 class ScheduledTaskCredential:
     """Represents a decrypted scheduled task credential"""
 
-    def __init__(self,
-                 task_name: str,
-                 blob_path: str,
-                 username: Optional[str] = None,
-                 password: Optional[str] = None,
-                 target: Optional[str] = None):
+    def __init__(
+        self,
+        task_name: str,
+        blob_path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         self.task_name = task_name
         self.blob_path = blob_path
         self.username = username
@@ -118,7 +122,7 @@ class DPAPIDecryptor:
     def __init__(self, smb_conn: ImpacketSMBConnection, dpapi_userkey: str):
         """
         Initialize DPAPI decryptor
-        
+
         Args:
             smb_conn: Authenticated Impacket SMB connection
             dpapi_userkey: Hex-encoded SYSTEM dpapi_userkey from LSA dump
@@ -137,7 +141,7 @@ class DPAPIDecryptor:
     def triage_system_masterkeys(self) -> List[MasterkeyInfo]:
         """
         Download and decrypt all SYSTEM masterkey files
-        
+
         Returns:
             List of decrypted MasterkeyInfo objects
         """
@@ -190,6 +194,7 @@ class DPAPIDecryptor:
         """Read a file from SMB share using getFile"""
         try:
             import io
+
             buffer = io.BytesIO()
             self.smb_conn.getFile(share, path, buffer.write)
             return buffer.getvalue()
@@ -197,20 +202,18 @@ class DPAPIDecryptor:
             logging.debug(f"Failed to read file {share}\\{path}: {e}")
             return None
 
-    def decrypt_credential_blob(self,
-                                 blob_bytes: bytes,
-                                 task_name: str,
-                                 blob_path: str,
-                                 target: Optional[str] = None) -> Optional[ScheduledTaskCredential]:
+    def decrypt_credential_blob(
+        self, blob_bytes: bytes, task_name: str, blob_path: str, target: Optional[str] = None
+    ) -> Optional[ScheduledTaskCredential]:
         """
         Decrypt a DPAPI credential blob
-        
+
         Args:
             blob_bytes: Raw credential file bytes
             task_name: Name of the scheduled task
             blob_path: Path to the blob on target system
             target: Target host identifier
-        
+
         Returns:
             ScheduledTaskCredential object with decrypted username/password, or None if failed
         """
@@ -236,21 +239,13 @@ class DPAPIDecryptor:
             mk_info = self.masterkeys.get(masterkey_guid)
             if not mk_info:
                 logging.warning(f"Masterkey {masterkey_guid} not found for blob {blob_path}")
-                return ScheduledTaskCredential(
-                    task_name=task_name,
-                    blob_path=blob_path,
-                    target=target
-                )
+                return ScheduledTaskCredential(task_name=task_name, blob_path=blob_path, target=target)
 
             # Decrypt blob with masterkey
             decrypted = self._decrypt_blob(dpapi_blob_bytes, mk_info)
             if not decrypted:
                 logging.warning(f"Failed to decrypt blob {blob_path}")
-                return ScheduledTaskCredential(
-                    task_name=task_name,
-                    blob_path=blob_path,
-                    target=target
-                )
+                return ScheduledTaskCredential(task_name=task_name, blob_path=blob_path, target=target)
 
             # Parse decrypted credential
             cred_blob = CREDENTIAL_BLOB(decrypted)
@@ -286,27 +281,23 @@ class DPAPIDecryptor:
                 blob_path=blob_path,
                 username=username,
                 password=password,
-                target=target_str or target
+                target=target_str or target,
             )
 
         except Exception as e:
             logging.error(f"Error decrypting credential blob: {e}", exc_info=True)
-            return ScheduledTaskCredential(
-                task_name=task_name,
-                blob_path=blob_path,
-                target=target
-            )
+            return ScheduledTaskCredential(task_name=task_name, blob_path=blob_path, target=target)
 
-    def decrypt_scheduled_task_credentials(self,
-                                           blob_info_list: List[Dict],
-                                           target: Optional[str] = None) -> List[ScheduledTaskCredential]:
+    def decrypt_scheduled_task_credentials(
+        self, blob_info_list: List[Dict], target: Optional[str] = None
+    ) -> List[ScheduledTaskCredential]:
         """
         Decrypt all scheduled task credential blobs
-        
+
         Args:
             blob_info_list: List of dicts with keys: 'task_name', 'blob_path', 'blob_bytes'
             target: Target host identifier
-        
+
         Returns:
             List of ScheduledTaskCredential objects
         """
@@ -324,10 +315,7 @@ class DPAPIDecryptor:
                 continue
 
             cred = self.decrypt_credential_blob(
-                blob_bytes=blob_bytes,
-                task_name=task_name,
-                blob_path=blob_path,
-                target=target
+                blob_bytes=blob_bytes, task_name=task_name, blob_path=blob_path, target=target
             )
 
             if cred:
@@ -339,11 +327,11 @@ class DPAPIDecryptor:
     def _decrypt_blob(self, blob_bytes: bytes, masterkey: MasterkeyInfo) -> Optional[bytes]:
         """
         Low-level DPAPI blob decryption using masterkey
-        
+
         Args:
             blob_bytes: Raw DPAPI blob bytes
             masterkey: Decrypted MasterkeyInfo object
-        
+
         Returns:
             Decrypted bytes or None
         """
@@ -357,27 +345,23 @@ class DPAPIDecryptor:
             # Get algorithm info
             ALGORITHMS_DATA = {
                 0x6603: (168, DES3, DES3.MODE_CBC, 8),  # CALG_3DES
-                0x6611: (128, AES, AES.MODE_CBC, 16),   # CALG_AES_128
-                0x660e: (128, AES, AES.MODE_CBC, 16),   # CALG_AES_128 (alt)
-                0x660f: (192, AES, AES.MODE_CBC, 16),   # CALG_AES_192
-                0x6610: (256, AES, AES.MODE_CBC, 16),   # CALG_AES_256
+                0x6611: (128, AES, AES.MODE_CBC, 16),  # CALG_AES_128
+                0x660E: (128, AES, AES.MODE_CBC, 16),  # CALG_AES_128 (alt)
+                0x660F: (192, AES, AES.MODE_CBC, 16),  # CALG_AES_192
+                0x6610: (256, AES, AES.MODE_CBC, 16),  # CALG_AES_256
             }
 
             # Hash algorithms
             HASH_ALGOS = {
-                0x8004: SHA1,    # CALG_SHA1
-                0x800e: SHA512,  # CALG_SHA_512
+                0x8004: SHA1,  # CALG_SHA1
+                0x800E: SHA512,  # CALG_SHA_512
             }
 
             hash_algo = HASH_ALGOS.get(blob["HashAlgo"], SHA1)
 
             # Derive session key
             key_hash = unhexlify(masterkey.sha1)
-            session_key = self._compute_session_key(
-                key_hash=key_hash,
-                salt=blob["Salt"],
-                hash_algo=hash_algo
-            )
+            session_key = self._compute_session_key(key_hash=key_hash, salt=blob["Salt"], hash_algo=hash_algo)
 
             # Derive encryption key from session key
             derived_key = blob.deriveKey(session_key)
@@ -389,15 +373,12 @@ class DPAPIDecryptor:
                 return None
 
             key_len, cipher_algo, mode, block_size = crypto_info
-            cipher = cipher_algo.new(derived_key[:key_len // 8], mode=mode, iv=b"\x00" * block_size)
+            cipher = cipher_algo.new(derived_key[: key_len // 8], mode=mode, iv=b"\x00" * block_size)
             cleartext = cipher.decrypt(blob["Data"])
 
             # Remove padding
-            try:
+            with contextlib.suppress(ValueError):
                 cleartext = unpad(cleartext, block_size)
-            except ValueError:
-                # Padding may already be removed
-                pass
 
             return cleartext
 
@@ -407,16 +388,15 @@ class DPAPIDecryptor:
 
     def _compute_session_key(self, key_hash: bytes, salt: bytes, hash_algo) -> bytes:
         """Compute DPAPI session key from masterkey hash and salt"""
-        from Cryptodome.Hash import HMAC as CryptoHMAC
+        from Cryptodome.Hash import HMAC
 
         # Try both session key derivation methods
         for i in range(2):
-            if i == 0:
-                # Method 1: HMAC(key, salt)
-                h = CryptoHMAC.new(key_hash, salt, hash_algo)
-            else:
-                # Method 2: HMAC(salt, key)
-                h = CryptoHMAC.new(salt, key_hash, hash_algo)
+            h = (
+                HMAC.new(key_hash, salt, hash_algo)
+                if i == 0
+                else HMAC.new(salt, key_hash, hash_algo)
+            )
 
             hmac_result = h.digest()
 
@@ -437,8 +417,7 @@ class DPAPIDecryptor:
         if len(parts) != 5:
             return False
 
-        if len(parts[0]) != 8 or len(parts[1]) != 4 or len(parts[2]) != 4 or \
-           len(parts[3]) != 4 or len(parts[4]) != 12:
+        if len(parts[0]) != 8 or len(parts[1]) != 4 or len(parts[2]) != 4 or len(parts[3]) != 4 or len(parts[4]) != 12:
             return False
 
         # Check if all parts are hex

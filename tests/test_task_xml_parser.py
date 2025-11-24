@@ -1,6 +1,7 @@
 """
 Test task XML parsing functionality.
 """
+
 from taskhound.parsers.task_xml import parse_task_xml
 
 
@@ -10,10 +11,10 @@ def test_parse_basic_task_xml(sample_task_xml):
 
     assert result is not None
     # The parser returns 'runas' not 'runas_user'
-    assert 'runas' in result or 'runas_user' in result
-    assert 'command' in result
-    assert 'date' in result
-    assert 'author' in result
+    assert "runas" in result or "runas_user" in result
+    assert "command" in result
+    assert "date" in result
+    assert "author" in result
 
 
 def test_parse_task_with_credentials(sample_task_xml):
@@ -22,7 +23,7 @@ def test_parse_task_with_credentials(sample_task_xml):
 
     # Tasks with LogonType=Password store credentials
     assert result is not None
-    assert 'logon_type' in result or 'credentials_hint' in result
+    assert "logon_type" in result or "credentials_hint" in result
 
 
 def test_parse_task_command_extraction(sample_task_xml):
@@ -30,7 +31,7 @@ def test_parse_task_command_extraction(sample_task_xml):
     result = parse_task_xml(sample_task_xml)
 
     assert result is not None
-    assert 'powershell.exe' in result.get('command', '').lower()
+    assert "powershell.exe" in result.get("command", "").lower()
 
 
 def test_parse_malformed_xml():

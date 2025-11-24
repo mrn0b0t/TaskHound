@@ -1,9 +1,11 @@
 """
 Test engine functionality and merged feature integration.
 """
+
 import inspect
 
-from taskhound.engine import _format_block, process_target
+from taskhound.engine import process_target
+from taskhound.output.printer import format_block
 
 
 def test_process_target_signature_has_dpapi_params():
@@ -11,8 +13,8 @@ def test_process_target_signature_has_dpapi_params():
     sig = inspect.signature(process_target)
     params = list(sig.parameters.keys())
 
-    assert 'loot' in params, "Missing 'loot' parameter"
-    assert 'dpapi_key' in params, "Missing 'dpapi_key' parameter"
+    assert "loot" in params, "Missing 'loot' parameter"
+    assert "dpapi_key" in params, "Missing 'dpapi_key' parameter"
 
 
 def test_process_target_signature_has_bloodhound_params():
@@ -20,22 +22,22 @@ def test_process_target_signature_has_bloodhound_params():
     sig = inspect.signature(process_target)
     params = list(sig.parameters.keys())
 
-    assert 'ldap_domain' in params, "Missing 'ldap_domain' parameter"
-    assert 'ldap_user' in params, "Missing 'ldap_user' parameter"
-    assert 'ldap_password' in params, "Missing 'ldap_password' parameter"
+    assert "ldap_domain" in params, "Missing 'ldap_domain' parameter"
+    assert "ldap_user" in params, "Missing 'ldap_user' parameter"
+    assert "ldap_password" in params, "Missing 'ldap_password' parameter"
 
 
 def test_format_block_signature_has_all_params():
-    """Test that _format_block has parameters from both features."""
-    sig = inspect.signature(_format_block)
+    """Test that format_block has parameters from both features."""
+    sig = inspect.signature(format_block)
     params = list(sig.parameters.keys())
 
     # DPAPI parameter
-    assert 'decrypted_creds' in params, "Missing 'decrypted_creds' parameter"
+    assert "decrypted_creds" in params, "Missing 'decrypted_creds' parameter"
 
     # BloodHound parameters
-    assert 'ldap_domain' in params, "Missing 'ldap_domain' parameter"
-    assert 'meta' in params, "Missing 'meta' parameter"
+    assert "ldap_domain" in params, "Missing 'ldap_domain' parameter"
+    assert "meta" in params, "Missing 'meta' parameter"
 
 
 def test_process_target_parameter_count():
@@ -48,8 +50,8 @@ def test_process_target_parameter_count():
 
 
 def test_format_block_parameter_count():
-    """Test that _format_block has expected number of parameters."""
-    sig = inspect.signature(_format_block)
+    """Test that format_block has expected number of parameters."""
+    sig = inspect.signature(format_block)
     params = list(sig.parameters.keys())
 
     # Should have parameters from both features merged

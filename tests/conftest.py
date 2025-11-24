@@ -1,6 +1,7 @@
 """
 Pytest configuration and shared fixtures for TaskHound tests.
 """
+
 import json
 from pathlib import Path
 
@@ -17,14 +18,16 @@ def test_data_dir():
 def live_config():
     """
     Load live test configuration from file.
-    
+
     Create a file: tests/live_test_config.json based on live_test_config.json.example
     """
     config_file = Path(__file__).parent / "live_test_config.json"
 
     if not config_file.exists():
-        pytest.skip(f"Live test config not found: {config_file}\n"
-                   f"Copy live_test_config.json.example to live_test_config.json and edit with your lab details")
+        pytest.skip(
+            f"Live test config not found: {config_file}\n"
+            f"Copy live_test_config.json.example to live_test_config.json and edit with your lab details"
+        )
 
     with open(config_file) as f:
         config = json.load(f)

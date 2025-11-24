@@ -3,67 +3,9 @@
 # This module contains simple utilities for classifying RunAs values,
 # normalizing target hostnames, and the ASCII banner used by the CLI.
 
+import re
+import uuid
 from typing import List
-
-
-def looks_like_domain_user(runas: str) -> bool:
-    # Return True when `runas` appears to represent a domain account.
-    #
-    # The function returns False for well-known local/system principals
-    # (including common German translations seen in German-language
-    # Windows installations). It treats values with a backslash (NETBIOS\user)
-    # or values containing a dot (user@domain-like or UPN) as domain-like.
-    # It also recognizes domain SIDs (S-1-5-21-*-*-*-RID) as domain accounts.
-    if not runas:
-        return False
-
-    val = runas.strip()
-
-    # Check if this is a SID format
-    if val.upper().startswith("S-1-"):
-        # Exclude well-known local SIDs (SYSTEM, LOCAL SERVICE, NETWORK SERVICE)
-        up = val.upper()
-        if up.startswith("S-1-5-18") or up.startswith("S-1-5-19") or up.startswith("S-1-5-20"):
-            return False
-
-        # Domain SIDs have pattern S-1-5-21-domain-domain-domain-rid
-        if up.startswith("S-1-5-21-"):
-            return True
-
-        # Other SIDs are likely not domain users
-        return False
-
-    # If username contains a backslash (DOMAIN\user), check for local/system principals
-    if "\\" in val:
-        domain, user = val.split("\\", 1)
-        domain = domain.strip().lower()
-        user = user.strip().lower()
-
-        # Known local domains / authority names (English + some common misspellings/variants)
-        local_domain_markers = ("nt authority", "nt_autority", "nt_autoritat", "nt_autorität", "localhost")
-        if any(ld in domain for ld in local_domain_markers):
-            return False
-
-        # Known local users / service accounts (English + German variants)
-        local_user_names = {
-            "system",
-            "netzwerkdienst",
-            "networkservice",
-            "localservice",
-            "localsystem",
-        }
-        # quick membership and substring checks to catch slightly different forms
-        if user in local_user_names or any(l in user for l in ("networkservice", "netzwerkdienst", "localservice", "system")):
-            return False
-
-        # Otherwise treat as domain-like if it has a backslash
-        return True
-
-    # If it looks like a UPN or contains a dot, treat as domain user
-    if "." in val:
-        return True
-
-    return False
 
 
 def is_ipv4(host: str) -> bool:
@@ -109,3 +51,58 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
 
                      by 0xr0BIT
 """
+
+
+def sanitize_json_string(json_str: str) -> str:
+    """
+    Sanitize JSON string to handle unescaped backslashes that break JSON parsing.
+
+    This commonly occurs in Active Directory Distinguished Names like:
+    "CN=LASTNAME\\, FIRSTNAME,OU=..."
+
+    Args:
+        json_str: Raw JSON string that may contain unescaped backslashes
+
+    Returns:
+        Sanitized JSON string with properly escaped backslashes
+    """
+    # Replace single backslashes with double backslashes, but be careful not to
+    # double-escape already escaped sequences
+
+    # First, temporarily replace already properly escaped sequences
+    placeholder = str(uuid.uuid4())
+
+    # Protect already escaped sequences (\\, \", \n, \r, \t, \/, \b, \f, \u)
+    protected = json_str.replace("\\\\", placeholder + "BACKSLASH")
+    protected = protected.replace('\\"', placeholder + "QUOTE")
+    protected = protected.replace("\\n", placeholder + "NEWLINE")
+    protected = protected.replace("\\r", placeholder + "RETURN")
+    protected = protected.replace("\\t", placeholder + "TAB")
+    protected = protected.replace("\\/", placeholder + "SLASH")
+    protected = protected.replace("\\b", placeholder + "BACKSPACE")
+    protected = protected.replace("\\f", placeholder + "FORMFEED")
+
+    # Protect unicode escapes (\uXXXX)
+    unicode_pattern = r"\\u[0-9a-fA-F]{4}"
+    unicode_matches = re.findall(unicode_pattern, protected)
+    for i, match in enumerate(unicode_matches):
+        protected = protected.replace(match, f"{placeholder}UNICODE{i}")
+
+    # Now escape any remaining single backslashes
+    protected = protected.replace("\\", "\\\\")
+
+    # Restore the protected sequences
+    protected = protected.replace(placeholder + "BACKSLASH", "\\\\")
+    protected = protected.replace(placeholder + "QUOTE", '\\"')
+    protected = protected.replace(placeholder + "NEWLINE", "\\n")
+    protected = protected.replace(placeholder + "RETURN", "\\r")
+    protected = protected.replace(placeholder + "TAB", "\\t")
+    protected = protected.replace(placeholder + "SLASH", "\\/")
+    protected = protected.replace(placeholder + "BACKSPACE", "\\b")
+    protected = protected.replace(placeholder + "FORMFEED", "\\f")
+
+    # Restore unicode escapes
+    for i, match in enumerate(unicode_matches):
+        protected = protected.replace(f"{placeholder}UNICODE{i}", match)
+
+    return protected

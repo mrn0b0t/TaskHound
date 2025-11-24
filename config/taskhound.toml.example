@@ -1,0 +1,63 @@
+# TaskHound Configuration File
+#
+# This file allows you to define default values for TaskHound CLI arguments.
+# Place this file at ~/.config/taskhound/taskhound.toml or in your current working directory.
+#
+# Priority: CLI Args > Env Vars > Local Config > User Config > Defaults
+
+[authentication]
+# Default credentials (use with caution!)
+# username = "svc_taskhound"
+# domain = "CORP.LOCAL"
+# hashes = "aad3b435b51404eeaad3b435b51404ee:..."
+# kerberos = true
+
+[target]
+# Default domain controller
+# dc_ip = "10.0.0.1"
+
+[scanning]
+# Default scan options
+# offline = "./offline_data"
+# include_local = true
+# unsaved_creds = true
+
+[cache]
+# Caching options for SID resolution and BloodHound queries
+# enabled = true
+# ttl = 86400  # 24 hours in seconds
+
+[bloodhound]
+# BloodHound connection settings
+live = false
+connector = "http://127.0.0.1:8080"
+# username = "admin"
+# password = "password"
+# api_key = "key_id"
+# api_key_id = "key_secret"
+timeout = 120
+type = "bhce" # or "legacy"
+
+[bloodhound.opengraph]
+# OpenGraph generation settings
+enabled = true
+output_dir = "./opengraph"
+no_upload = false
+set_icon = true
+icon = "heart"
+color = "#8B5CF6"
+
+[ldap]
+# LDAP SID resolution settings
+# no_ldap = false
+# user = "svc_ldap"
+# password = "password"
+
+[output]
+# plain = "./output/plain"
+# json = "./output/results.json"
+# csv = "./output/results.csv"
+# opengraph = "./output/opengraph"
+# backup = "./output/xml_backup"
+# no_summary = false
+# debug = false
