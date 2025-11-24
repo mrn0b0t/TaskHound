@@ -867,13 +867,7 @@ def resolve_object_ids_chunked(
             for name in computer_names:
                 cached_val = cache.get("principals", name)
                 if cached_val:
-                    # Cached value is [node_id, object_id, name] list/tuple
-                    # If looking up by name, we might have old cache entries with 2 elements
-                    # But that's fine, we can just use name as name
-                    if len(cached_val) == 2:
-                        computer_sid_map[name] = (cached_val[0], cached_val[1], name)
-                    else:
-                        computer_sid_map[name] = tuple(cached_val)
+                    computer_sid_map[name] = tuple(cached_val)
                     cached_computers.add(name)
 
             if cached_computers:
@@ -978,14 +972,7 @@ def resolve_object_ids_chunked(
             for name in user_names:
                 cached_val = cache.get("principals", name)
                 if cached_val:
-                    # If looking up by SID, ensure we have the resolved name (3rd element)
-                    if name.startswith("S-1-5-") and len(cached_val) < 3:
-                        continue
-                    
-                    if len(cached_val) == 2:
-                        user_sid_map[name] = (cached_val[0], cached_val[1], name)
-                    else:
-                        user_sid_map[name] = tuple(cached_val)
+                    user_sid_map[name] = tuple(cached_val)
                     cached_users.add(name)
 
             if cached_users:
