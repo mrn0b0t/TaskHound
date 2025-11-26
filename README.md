@@ -419,7 +419,7 @@ When caffeine intake and free time align:
 
 ### when i find time
 - **Asynchronous Processing**: Multi-threaded target processing for 10x speedup on large environments
-- **LAPS Support**: Automatic Local Administrator Password Solution integration like NetExec
+- ~~**LAPS Support**: Automatic Local Administrator Password Solution integration like NetExec~~ **DONE (v1.2.0)** - Supports plaintext and encrypted LAPS passwords via MS-GKDI
 - **Cross Domain Authentication**: Support for multi-domain environments with trust relationships
 - **Custom Tier-0 Mappings**: Support for user-defined TIER-0 targets beyond standard groups
 
@@ -435,17 +435,23 @@ TaskHound is strictly an **audit and educational tool**. Use only in environment
 
 ## Acknowledgement
 
-[Fortra/Impacket](https://github.com/fortra/impacket) - SMB/RPC/Kerberos operations
+[Fortra/Impacket](https://github.com/fortra/impacket) - SMB/RPC/Kerberos operations, DPAPI-NG implementation, MS-GKDI RPC support
 
 [SpecterOps/BloodHound](https://github.com/SpecterOps/BloodHound) - Active Directory attack path analysis
 
 [Podalirius/bh-opengraph](https://github.com/Podalirius/bh-opengraph) - OpenGraph integration inspiration and implementation guidance
+
+[Pennyw0rth/NetExec](https://github.com/Pennyw0rth/NetExec) - LAPS encrypted password decryption reference implementation
+
+[jborean93/dpapi-ng](https://github.com/jborean93/dpapi-ng) - DPAPI-NG/CNG DPAPI research and implementation (incorporated into Impacket)
 
 [tijldeneut/DPAPIck3](https://github.com/tijldeneut/DPAPIck3) - DPAPI decryption implementation reference
 
 [Pupy Project](https://github.com/n1nj4sec/pupy) - DPAPI SYSTEM masterkey decryption techniques
 
 [gentilkiwi/mimikatz](https://github.com/gentilkiwi/mimikatz) - DPAPI operations and LSA secrets extraction research
+
+[toneillcodes](https://medium.com/@toneillcodes/decoding-dpapi-blobs-1ed9b4832cf6) - DPAPI blob structure documentation
 
 and every contributor to these projects for the amazing work they did for the community.
 
