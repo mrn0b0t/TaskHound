@@ -4,7 +4,8 @@
 # and provides credential lookup for SMB authentication.
 #
 # Supports:
-#   - Windows LAPS (msLAPS-Password) - JSON format, plaintext only for MVP
+#   - Windows LAPS (msLAPS-Password) - JSON format plaintext
+#   - Windows LAPS (msLAPS-EncryptedPassword) - Encrypted via DPAPI-NG/MS-GKDI
 #   - Legacy LAPS (ms-Mcs-AdmPwd) - plaintext
 #   - Persistent caching via SQLite (respects LAPS expiration times)
 #
@@ -15,9 +16,24 @@ import struct
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from pyasn1.codec.der import decoder
+from pyasn1_modules import rfc5652
 
 from impacket.ldap import ldapasn1 as ldapasn1_impacket
+from impacket.dcerpc.v5 import transport
+from impacket.dcerpc.v5.epm import hept_map
+from impacket.dcerpc.v5.gkdi import MSRPC_UUID_GKDI, GkdiGetKey, GroupKeyEnvelope
+from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY
+from impacket.dpapi_ng import (
+    EncryptedPasswordBlob,
+    KeyIdentifier,
+    compute_kek,
+    create_sd,
+    decrypt_plaintext,
+    unwrap_cek,
+)
 
 from .utils.cache_manager import get_cache
 from .utils.date_parser import parse_ad_timestamp, parse_filetime_hex
@@ -95,7 +111,12 @@ LAPS_ERRORS = {
     ),
     "encrypted": (
         "[!] {hostname}: LAPS password is encrypted (Windows LAPS)\n"
-        "[!] Encrypted LAPS decryption not yet supported"
+        "[!] Decryption requires MS-GKDI access on domain controller"
+    ),
+    "gkdi_failed": (
+        "[!] {hostname}: Failed to decrypt LAPS password via MS-GKDI\n"
+        "[!] Your account may lack 'Read msLAPS-EncryptedPassword' rights or\n"
+        "[!] may not be authorized for the Group Key Distribution Service"
     ),
     "remote_uac": (
         "[!] {hostname}: LAPS authentication succeeded but admin access denied\n"
@@ -207,7 +228,8 @@ class LAPSCache:
             self.encrypted_count += 1
         elif cred.laps_type == "legacy":
             self.legacy_count += 1
-        elif cred.laps_type == "mslaps":
+        elif cred.laps_type in ("mslaps", "mslaps-encrypted"):
+            # Both plaintext and decrypted-encrypted count as Windows LAPS
             self.mslaps_count += 1
 
         # Persist to SQLite cache if enabled
@@ -403,7 +425,7 @@ class LAPSCache:
                         cache.encrypted_count += 1
                     elif cred.laps_type == "legacy":
                         cache.legacy_count += 1
-                    elif cred.laps_type == "mslaps":
+                    elif cred.laps_type in ("mslaps", "mslaps-encrypted"):
                         cache.mslaps_count += 1
                     cache.from_persistent_cache += 1
                     loaded += 1
@@ -520,6 +542,243 @@ parse_filetime = parse_filetime_hex
 
 
 # =============================================================================
+# LAPS Encrypted Password Decryption (Windows LAPS / DPAPI-NG)
+# =============================================================================
+
+
+@dataclass
+class LAPSDecryptionContext:
+    """
+    Context for LAPS encrypted password decryption via MS-GKDI.
+    
+    Holds authentication credentials and connection parameters needed
+    to establish the RPC connection to the Group Key Distribution Service.
+    """
+    domain: str
+    username: str
+    password: Optional[str] = None
+    lmhash: str = ""
+    nthash: str = ""
+    kerberos: bool = False
+    kdc_host: Optional[str] = None
+    dns_server: Optional[str] = None
+    
+    # Cache for Group Key Envelopes to avoid repeated RPC calls
+    _gke_cache: Dict[bytes, Any] = field(default_factory=dict)
+    
+    @classmethod
+    def from_credentials(
+        cls,
+        domain: str,
+        username: str,
+        password: Optional[str] = None,
+        hashes: Optional[str] = None,
+        kerberos: bool = False,
+        kdc_host: Optional[str] = None,
+        dns_server: Optional[str] = None,
+    ) -> "LAPSDecryptionContext":
+        """Create context from standard authentication parameters."""
+        lmhash = ""
+        nthash = ""
+        if hashes:
+            if ":" in hashes:
+                lmhash, nthash = hashes.split(":")
+            else:
+                nthash = hashes
+        
+        return cls(
+            domain=domain,
+            username=username,
+            password=password,
+            lmhash=lmhash,
+            nthash=nthash,
+            kerberos=kerberos,
+            kdc_host=kdc_host,
+            dns_server=dns_server,
+        )
+
+
+def decrypt_laps_password(
+    encrypted_blob: bytes,
+    ctx: LAPSDecryptionContext,
+) -> Tuple[str, str]:
+    """
+    Decrypt an msLAPS-EncryptedPassword blob using MS-GKDI.
+    
+    Windows LAPS encrypts passwords using DPAPI-NG (also known as CNG DPAPI).
+    Decryption requires:
+    1. Parsing the encrypted blob structure
+    2. Extracting the Key Identifier and SID protection descriptor
+    3. Connecting to MS-GKDI (Group Key Distribution Interface) on the DC
+    4. Calling GetKey to retrieve the Group Key Envelope
+    5. Computing the KEK (Key Encryption Key)
+    6. Unwrapping the CEK (Content Encryption Key)
+    7. Decrypting the password JSON
+    
+    Args:
+        encrypted_blob: Raw bytes from msLAPS-EncryptedPassword attribute
+        ctx: Decryption context with authentication credentials
+        
+    Returns:
+        Tuple of (password, username) from the decrypted JSON
+        
+    Raises:
+        LAPSError: If decryption fails
+    """
+    debug("LAPS: Unpacking encrypted password blob...")
+    
+    try:
+        # Parse the encrypted blob structure
+        encrypted_laps = EncryptedPasswordBlob(encrypted_blob)
+        cms_blob = encrypted_laps["Blob"]
+        
+        # Decode the CMS (PKCS#7) structure
+        parsed_cms, remaining = decoder.decode(cms_blob, asn1Spec=rfc5652.ContentInfo())
+        enveloped_data_blob = parsed_cms["content"]
+        parsed_enveloped, _ = decoder.decode(enveloped_data_blob, asn1Spec=rfc5652.EnvelopedData())
+        
+        # Extract recipient info (contains the encrypted key)
+        recipient_infos = parsed_enveloped["recipientInfos"]
+        kek_recipient_info = recipient_infos[0]["kekri"]
+        kek_identifier = kek_recipient_info["kekid"]
+        
+        # Parse the Key Identifier
+        key_id = KeyIdentifier(bytes(kek_identifier["keyIdentifier"]))
+        
+        # Extract the SID from the protection descriptor
+        tmp, _ = decoder.decode(kek_identifier["other"]["keyAttr"])
+        sid = tmp["field-1"][0][0][1].asOctets().decode("utf-8")
+        target_sd = create_sd(sid)
+        
+        debug(f"LAPS: Key ID root: {key_id['RootKeyId']}, SID: {sid}")
+        
+    except Exception as e:
+        raise LAPSError(f"Failed to parse encrypted LAPS blob: {e}")
+    
+    # Check cache for Group Key Envelope
+    root_key_id = key_id["RootKeyId"]
+    gke = ctx._gke_cache.get(root_key_id)
+    
+    if not gke:
+        debug("LAPS: Connecting to MS-GKDI for key retrieval...")
+        gke = _get_group_key_envelope(ctx, target_sd, key_id)
+        ctx._gke_cache[root_key_id] = gke
+    else:
+        debug("LAPS: Using cached Group Key Envelope")
+    
+    try:
+        # Compute the Key Encryption Key (KEK)
+        kek = compute_kek(gke, key_id)
+        debug(f"LAPS: Computed KEK: {kek.hex()[:32]}...")
+        
+        # Extract IV from content encryption parameters
+        enc_content_param = bytes(
+            parsed_enveloped["encryptedContentInfo"]["contentEncryptionAlgorithm"]["parameters"]
+        )
+        iv, _ = decoder.decode(enc_content_param)
+        iv = bytes(iv[0])
+        
+        # Unwrap the Content Encryption Key (CEK)
+        cek = unwrap_cek(kek, bytes(kek_recipient_info["encryptedKey"]))
+        debug(f"LAPS: Unwrapped CEK: {cek.hex()[:32]}...")
+        
+        # Decrypt the password
+        # The 'remaining' data contains the encrypted content (not in PKCS#7 structure)
+        plaintext = decrypt_plaintext(cek, iv, remaining)
+        
+        # Remove padding (last 18 bytes are padding/signature)
+        json_data = plaintext[:-18].decode("utf-16-le")
+        debug(f"LAPS: Decrypted JSON: {json_data}")
+        
+        # Parse the JSON to extract password and username
+        data = json.loads(json_data)
+        password = data.get("p", "")
+        username = data.get("n", "Administrator")
+        
+        return password, username
+        
+    except Exception as e:
+        raise LAPSError(f"Failed to decrypt LAPS password: {e}")
+
+
+def _get_group_key_envelope(
+    ctx: LAPSDecryptionContext,
+    target_sd: bytes,
+    key_id: KeyIdentifier,
+) -> GroupKeyEnvelope:
+    """
+    Connect to MS-GKDI RPC service and retrieve the Group Key Envelope.
+    
+    Args:
+        ctx: Decryption context with authentication credentials
+        target_sd: Security descriptor bytes for the target SID
+        key_id: Key identifier from the encrypted blob
+        
+    Returns:
+        GroupKeyEnvelope containing the key material
+        
+    Raises:
+        LAPSError: If RPC connection or GetKey call fails
+    """
+    try:
+        # Resolve the MS-GKDI endpoint
+        dest_host = ctx.dns_server if ctx.dns_server else ctx.domain
+        string_binding = hept_map(
+            destHost=dest_host,
+            remoteIf=MSRPC_UUID_GKDI,
+            protocol="ncacn_ip_tcp"
+        )
+        
+        debug(f"LAPS: MS-GKDI binding: {string_binding}")
+        
+        # Create RPC transport
+        rpc_transport = transport.DCERPCTransportFactory(string_binding)
+        
+        if hasattr(rpc_transport, "set_credentials"):
+            rpc_transport.set_credentials(
+                username=ctx.username,
+                password=ctx.password or "",
+                domain=ctx.domain,
+                lmhash=ctx.lmhash,
+                nthash=ctx.nthash,
+            )
+        
+        if ctx.kerberos:
+            rpc_transport.set_kerberos(True, kdcHost=ctx.kdc_host)
+        
+        # Connect and bind
+        dce = rpc_transport.get_dce_rpc()
+        dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
+        
+        debug("LAPS: Connecting to MS-GKDI...")
+        dce.connect()
+        
+        debug("LAPS: Binding to MS-GKDI interface...")
+        dce.bind(MSRPC_UUID_GKDI)
+        
+        # Call GetKey
+        debug("LAPS: Calling GetKey...")
+        resp = GkdiGetKey(
+            dce,
+            target_sd=target_sd,
+            l0=key_id["L0Index"],
+            l1=key_id["L1Index"],
+            l2=key_id["L2Index"],
+            root_key_id=key_id["RootKeyId"],
+        )
+        
+        # Parse response into GroupKeyEnvelope
+        gke = GroupKeyEnvelope(b"".join(resp["pbbOut"]))
+        
+        debug(f"LAPS: Got Group Key Envelope (Root Key: {gke['RootKeyId']})")
+        
+        return gke
+        
+    except Exception as e:
+        raise LAPSError(f"MS-GKDI GetKey failed: {e}")
+
+
+# =============================================================================
 # LDAP Query Functions
 # =============================================================================
 
@@ -605,12 +864,13 @@ def query_laps_passwords(
     laps_user_override: Optional[str] = None,
     dc_host: Optional[str] = None,
     save_to_cache: bool = True,
+    decrypt_encrypted: bool = True,
 ) -> LAPSCache:
     """
     Query all LAPS passwords from Active Directory.
 
-    Queries both Windows LAPS (msLAPS-Password) and Legacy LAPS (ms-Mcs-AdmPwd)
-    attributes from all computer objects.
+    Queries Windows LAPS (msLAPS-Password, msLAPS-EncryptedPassword) and 
+    Legacy LAPS (ms-Mcs-AdmPwd) attributes from all computer objects.
 
     Args:
         dc_ip: Domain controller IP address
@@ -622,6 +882,7 @@ def query_laps_passwords(
         laps_user_override: Override username for all LAPS credentials
         dc_host: DC hostname for Kerberos SPN (optional, auto-resolved if not provided)
         save_to_cache: Whether to save results to persistent cache (default: True)
+        decrypt_encrypted: Whether to decrypt msLAPS-EncryptedPassword (default: True)
 
     Returns:
         LAPSCache populated with discovered credentials
@@ -657,9 +918,9 @@ def query_laps_passwords(
     # Build base DN
     base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
 
-    # LDAP filter: computers with either LAPS attribute populated
-    # Using (|(attr=*)(attr=*)) to match any computer with LAPS data
-    ldap_filter = "(&(objectClass=computer)(|(ms-Mcs-AdmPwd=*)(msLAPS-Password=*)))"
+    # LDAP filter: computers with any LAPS attribute populated
+    # Include msLAPS-EncryptedPassword for Windows LAPS encrypted passwords
+    ldap_filter = "(&(objectClass=computer)(|(ms-Mcs-AdmPwd=*)(msLAPS-Password=*)(msLAPS-EncryptedPassword=*)))"
 
     # Attributes to retrieve
     attributes = [
@@ -667,9 +928,23 @@ def query_laps_passwords(
         "dNSHostName",  # FQDN (e.g., "WS01.domain.local")
         "ms-Mcs-AdmPwd",  # Legacy LAPS password
         "ms-Mcs-AdmPwdExpirationTime",  # Legacy LAPS expiration
-        "msLAPS-Password",  # Windows LAPS (JSON)
+        "msLAPS-Password",  # Windows LAPS (JSON, plaintext)
+        "msLAPS-EncryptedPassword",  # Windows LAPS (DPAPI-NG encrypted)
         "msLAPS-PasswordExpirationTime",  # Windows LAPS expiration
     ]
+    
+    # Create decryption context if we need to decrypt encrypted passwords
+    decrypt_ctx = None
+    if decrypt_encrypted:
+        decrypt_ctx = LAPSDecryptionContext.from_credentials(
+            domain=domain,
+            username=username,
+            password=password,
+            hashes=hashes,
+            kerberos=kerberos,
+            kdc_host=dc_host,
+            dns_server=dc_ip,
+        )
 
     try:
         # Perform search
@@ -681,16 +956,19 @@ def query_laps_passwords(
         )
 
         # Process results
+        decrypted_count = 0
         for entry in search_result:
             # Skip search references
             if not isinstance(entry, ldapasn1_impacket.SearchResultEntry):
                 continue
 
             try:
-                cred = _parse_ldap_entry(entry, laps_user_override)
+                cred = _parse_ldap_entry(entry, laps_user_override, decrypt_ctx)
                 if cred:
                     cache.add(cred)
                     debug(f"LAPS: Found {cred.laps_type} password for {cred.computer_name}")
+                    if cred.laps_type == "mslaps-encrypted":
+                        decrypted_count += 1
             except Exception as e:
                 debug(f"LAPS: Failed to parse entry: {e}")
                 continue
@@ -713,11 +991,13 @@ def query_laps_passwords(
     stats = cache.get_statistics()
     good(f"LAPS: Found {stats['total']} computers with LAPS passwords")
     if stats["mslaps"] > 0:
-        info(f"LAPS:   - Windows LAPS: {stats['mslaps']}")
+        info(f"LAPS:   - Windows LAPS (plaintext): {stats['mslaps']}")
+    if decrypted_count > 0:
+        info(f"LAPS:   - Windows LAPS (decrypted): {decrypted_count}")
     if stats["legacy"] > 0:
         info(f"LAPS:   - Legacy LAPS: {stats['legacy']}")
     if stats["encrypted"] > 0:
-        warn(f"LAPS:   - Encrypted (skipped): {stats['encrypted']}")
+        warn(f"LAPS:   - Encrypted (failed): {stats['encrypted']}")
 
     # Save to persistent cache for future runs
     if save_to_cache:
@@ -730,25 +1010,33 @@ def query_laps_passwords(
     return cache
 
 
-def _parse_ldap_entry(entry: ldapasn1_impacket.SearchResultEntry, laps_user_override: Optional[str]) -> Optional[LAPSCredential]:
+def _parse_ldap_entry(
+    entry: ldapasn1_impacket.SearchResultEntry,
+    laps_user_override: Optional[str],
+    decrypt_ctx: Optional[LAPSDecryptionContext] = None,
+) -> Optional[LAPSCredential]:
     """
     Parse a single LDAP search result entry into a LAPSCredential.
 
     Args:
         entry: LDAP search result entry
         laps_user_override: Override username if specified
+        decrypt_ctx: Decryption context for encrypted LAPS passwords
 
     Returns:
         LAPSCredential or None if parsing fails
     """
     # Extract attributes from entry
     attrs = {}
+    raw_attrs = {}  # Keep raw bytes for binary attributes
     for attr in entry["attributes"]:
         attr_type = str(attr["type"])
         values = attr["vals"]
         if values:
             # Get first value (LAPS attributes are single-valued)
             attrs[attr_type.lower()] = str(values[0])
+            # Also keep raw bytes for binary attributes
+            raw_attrs[attr_type.lower()] = bytes(values[0])
 
     # Get computer name (required)
     computer_name = attrs.get("samaccountname")
@@ -757,22 +1045,22 @@ def _parse_ldap_entry(entry: ldapasn1_impacket.SearchResultEntry, laps_user_over
 
     dns_hostname = attrs.get("dnshostname")
 
-    # Try Windows LAPS first (preferred)
+    # Parse expiration (shared by all LAPS types)
+    expiration = None
+    exp_time = attrs.get("mslaps-passwordexpirationtime")
+    if exp_time:
+        try:
+            expiration = parse_ad_timestamp(int(exp_time))
+        except (ValueError, TypeError):
+            pass
+
+    # Try Windows LAPS plaintext first (msLAPS-Password)
     mslaps_password = attrs.get("mslaps-password")
     if mslaps_password:
         try:
             password, username, is_encrypted = parse_mslaps_password(
                 mslaps_password, default_username=laps_user_override
             )
-
-            # Parse expiration if available
-            expiration = None
-            exp_time = attrs.get("mslaps-passwordexpirationtime")
-            if exp_time:
-                try:
-                    expiration = parse_ad_timestamp(int(exp_time))
-                except (ValueError, TypeError):
-                    pass
 
             return LAPSCredential(
                 password=password if not is_encrypted else "",
@@ -786,15 +1074,58 @@ def _parse_ldap_entry(entry: ldapasn1_impacket.SearchResultEntry, laps_user_over
         except LAPSParseError as e:
             debug(f"LAPS: Failed to parse msLAPS-Password for {computer_name}: {e}")
 
+    # Try Windows LAPS encrypted (msLAPS-EncryptedPassword)
+    mslaps_encrypted = raw_attrs.get("mslaps-encryptedpassword")
+    if mslaps_encrypted and len(mslaps_encrypted) > 50:
+        if decrypt_ctx:
+            try:
+                info(f"LAPS: Decrypting password for {computer_name}...")
+                password, username = decrypt_laps_password(mslaps_encrypted, decrypt_ctx)
+                good(f"LAPS: Successfully decrypted password for {computer_name}")
+                
+                return LAPSCredential(
+                    password=password,
+                    username=laps_user_override or username,
+                    laps_type="mslaps-encrypted",
+                    computer_name=computer_name,
+                    dns_hostname=dns_hostname,
+                    expiration=expiration,
+                    encrypted=False,  # No longer encrypted after decryption
+                )
+            except LAPSError as e:
+                warn(f"LAPS: Failed to decrypt password for {computer_name}: {e}")
+                # Return as encrypted credential (will be counted as failed)
+                return LAPSCredential(
+                    password="",
+                    username=laps_user_override or "Administrator",
+                    laps_type="mslaps-encrypted",
+                    computer_name=computer_name,
+                    dns_hostname=dns_hostname,
+                    expiration=expiration,
+                    encrypted=True,
+                )
+        else:
+            # No decryption context - mark as encrypted
+            debug(f"LAPS: Found encrypted password for {computer_name} but decryption disabled")
+            return LAPSCredential(
+                password="",
+                username=laps_user_override or "Administrator",
+                laps_type="mslaps-encrypted",
+                computer_name=computer_name,
+                dns_hostname=dns_hostname,
+                expiration=expiration,
+                encrypted=True,
+            )
+
     # Fall back to Legacy LAPS
     legacy_password = attrs.get("ms-mcs-admpwd")
     if legacy_password:
-        # Parse expiration if available
-        expiration = None
+        # Parse legacy expiration if available
+        legacy_expiration = None
         exp_time = attrs.get("ms-mcs-admpwdexpirationtime")
         if exp_time:
             try:
-                expiration = parse_ad_timestamp(int(exp_time))
+                legacy_expiration = parse_ad_timestamp(int(exp_time))
             except (ValueError, TypeError):
                 pass
 
@@ -804,7 +1135,7 @@ def _parse_ldap_entry(entry: ldapasn1_impacket.SearchResultEntry, laps_user_over
             laps_type="legacy",
             computer_name=computer_name,
             dns_hostname=dns_hostname,
-            expiration=expiration,
+            expiration=legacy_expiration,
             encrypted=False,
         )
 

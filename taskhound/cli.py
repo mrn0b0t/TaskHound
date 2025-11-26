@@ -134,7 +134,7 @@ def main():
             stats = laps_cache.get_statistics()
             good(f"LAPS: Loaded {stats['usable']} usable passwords ({stats['mslaps']} Windows LAPS, {stats['legacy']} Legacy LAPS)")
             if stats["encrypted"] > 0:
-                warn(f"LAPS: {stats['encrypted']} encrypted passwords skipped (decryption not yet supported)")
+                warn(f"LAPS: {stats['encrypted']} encrypted passwords failed to decrypt (check MS-GKDI access)")
         except LAPSConnectionError as e:
             print(f"[!] LAPS initialization failed: {e}")
             print("[!] Cannot continue with LAPS mode - check your credentials and DC connectivity")
