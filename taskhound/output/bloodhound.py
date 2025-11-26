@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..utils.bh_auth import BloodHoundAuthenticator
+from ..utils.console import spinner
 from ..utils.logging import good, info, status, warn
 
 try:
@@ -367,36 +368,35 @@ def _upload_file(
         with open(file_path) as f:
             file_data = f.read()
 
-        info(f"Uploading {file_type} data ({len(file_data)} bytes)...")
-        
-        # For file upload, we need to be careful with Content-Type if using Bearer token
-        # The authenticator handles JSON body encoding, but here we are sending raw bytes (JSON string)
-        # The API expects application/json
-        
-        upload_response = authenticator.request(
-            "POST", 
-            f"/api/v2/file-upload/{job_id}", 
-            body=file_data.encode(),
-            headers={"Content-Type": "application/json"}
-        )
-        
-        if not upload_response:
-            warn("Failed to upload file content")
-            return False
+        # Use spinner for the upload and processing (indeterminate duration)
+        with spinner(f"Uploading {file_type} data ({len(file_data)} bytes)"):
+            # For file upload, we need to be careful with Content-Type if using Bearer token
+            # The authenticator handles JSON body encoding, but here we are sending raw bytes (JSON string)
+            # The API expects application/json
             
-        upload_response.raise_for_status()
-
-        # End job
-        end_response = authenticator.request("POST", f"/api/v2/file-upload/{job_id}/end")
-        if not end_response:
-            warn("Failed to end upload job")
-            return False
+            upload_response = authenticator.request(
+                "POST", 
+                f"/api/v2/file-upload/{job_id}", 
+                body=file_data.encode(),
+                headers={"Content-Type": "application/json"}
+            )
             
-        end_response.raise_for_status()
+            if not upload_response:
+                warn("Failed to upload file content")
+                return False
+                
+            upload_response.raise_for_status()
 
-        # Wait for processing with exponential backoff
-        info("Waiting for BloodHound to process the upload...")
-        return _wait_for_job_completion(authenticator, job_id)
+            # End job
+            end_response = authenticator.request("POST", f"/api/v2/file-upload/{job_id}/end")
+            if not end_response:
+                warn("Failed to end upload job")
+                return False
+                
+            end_response.raise_for_status()
+
+            # Wait for processing with exponential backoff
+            return _wait_for_job_completion(authenticator, job_id)
 
     except requests.Timeout:
         warn(f"Timeout uploading {file_type} file (request took longer than {TIMEOUT}s)")

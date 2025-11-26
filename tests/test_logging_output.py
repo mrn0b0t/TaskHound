@@ -63,8 +63,10 @@ class TestLoggingOutput(unittest.TestCase):
 
         self.assertIn("host1", output)
         self.assertIn("host2", output)
-        self.assertIn("[+]", output)
-        self.assertIn("[-] Unreachable", output)
+        # Rich table uses ✓ for success and ✗ for failure
+        self.assertIn("✓", output)
+        self.assertIn("✗", output)
+        self.assertIn("Unreachable", output)
 
     def test_verbosity_flags(self):
         from taskhound.utils.logging import debug, good, info

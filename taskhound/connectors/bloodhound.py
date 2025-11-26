@@ -148,9 +148,7 @@ class BloodHoundConnector:
                 return False
 
             status(f"[+] Connected to BHCE at {self.ip}:8080")
-            status(
-                "[*] Collecting high-value user data - this may take a moment depending on database size and connection speed..."
-            )
+            status("[*] Collecting high-value user data from BloodHound (be patient)")
 
         except requests.exceptions.ConnectionError:
             warn(f"BloodHound BHCE connection failed at {self.ip}:8080")
@@ -278,9 +276,7 @@ class BloodHoundConnector:
                 result.single()[0]  # This will raise an exception if connection fails
 
             status(f"[+] Connected to Legacy BloodHound at {self.ip}:7687")
-            status(
-                "[*] Collecting high-value user data - this may take a moment depending on database size and connection speed..."
-            )
+            status("[*] Collecting high-value user data from BloodHound (be patient)")
 
         except Exception as e:
             if "authentication" in str(e).lower() or "credentials" in str(e).lower():

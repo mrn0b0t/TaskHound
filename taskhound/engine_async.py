@@ -7,7 +7,7 @@
 # Thread-safety considerations:
 # - CacheManager.session uses RLock for thread-safe dict access
 # - SQLite WAL mode handles concurrent writes
-# - Output uses a lock to prevent interleaved console output
+# - Rich console handles thread-safe output
 # - LAPS cache is read-only during parallel phase (pre-populated in CLI)
 # - SID resolution is dynamic with benign race conditions (same value written)
 
@@ -17,8 +17,30 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
 from .laps import LAPSCache, LAPSFailure
-from .utils.logging import good, info, status, warn
+from .utils.console import (
+    collecting_done,
+    collecting_fail,
+    collecting_skip,
+    collecting_start,
+    console,
+    good,
+    info,
+    print_scan_complete,
+    status,
+    warn,
+)
 
 
 @dataclass
@@ -47,6 +69,9 @@ class TargetResult:
     
     success: bool
     """Whether processing succeeded."""
+    
+    skipped: bool = False
+    """Whether target was skipped (e.g., dual-homed duplicate)."""
     
     lines: List[str] = field(default_factory=list)
     """Output lines from processing."""
@@ -91,8 +116,15 @@ class AsyncTaskHound:
         
         # Statistics
         self._completed = 0
+        self._succeeded = 0
+        self._failed = 0
+        self._skipped = 0
         self._total = 0
         self._lock = threading.Lock()
+        
+        # Rich progress bar
+        self._progress: Optional[Progress] = None
+        self._task_id: Optional[int] = None
     
     def _start_rate_limiter(self) -> None:
         """Start background thread that releases rate limiter tokens."""
@@ -171,6 +203,11 @@ class AsyncTaskHound:
             result.rows = target_rows
             result.laps_result = laps_result
             
+            # Detect skipped targets (dual-homed duplicates)
+            # These return empty lines and no rows, but are not failures
+            if not has_failure and not lines and not target_rows:
+                result.skipped = True
+            
             if has_failure:
                 # Extract error reason from failure row
                 for row in target_rows:
@@ -191,14 +228,29 @@ class AsyncTaskHound:
         # Update progress
         with self._lock:
             self._completed += 1
+            if result.skipped:
+                self._skipped += 1
+            elif result.success:
+                self._succeeded += 1
+            else:
+                self._failed += 1
             completed = self._completed
             total = self._total
         
-        # Progress update (with lock to prevent interleaving)
-        if self.config.show_progress:
-            with self._output_lock:
-                pct = (completed / total) * 100 if total > 0 else 0
-                status(f"[Progress] {completed}/{total} ({pct:.1f}%)")
+        # Update Rich progress bar
+        if self._progress and self._task_id is not None:
+            # Build status text
+            if result.skipped:
+                status_text = f"[yellow]⊘[/] {target} [dim](skipped)[/]"
+            elif result.success:
+                task_count = len([r for r in result.rows if r.get("type") not in ("FAILURE", None)])
+                priv_count = len([r for r in result.rows if r.get("type") in ("TIER-0", "PRIV")])
+                status_text = f"[green]✓[/] {target} ({task_count} tasks)"
+            else:
+                error_short = (result.error or "Error")[:30]
+                status_text = f"[red]✗[/] {target}: {error_short}"
+            
+            self._progress.update(self._task_id, advance=1, status=status_text)
         
         return result
     
@@ -229,7 +281,11 @@ class AsyncTaskHound:
         
         self._total = len(targets)
         self._completed = 0
+        self._succeeded = 0
+        self._failed = 0
+        self._skipped = 0
         results: List[TargetResult] = []
+        start_time = time.perf_counter()
         
         info(f"Starting parallel scan: {len(targets)} targets, {self.config.workers} workers")
         if self.config.rate_limit:
@@ -238,29 +294,57 @@ class AsyncTaskHound:
         # Start rate limiter if configured
         self._start_rate_limiter()
         
+        # Create Rich progress bar
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]Scanning[/]"),
+            BarColumn(bar_width=40),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TextColumn("│"),
+            TimeRemainingColumn(),
+            TextColumn("[dim]{task.fields[status]}[/]"),
+            console=console,
+            transient=False,
+        )
+        
         try:
-            with ThreadPoolExecutor(max_workers=self.config.workers) as executor:
-                # Submit all tasks
-                futures = {
-                    executor.submit(self._process_single, target, process_fn, kwargs): target
-                    for target in targets
-                }
+            with progress:
+                self._progress = progress
+                self._task_id = progress.add_task(
+                    "Scanning", total=len(targets), status=""
+                )
                 
-                # Collect results as they complete
-                for future in as_completed(futures):
-                    target = futures[future]
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as e:
-                        # Should not happen since _process_single catches exceptions
-                        results.append(TargetResult(
-                            target=target,
-                            success=False,
-                            error=f"Unexpected error: {e}"
-                        ))
+                with ThreadPoolExecutor(max_workers=self.config.workers) as executor:
+                    # Submit all tasks
+                    futures = {
+                        executor.submit(self._process_single, target, process_fn, kwargs): target
+                        for target in targets
+                    }
+                    
+                    # Collect results as they complete
+                    for future in as_completed(futures):
+                        target = futures[future]
+                        try:
+                            result = future.result()
+                            results.append(result)
+                        except Exception as e:
+                            # Should not happen since _process_single catches exceptions
+                            results.append(TargetResult(
+                                target=target,
+                                success=False,
+                                error=f"Unexpected error: {e}"
+                            ))
         finally:
+            self._progress = None
+            self._task_id = None
             self._stop_rate_limiter_thread()
+        
+        # Print completion summary
+        total_time = time.perf_counter() - start_time
+        avg_time = (total_time / len(targets)) * 1000 if targets else 0
+        print_scan_complete(self._succeeded, self._failed, total_time, avg_time, self._skipped)
         
         return results
     
@@ -273,42 +357,96 @@ class AsyncTaskHound:
         """
         Run targets sequentially (--threads 1 mode).
         
-        Behaves identically to the original non-async engine.
+        Behaves identically to the original non-async engine but with Rich progress.
         """
         self._total = len(targets)
         self._completed = 0
+        self._succeeded = 0
+        self._failed = 0
+        self._skipped = 0
         results: List[TargetResult] = []
+        start_time = time.perf_counter()
         
         info(f"Sequential scan: {len(targets)} targets")
         
-        for target in targets:
-            result = TargetResult(target=target, success=False)
-            target_rows: List[Dict[str, Any]] = []
-            start_time = time.perf_counter()
+        # Create Rich progress bar for sequential mode too
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]Scanning[/]"),
+            BarColumn(bar_width=40),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TextColumn("│"),
+            TimeRemainingColumn(),
+            TextColumn("[dim]{task.fields[status]}[/]"),
+            console=console,
+            transient=False,
+        )
+        
+        with progress:
+            task_id = progress.add_task("Scanning", total=len(targets), status="")
             
-            try:
-                lines, laps_result = process_fn(
-                    target=target,
-                    all_rows=target_rows,
-                    **kwargs
-                )
-                result.success = True
-                result.lines = lines
-                result.rows = target_rows
-                result.laps_result = laps_result
+            for target in targets:
+                result = TargetResult(target=target, success=False)
+                target_rows: List[Dict[str, Any]] = []
+                target_start = time.perf_counter()
                 
-            except Exception as e:
-                result.error = str(e)
-                result.rows = target_rows
-                warn(f"{target}: Processing failed: {e}")
-            
-            result.elapsed_ms = (time.perf_counter() - start_time) * 1000
-            results.append(result)
-            
-            self._completed += 1
-            if self.config.show_progress:
-                pct = (self._completed / self._total) * 100
-                status(f"[Progress] {self._completed}/{self._total} ({pct:.1f}%)")
+                try:
+                    lines, laps_result = process_fn(
+                        target=target,
+                        all_rows=target_rows,
+                        **kwargs
+                    )
+                    
+                    # Check for failure rows
+                    has_failure = any(
+                        row.get("type") == "FAILURE" 
+                        for row in target_rows
+                    )
+                    
+                    result.success = not has_failure
+                    result.lines = lines
+                    result.rows = target_rows
+                    result.laps_result = laps_result
+                    
+                    # Detect skipped targets (dual-homed duplicates)
+                    if not has_failure and not lines and not target_rows:
+                        result.skipped = True
+                    
+                    if has_failure:
+                        for row in target_rows:
+                            if row.get("type") == "FAILURE":
+                                result.error = row.get("reason", "Unknown failure")
+                                break
+                    
+                except Exception as e:
+                    result.error = str(e)
+                    result.rows = target_rows
+                    warn(f"{target}: Processing failed: {e}")
+                
+                result.elapsed_ms = (time.perf_counter() - target_start) * 1000
+                results.append(result)
+                
+                self._completed += 1
+                if result.skipped:
+                    self._skipped += 1
+                    status_text = f"[yellow]⊘[/] {target} [dim](skipped)[/]"
+                elif result.success:
+                    self._succeeded += 1
+                    task_count = len([r for r in result.rows if r.get("type") not in ("FAILURE", None)])
+                    status_text = f"[green]✓[/] {target} ({task_count} tasks)"
+                else:
+                    self._failed += 1
+                    error_short = (result.error or "Error")[:30]
+                    status_text = f"[red]✗[/] {target}: {error_short}"
+                
+                progress.update(task_id, advance=1, status=status_text)
+        
+        # Print completion summary
+        total_time = time.perf_counter() - start_time
+        avg_time = (total_time / len(targets)) * 1000 if targets else 0
+        print_scan_complete(self._succeeded, self._failed, total_time, avg_time, self._skipped)
         
         return results
     

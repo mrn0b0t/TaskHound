@@ -9,7 +9,6 @@ from .engine_async import (
     AsyncConfig,
     AsyncTaskHound,
     aggregate_results,
-    print_summary as print_async_summary,
 )
 from .laps import (
     LAPSCache,
@@ -26,14 +25,15 @@ from .output.summary import print_summary_table
 from .output.writer import write_csv, write_json, write_plain
 from .parsers.highvalue import HighValueLoader
 from .utils.cache_manager import init_cache
+from .utils.console import print_banner
 from .utils.date_parser import parse_timestamp
-from .utils.helpers import BANNER, normalize_targets
+from .utils.helpers import normalize_targets
 from .utils.logging import debug, good, info, set_verbosity, warn
 from .utils.network import verify_ldap_connection
 
 
 def main():
-    print(BANNER)
+    print_banner()
     ap = build_parser()
     args = ap.parse_args()
 
@@ -246,8 +246,7 @@ def main():
                 if args.plain and result.lines:
                     write_plain(args.plain, result.target, result.lines)
 
-            # Print summary
-            print_async_summary(results, laps_failures, laps_successes, elapsed_ms)
+            # Summary already printed by async engine's Rich progress bar
 
         else:
             # Sequential mode (default, --threads 1)

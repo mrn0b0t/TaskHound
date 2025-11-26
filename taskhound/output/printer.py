@@ -1,16 +1,43 @@
+import re
 from typing import Any, Dict, List, Optional
 
 from ..parsers.highvalue import HighValueLoader
 from ..utils import logging as log_utils
+from ..utils.console import console
 from ..utils.date_parser import parse_iso_date
 from ..utils.sid_resolver import format_runas_with_sid_resolution
 
 
 def print_results(lines: List[str]):
+    """Print task results with colored tags in verbose mode."""
     if not lines:
         return
     if log_utils._VERBOSE or log_utils._DEBUG:
-        print("\n".join(lines))
+        for line in lines:
+            # Colorize task type tags
+            colored_line = line
+            if line.startswith("[TIER-0]") or "\n[TIER-0]" in line:
+                colored_line = re.sub(
+                    r"\[TIER-0\](.*)$",
+                    r"[bold red][TIER-0][/][red]\1[/]",
+                    line,
+                    flags=re.MULTILINE,
+                )
+            elif line.startswith("[PRIV]") or "\n[PRIV]" in line:
+                colored_line = re.sub(
+                    r"\[PRIV\](.*)$",
+                    r"[bold yellow][PRIV][/][yellow]\1[/]",
+                    line,
+                    flags=re.MULTILINE,
+                )
+            elif line.startswith("[TASK]") or "\n[TASK]" in line:
+                colored_line = re.sub(
+                    r"\[TASK\](.*)$",
+                    r"[bold green][TASK][/][green]\1[/]",
+                    line,
+                    flags=re.MULTILINE,
+                )
+            console.print(colored_line)
 
 
 def format_trigger_info(meta: Dict[str, str]) -> Optional[str]:
