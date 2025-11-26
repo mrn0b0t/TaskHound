@@ -245,14 +245,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Number of parallel worker threads for scanning multiple targets (default: 1 = sequential). "
-        "Recommended: 10-20 for large networks. Higher values may trigger rate limiting.",
+        "Recommended: 10-20 for large networks with unique hosts. "
+        "NOTE: Windows limits ~10 concurrent SMB connections per host - use --rate-limit if scanning few hosts repeatedly.",
     )
     target.add_argument(
         "--rate-limit",
         type=float,
         default=None,
-        help="Maximum targets per second (default: unlimited). Use to avoid triggering security alerts. "
-        "Example: --rate-limit 5 limits to 5 targets/second.",
+        help="Maximum targets per second (default: unlimited). Use to avoid triggering security alerts "
+        "or hitting Windows SMB connection limits. Example: --rate-limit 5 limits to 5 targets/second.",
     )
 
     # High value / scanning options

@@ -159,10 +159,24 @@ class AsyncTaskHound:
                 **kwargs
             )
             
-            result.success = True
+            # Check if processing actually succeeded by looking at rows
+            # process_target adds {"type": "FAILURE"} rows on connection errors
+            has_failure = any(
+                row.get("type") == "FAILURE" 
+                for row in target_rows
+            )
+            
+            result.success = not has_failure
             result.lines = lines
             result.rows = target_rows
             result.laps_result = laps_result
+            
+            if has_failure:
+                # Extract error reason from failure row
+                for row in target_rows:
+                    if row.get("type") == "FAILURE":
+                        result.error = row.get("reason", "Unknown failure")
+                        break
             
         except Exception as e:
             result.error = str(e)
