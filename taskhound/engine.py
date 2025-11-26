@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from impacket.smbconnection import SessionError
 
 from .auth import AuthContext
+from .classification import classify_task
 from .laps import (
     LAPS_ERRORS,
     LAPSCache,
@@ -35,32 +36,6 @@ from .smb.task_rpc import CredentialStatus, TaskRunInfo, TaskSchedulerRPC
 from .smb.tasks import crawl_tasks, smb_listdir
 from .utils.logging import debug as log_debug
 from .utils.logging import good, info, status, warn
-from .utils.sid_resolver import looks_like_domain_user
-
-
-def _get_task_date_for_analysis(meta: Dict) -> tuple[Optional[str], bool]:
-    """
-    Get the best available date for password freshness analysis.
-    Prefers RegistrationInfo/Date, falls back to StartBoundary from trigger.
-
-    Args:
-        meta: Task metadata dict containing date and start_boundary fields
-
-    Returns:
-        Tuple of (date_string, is_fallback) where:
-        - date_string: ISO format date string or None if no date available
-        - is_fallback: True if using StartBoundary fallback, False if using explicit date
-    """
-    # Prefer explicit registration date
-    if meta.get("date"):
-        return meta.get("date"), False
-
-    # Fall back to start boundary (trigger time) as proxy for task creation
-    # This is less accurate but better than no analysis at all
-    if meta.get("start_boundary"):
-        return meta.get("start_boundary"), True
-
-    return None, False
 
 
 def process_offline_directory(
@@ -280,151 +255,68 @@ def _process_offline_host(
         if no_saved_creds:
             row["credentials_hint"] = "no_saved_credentials"
 
-        # Check for Tier 0 first, then high-value
-        classified = False
-        if hv and hv.loaded:
-            # Check Tier 0 classification
-            is_tier0, tier0_reasons = hv.check_tier0(runas)
-            if is_tier0:
-                # Tier 0 match - analyze password age if credentials are stored
-                reason = "; ".join(tier0_reasons)
-                password_analysis = None
+        # Use shared classification logic
+        result = classify_task(
+            row=row,
+            meta=meta,
+            runas=runas,
+            rel_path=rel_path,
+            hv=hv,
+            show_unsaved_creds=show_unsaved_creds,
+            include_local=include_local,
+        )
 
-                if row.get("credentials_hint") == "no_saved_credentials":
-                    reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
-                else:
-                    # Analyze password age for DPAPI dump viability
-                    task_date, is_fallback = _get_task_date_for_analysis(meta)
-                    if is_fallback and task_date:
-                        warn(
-                            f"Task {rel_path} has no explicit creation date - using trigger StartBoundary for password analysis (may be inaccurate)"
-                        )
-                    risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
-                    if risk_level != "UNKNOWN":
-                        password_analysis = pwd_analysis
+        if not result.should_include:
+            continue
 
-                # Only include tasks that store credentials (or show_unsaved_creds is True)
-                if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
-                    priv_lines.extend(
-                        format_block(
-                            "TIER-0",
-                            rel_path,
-                            runas,
-                            what,
-                            meta.get("author"),
-                            meta.get("date"),
-                            extra_reason=reason,
-                            password_analysis=password_analysis,
-                            hv=hv,
-                            no_ldap=no_ldap,
-                            dc_ip=None,
-                            enabled=meta.get("enabled"),
-                            ldap_domain=None,
-                            ldap_user=None,
-                            ldap_password=None,
-                            meta=meta,
-                            concise=concise,
-                        )
-                    )
-                    priv_count += 1
-                    row["type"] = "TIER-0"
-                    row["reason"] = reason
-                    row["password_analysis"] = password_analysis
-                classified = True
-            elif hv.check_highvalue(runas):
-                # High-value match — mark as privileged if credentials are stored (or show unsaved creds)
-                reason = "High Value match found (Check BloodHound Outbound Object Control for Details)"
-                password_analysis = None
-
-                if row.get("credentials_hint") == "no_saved_credentials":
-                    reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
-                else:
-                    # Analyze password age for DPAPI dump viability
-                    task_date, is_fallback = _get_task_date_for_analysis(meta)
-                    if is_fallback and task_date:
-                        warn(
-                            f"Task {rel_path} has no explicit creation date - using trigger StartBoundary for password analysis (may be inaccurate)"
-                        )
-                    risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
-                    if risk_level != "UNKNOWN":
-                        password_analysis = pwd_analysis
-
-                # Only include tasks that store credentials (or show_unsaved_creds is True)
-                if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
-                    priv_lines.extend(
-                        format_block(
-                            "PRIV",
-                            rel_path,
-                            runas,
-                            what,
-                            meta.get("author"),
-                            meta.get("date"),
-                            extra_reason=reason,
-                            password_analysis=password_analysis,
-                            hv=hv,
-                            no_ldap=no_ldap,
-                            dc_ip=None,
-                            enabled=meta.get("enabled"),
-                            ldap_domain=None,
-                            ldap_user=None,
-                            ldap_password=None,
-                            meta=meta,
-                            concise=concise,
-                        )
-                    )
-                    priv_count += 1
-                    row["type"] = "PRIV"
-                    row["reason"] = reason
-                    row["password_analysis"] = password_analysis
-                classified = True
-
-        if not classified:
-            # Regular tasks - still analyze password age if credentials are stored and BloodHound data available
-            password_analysis = None
-            if hv and hv.loaded and row.get("credentials_hint") == "stored_credentials":
-                # Analyze password age even for non-privileged accounts
-                task_date, is_fallback = _get_task_date_for_analysis(meta)
-                if is_fallback and task_date:
-                    warn(
-                        f"Task {rel_path} has no explicit creation date - using trigger StartBoundary for password analysis (may be inaccurate)"
-                    )
-                risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
-                if risk_level != "UNKNOWN":
-                    password_analysis = pwd_analysis
-
-            # Only print TASK entries for domain users OR users with stored credentials OR local accounts (if requested),
-            # unless they are explicitly marked as having no saved credentials (and user didn't ask to see them)
-            should_include_task = (
-                looks_like_domain_user(runas)
-                or row.get("credentials_hint") == "stored_credentials"
-                or (include_local and not looks_like_domain_user(runas))
-            )
-            if should_include_task and not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
-                task_lines.extend(
-                    format_block(
-                        "TASK",
-                            rel_path,
-                            runas,
-                            what,
-                            meta.get("author"),
-                            meta.get("date"),
-                            password_analysis=password_analysis,
-                            hv=hv,
-                            no_ldap=no_ldap,
-                            dc_ip=None,
-                            enabled=meta.get("enabled"),
-                            ldap_domain=None,
-                            ldap_user=None,
-                            ldap_password=None,
-                            meta=meta,
-                            concise=concise,
-                    )
+        # Format output block based on classification
+        if result.task_type in ("TIER-0", "PRIV"):
+            priv_lines.extend(
+                format_block(
+                    result.task_type,
+                    rel_path,
+                    runas,
+                    what,
+                    meta.get("author"),
+                    meta.get("date"),
+                    extra_reason=result.reason,
+                    password_analysis=result.password_analysis,
+                    hv=hv,
+                    no_ldap=no_ldap,
+                    dc_ip=None,
+                    enabled=meta.get("enabled"),
+                    ldap_domain=None,
+                    ldap_user=None,
+                    ldap_password=None,
+                    meta=meta,
+                    concise=concise,
                 )
-            row["password_analysis"] = password_analysis
+            )
+            priv_count += 1
+        else:
+            # Regular TASK
+            task_lines.extend(
+                format_block(
+                    "TASK",
+                    rel_path,
+                    runas,
+                    what,
+                    meta.get("author"),
+                    meta.get("date"),
+                    password_analysis=result.password_analysis,
+                    hv=hv,
+                    no_ldap=no_ldap,
+                    dc_ip=None,
+                    enabled=meta.get("enabled"),
+                    ldap_domain=None,
+                    ldap_user=None,
+                    ldap_password=None,
+                    meta=meta,
+                    concise=concise,
+                )
+            )
 
-        # By default omit tasks that explicitly have no saved credentials unless the user asked to show them
-        if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
-            all_rows.append(row)
+        all_rows.append(row)
 
     lines = priv_lines + task_lines
     # Sort tasks by priority: TIER-0 > PRIV > TASK
@@ -1053,179 +945,88 @@ def process_target(
         elif logon_type.lower() == "password":
             row["credentials_hint"] = "stored_credentials"
 
-        # Check for Tier 0 first, then high-value
-        classified = False
-        if hv and hv.loaded:
-            # Check Tier 0 classification
-            is_tier0, tier0_reasons = hv.check_tier0(runas)
-            if is_tier0:
-                # Tier 0 match - analyze password age if credentials are stored
-                reason = "; ".join(tier0_reasons)
-                password_analysis = None
+        # Use shared classification logic
+        result = classify_task(
+            row=row,
+            meta=meta,
+            runas=runas,
+            rel_path=rel_path,
+            hv=hv,
+            show_unsaved_creds=show_unsaved_creds,
+            include_local=include_local,
+        )
 
-                if row.get("credentials_hint") == "no_saved_credentials":
-                    reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
-                else:
-                    # Analyze password age for DPAPI dump viability
-                    task_date, is_fallback = _get_task_date_for_analysis(meta)
-                    if is_fallback and task_date:
-                        warn(
-                            f"Task {rel_path} has no explicit creation date - using trigger StartBoundary for password analysis (may be inaccurate)"
-                        )
-                    risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
-                    if risk_level != "UNKNOWN":
-                        password_analysis = pwd_analysis
+        if not result.should_include:
+            continue
 
-                if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
-                    priv_lines.extend(
-                        format_block(
-                            "TIER-0",
-                            rel_path,
-                            runas,
-                            what,
-                            meta.get("author"),
-                            meta.get("date"),
-                            extra_reason=reason,
-                            password_analysis=password_analysis,
-                            hv=hv,
-                            bh_connector=bh_connector,
-                            smb_connection=smb,
-                            no_ldap=no_ldap,
-                            domain=domain,
-                            dc_ip=dc_ip,
-                            username=username,
-                            password=password,
-                            hashes=hashes,
-                            kerberos=kerberos,
-                            enabled=meta.get("enabled"),
-                            ldap_domain=ldap_domain,
-                            ldap_user=ldap_user,
-                            ldap_password=ldap_password,
-                            ldap_hashes=ldap_hashes,
-                            meta=meta,
-                            decrypted_creds=decrypted_creds,
-                            concise=concise,
-                            cred_validation=row if row.get("cred_status") else None,
-                        )
-                    )
-                    priv_count += 1
-                    row["type"] = "TIER-0"
-                    row["reason"] = reason
-                    row["password_analysis"] = password_analysis
-                classified = True
-            elif hv.check_highvalue(runas):
-                # High-value match — mark as privileged if credentials are stored (or show unsaved creds)
-                reason = "High Value match found (Check BloodHound Outbound Object Control for Details)"
-                password_analysis = None
-
-                if row.get("credentials_hint") == "no_saved_credentials":
-                    reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
-                else:
-                    # Analyze password age for DPAPI dump viability
-                    task_date, is_fallback = _get_task_date_for_analysis(meta)
-                    if is_fallback and task_date:
-                        warn(
-                            f"Task {rel_path} has no explicit creation date - using trigger StartBoundary for password analysis (may be inaccurate)"
-                        )
-                    risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
-                    if risk_level != "UNKNOWN":
-                        password_analysis = pwd_analysis
-
-                if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
-                    priv_lines.extend(
-                        format_block(
-                            "PRIV",
-                            rel_path,
-                            runas,
-                            what,
-                            meta.get("author"),
-                            meta.get("date"),
-                            extra_reason=reason,
-                            password_analysis=password_analysis,
-                            hv=hv,
-                            bh_connector=bh_connector,
-                            smb_connection=smb,
-                            no_ldap=no_ldap,
-                            domain=domain,
-                            dc_ip=dc_ip,
-                            username=username,
-                            password=password,
-                            hashes=hashes,
-                            kerberos=kerberos,
-                            enabled=meta.get("enabled"),
-                            ldap_domain=ldap_domain,
-                            ldap_user=ldap_user,
-                            ldap_password=ldap_password,
-                            ldap_hashes=ldap_hashes,
-                            meta=meta,
-                            decrypted_creds=decrypted_creds,
-                            concise=concise,
-                            cred_validation=row if row.get("cred_status") else None,
-                        )
-                    )
-                    priv_count += 1
-                    row["type"] = "PRIV"
-                    row["reason"] = reason
-                    row["password_analysis"] = password_analysis
-                classified = True
-
-        if not classified:
-            # Regular tasks - still analyze password age if credentials are stored and BloodHound data available
-            password_analysis = None
-            if hv and hv.loaded and row.get("credentials_hint") == "stored_credentials":
-                # Analyze password age even for non-privileged accounts
-                task_date, is_fallback = _get_task_date_for_analysis(meta)
-                if is_fallback and task_date:
-                    warn(
-                        f"Task {rel_path} has no explicit creation date - using trigger StartBoundary for password analysis (may be inaccurate)"
-                    )
-                risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
-                if risk_level != "UNKNOWN":
-                    password_analysis = pwd_analysis
-
-            # Show tasks for domain users OR users with stored credentials OR local accounts (if requested)
-            should_include_task = (
-                looks_like_domain_user(runas)
-                or row.get("credentials_hint") == "stored_credentials"
-                or (include_local and not looks_like_domain_user(runas))
-            )
-            if should_include_task and not (
-                row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds
-            ):
-                task_lines.extend(
-                    format_block(
-                        "TASK",
-                        rel_path,
-                        runas,
-                        what,
-                        meta.get("author"),
-                        meta.get("date"),
-                        password_analysis=password_analysis,
-                        hv=hv,
-                        bh_connector=bh_connector,
-                        smb_connection=smb,
-                        no_ldap=no_ldap,
-                        domain=domain,
-                        dc_ip=dc_ip,
-                        username=username,
-                        password=password,
-                        hashes=hashes,
-                        kerberos=kerberos,
-                        enabled=meta.get("enabled"),
-                        ldap_domain=ldap_domain,
-                        ldap_user=ldap_user,
-                        ldap_password=ldap_password,
-                        ldap_hashes=ldap_hashes,
-                        meta=meta,
-                        decrypted_creds=decrypted_creds,
-                        concise=concise,
-                        cred_validation=row if row.get("cred_status") else None,
-                    )
+        # Format output block based on classification
+        if result.task_type in ("TIER-0", "PRIV"):
+            priv_lines.extend(
+                format_block(
+                    result.task_type,
+                    rel_path,
+                    runas,
+                    what,
+                    meta.get("author"),
+                    meta.get("date"),
+                    extra_reason=result.reason,
+                    password_analysis=result.password_analysis,
+                    hv=hv,
+                    bh_connector=bh_connector,
+                    smb_connection=smb,
+                    no_ldap=no_ldap,
+                    domain=domain,
+                    dc_ip=dc_ip,
+                    username=username,
+                    password=password,
+                    hashes=hashes,
+                    kerberos=kerberos,
+                    enabled=meta.get("enabled"),
+                    ldap_domain=ldap_domain,
+                    ldap_user=ldap_user,
+                    ldap_password=ldap_password,
+                    ldap_hashes=ldap_hashes,
+                    meta=meta,
+                    decrypted_creds=decrypted_creds,
+                    concise=concise,
+                    cred_validation=row if row.get("cred_status") else None,
                 )
-            row["password_analysis"] = password_analysis
+            )
+            priv_count += 1
+        else:
+            # Regular TASK
+            task_lines.extend(
+                format_block(
+                    "TASK",
+                    rel_path,
+                    runas,
+                    what,
+                    meta.get("author"),
+                    meta.get("date"),
+                    password_analysis=result.password_analysis,
+                    hv=hv,
+                    bh_connector=bh_connector,
+                    smb_connection=smb,
+                    no_ldap=no_ldap,
+                    domain=domain,
+                    dc_ip=dc_ip,
+                    username=username,
+                    password=password,
+                    hashes=hashes,
+                    kerberos=kerberos,
+                    enabled=meta.get("enabled"),
+                    ldap_domain=ldap_domain,
+                    ldap_user=ldap_user,
+                    ldap_password=ldap_password,
+                    ldap_hashes=ldap_hashes,
+                    meta=meta,
+                    decrypted_creds=decrypted_creds,
+                    concise=concise,
+                    cred_validation=row if row.get("cred_status") else None,
+                )
+            )
 
-        if not (row.get("credentials_hint") == "no_saved_credentials" and not show_unsaved_creds):
-            all_rows.append(row)
+        all_rows.append(row)
 
     lines = priv_lines + task_lines
     # Sort tasks by priority: TIER-0 > PRIV > TASK
