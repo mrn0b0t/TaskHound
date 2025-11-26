@@ -5,7 +5,7 @@
 
 import re
 import uuid
-from typing import List
+from typing import List, Tuple
 
 
 def is_ipv4(host: str) -> bool:
@@ -19,6 +19,26 @@ def is_ipv4(host: str) -> bool:
         return all(0 <= int(p) <= 255 for p in parts)
     except ValueError:
         return False
+
+
+def parse_ntlm_hashes(hashes: str) -> Tuple[str, str]:
+    """
+    Parse NTLM hashes from string format.
+
+    Args:
+        hashes: Hash string in "LM:NT" or "NT" format, or None/empty
+
+    Returns:
+        Tuple of (lmhash, nthash) - empty strings if not provided
+    """
+    if not hashes:
+        return "", ""
+
+    if ":" in hashes:
+        lmhash, nthash = hashes.split(":", 1)
+        return lmhash, nthash
+    else:
+        return "", hashes
 
 
 def normalize_targets(targets: List[str], domain: str) -> List[str]:

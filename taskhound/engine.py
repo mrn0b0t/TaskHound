@@ -7,14 +7,20 @@
 
 import os
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from impacket.smbconnection import SessionError
 
+from .laps import (
+    LAPS_ERRORS,
+    LAPSCache,
+    LAPSFailure,
+    get_laps_credential_for_host,
+)
 from .output.printer import format_block
 from .parsers.highvalue import HighValueLoader
 from .parsers.task_xml import parse_task_xml
-from .smb.connection import smb_connect, get_server_fqdn, get_server_sid
+from .smb.connection import smb_connect, smb_negotiate, smb_login, get_server_fqdn, get_server_sid, _dns_ptr_lookup, _is_ip_address
 from .smb.credguard import check_credential_guard
 from .smb.tasks import crawl_tasks, smb_listdir
 from .utils.logging import debug as log_debug, good, info, status, warn
@@ -533,21 +539,48 @@ def process_target(
     concise: bool = False,
     timeout: int = 60,
     opsec: bool = False,
-) -> List[str]:
-    # Connect to `target`, enumerate scheduled tasks, and return printable lines.
-    #
-    # TEMPORARY DEBUG: Show what credentials were received
-
-    # - Attempts SMB authentication using either cleartext password or hashes.
-    # - Performs a quick check to see if the C$ share and Tasks folder are
-    #   accessible (this serves as a proxy for local admin rights).
-    # - Crawls tasks, parses each XML, and marks rows as PRIV when they match
-    #   the HighValue dataset and store credentials.
-    #
-    # The function is defensive: individual failures are logged and cause
-    # the function to continue where reasonable rather than raising.
-
+    laps_cache: Optional[LAPSCache] = None,
+) -> Tuple[List[str], Optional[Union[bool, LAPSFailure]]]:
+    """
+    Connect to `target`, enumerate scheduled tasks, and return printable lines.
+    
+    Args:
+        target: Target IP or hostname
+        domain: Domain name for authentication
+        username: Username for authentication
+        password: Password for authentication
+        kerberos: Use Kerberos authentication
+        dc_ip: Domain controller IP
+        include_ms: Include Microsoft scheduled tasks
+        include_local: Include local system account tasks
+        hv: HighValueLoader for privilege detection
+        debug: Enable debug output
+        all_rows: List to append result rows to
+        hashes: NTLM hashes (alternative to password)
+        show_unsaved_creds: Show tasks without saved credentials
+        backup_dir: Directory to backup raw XML files
+        credguard_detect: Detect Credential Guard
+        no_ldap: Disable LDAP SID resolution
+        ldap_domain: Alternative domain for LDAP
+        ldap_user: Alternative user for LDAP
+        ldap_password: Alternative password for LDAP
+        ldap_hashes: Alternative hashes for LDAP
+        loot: Enable DPAPI credential looting
+        dpapi_key: DPAPI key for decryption
+        bh_connector: BloodHound connector
+        concise: Use concise output format
+        timeout: Connection timeout
+        opsec: Enable OPSEC mode
+        laps_cache: LAPS credential cache (if LAPS mode enabled)
+        
+    Returns:
+        Tuple of (lines, laps_result) where:
+        - lines: List of printable output strings
+        - laps_result: None if LAPS not used, True if LAPS succeeded,
+                       LAPSFailure if LAPS failed for this target
+    """
     out_lines: List[str] = []
+    laps_result: Optional[Union[bool, LAPSFailure]] = None
 
     status(f"[Collecting] {target} ...")
     if opsec:
@@ -555,11 +588,102 @@ def process_target(
 
     credguard_status = None
     server_fqdn = None  # Will store the resolved FQDN from SMB
+    smb = None
+    laps_used = False
+    laps_type_used = None
+    discovered_hostname = None
+    
     try:
-        # Prefer explicit hashes parameter over password when provided
-        smb = smb_connect(
-            target, domain, username, hashes or password, kerberos=kerberos, dc_ip=dc_ip, timeout=timeout
-        )
+        # LAPS Mode: Two-phase connection (negotiate -> lookup -> auth)
+        if laps_cache is not None:
+            # Phase 1: Negotiate to discover hostname
+            smb = smb_negotiate(target, timeout=timeout)
+            discovered_hostname = smb.getServerName()
+            
+            if not discovered_hostname:
+                # SMBv3 doesn't populate server name during negotiate
+                # Try DNS reverse lookup as fallback
+                if _is_ip_address(target):
+                    # Try DC first, then system DNS
+                    if dc_ip:
+                        discovered_hostname = _dns_ptr_lookup(target, nameserver=dc_ip)
+                    if not discovered_hostname:
+                        discovered_hostname = _dns_ptr_lookup(target, nameserver=None)
+                    
+                    if discovered_hostname:
+                        # Extract just the hostname part (before first dot) for LAPS lookup
+                        info(f"{target}: Resolved hostname via DNS: {discovered_hostname}")
+                    else:
+                        warn(f"{target}: Could not resolve hostname via SMB or DNS")
+                        discovered_hostname = target
+                else:
+                    # Target is already a hostname
+                    discovered_hostname = target
+            else:
+                info(f"{target}: Discovered hostname from SMB: {discovered_hostname}")
+            
+            # Phase 2: Look up LAPS credentials
+            laps_cred, laps_failure = get_laps_credential_for_host(laps_cache, discovered_hostname)
+            
+            if laps_failure:
+                # No LAPS password for this host - skip target
+                warn(laps_failure.message)
+                status(f"[Collecting] {target} [-] (No LAPS password)")
+                all_rows.append({
+                    "host": discovered_hostname,
+                    "target_ip": target,
+                    "type": "FAILURE",
+                    "reason": f"LAPS: {laps_failure.failure_type}"
+                })
+                try:
+                    smb.close()
+                except Exception:
+                    pass
+                return out_lines, laps_failure
+            
+            # Phase 3: Authenticate with LAPS credentials
+            try:
+                smb_login(
+                    smb,
+                    domain=".",  # Local account for LAPS
+                    username=laps_cred.username,
+                    password=laps_cred.password,
+                    kerberos=False,  # LAPS is always NTLM
+                )
+                laps_used = True
+                laps_type_used = laps_cred.laps_type
+                laps_result = True
+                good(f"{target}: LAPS authentication successful ({laps_cred.laps_type}, user: {laps_cred.username})")
+            except Exception as e:
+                # LAPS auth failed
+                if debug:
+                    traceback.print_exc()
+                warn(LAPS_ERRORS["auth_failed"].format(hostname=discovered_hostname))
+                status(f"[Collecting] {target} [-] (LAPS auth failed)")
+                laps_failure = LAPSFailure(
+                    hostname=discovered_hostname,
+                    failure_type="auth_failed",
+                    message=f"LAPS authentication failed: {e}",
+                    laps_user_tried=laps_cred.username,
+                    laps_type_tried=laps_cred.laps_type,
+                )
+                all_rows.append({
+                    "host": discovered_hostname,
+                    "target_ip": target,
+                    "type": "FAILURE",
+                    "reason": f"LAPS auth failed: {e}"
+                })
+                try:
+                    smb.close()
+                except Exception:
+                    pass
+                return out_lines, laps_failure
+        else:
+            # Standard mode: Direct SMB connection
+            smb = smb_connect(
+                target, domain, username, hashes or password, kerberos=kerberos, dc_ip=dc_ip, timeout=timeout
+            )
+        
         good(f"{target}: Connected via SMB")
 
         # Resolve the actual FQDN from SMB connection
@@ -614,16 +738,39 @@ def process_target(
             warn(f"{target}: Kerberos auth failed (SPN not found?). Try using FQDNs or switch to NTLM (-k off).")
         else:
             warn(f"{target}: SMB connection failed: {e}")
-        return out_lines
+        return out_lines, laps_result
 
     # Quick local admin presence check
+    # For LAPS mode, this also detects Remote UAC (LocalAccountTokenFilterPolicy)
     try:
         _ = smb_listdir(smb, "C$", r"\Windows\System32\Tasks")
         good(f"{target}: Local Admin Access confirmed")
-    except Exception:
+    except Exception as e:
         if debug:
             traceback.print_exc()
-        warn(f"{target}: Local admin check failed")
+        
+        # Check if this is Remote UAC blocking LAPS
+        if laps_used and "STATUS_ACCESS_DENIED" in str(e):
+            warn(LAPS_ERRORS["remote_uac_short"].format(hostname=discovered_hostname or target))
+            info("Remote UAC (LocalAccountTokenFilterPolicy=0) is filtering the local admin token")
+            info("This is common on workstations. Servers typically don't have this issue.")
+            status(f"[Collecting] {target} [-] (Remote UAC)")
+            laps_failure = LAPSFailure(
+                hostname=discovered_hostname or target,
+                failure_type="remote_uac",
+                message=LAPS_ERRORS["remote_uac"].format(hostname=discovered_hostname or target),
+                laps_user_tried=laps_cred.username if laps_cache else None,
+                laps_type_tried=laps_type_used,
+            )
+            all_rows.append({
+                "host": discovered_hostname or target,
+                "target_ip": target,
+                "type": "FAILURE",
+                "reason": "Remote UAC (token filtered)"
+            })
+            return out_lines, laps_failure
+        else:
+            warn(f"{target}: Local admin check failed")
 
     if not include_ms:
         info(f"{target}: Crawling Scheduled Tasks (skipping \\Microsoft for speed)")
@@ -642,7 +789,7 @@ def process_target(
             "reason": "Access Denied (Failed to crawl tasks)"
         })
         warn(f"{target}: Failed to Crawl Tasks. Skipping... (Are you Local Admin?)")
-        return out_lines
+        return out_lines, laps_result
     except Exception as e:
         if debug:
             traceback.print_exc()
@@ -653,7 +800,7 @@ def process_target(
             "reason": f"Crawling failed: {e}"
         })
         warn(f"{target}: Unexpected error while crawling tasks: {e}")
-        return out_lines
+        return out_lines, laps_result
 
     # Create backup directory structure if backup is requested
     backup_target_dir = None
@@ -819,13 +966,22 @@ def process_target(
                             extra_reason=reason,
                             password_analysis=password_analysis,
                             hv=hv,
+                            bh_connector=bh_connector,
+                            smb_connection=smb,
                             no_ldap=no_ldap,
-                            dc_ip=None,
+                            domain=domain,
+                            dc_ip=dc_ip,
+                            username=username,
+                            password=password,
+                            hashes=hashes,
+                            kerberos=kerberos,
                             enabled=meta.get("enabled"),
-                            ldap_domain=None,
-                            ldap_user=None,
-                            ldap_password=None,
+                            ldap_domain=ldap_domain,
+                            ldap_user=ldap_user,
+                            ldap_password=ldap_password,
+                            ldap_hashes=ldap_hashes,
                             meta=meta,
+                            decrypted_creds=decrypted_creds,
                             concise=concise,
                         )
                     )
@@ -864,13 +1020,22 @@ def process_target(
                             extra_reason=reason,
                             password_analysis=password_analysis,
                             hv=hv,
+                            bh_connector=bh_connector,
+                            smb_connection=smb,
                             no_ldap=no_ldap,
-                            dc_ip=None,
+                            domain=domain,
+                            dc_ip=dc_ip,
+                            username=username,
+                            password=password,
+                            hashes=hashes,
+                            kerberos=kerberos,
                             enabled=meta.get("enabled"),
-                            ldap_domain=None,
-                            ldap_user=None,
-                            ldap_password=None,
+                            ldap_domain=ldap_domain,
+                            ldap_user=ldap_user,
+                            ldap_password=ldap_password,
+                            ldap_hashes=ldap_hashes,
                             meta=meta,
+                            decrypted_creds=decrypted_creds,
                             concise=concise,
                         )
                     )
@@ -913,13 +1078,22 @@ def process_target(
                         meta.get("date"),
                         password_analysis=password_analysis,
                         hv=hv,
+                        bh_connector=bh_connector,
+                        smb_connection=smb,
                         no_ldap=no_ldap,
-                        dc_ip=None,
+                        domain=domain,
+                        dc_ip=dc_ip,
+                        username=username,
+                        password=password,
+                        hashes=hashes,
+                        kerberos=kerberos,
                         enabled=meta.get("enabled"),
-                        ldap_domain=None,
-                        ldap_user=None,
-                        ldap_password=None,
+                        ldap_domain=ldap_domain,
+                        ldap_user=ldap_user,
+                        ldap_password=ldap_password,
+                        ldap_hashes=ldap_hashes,
                         meta=meta,
+                        decrypted_creds=decrypted_creds,
                         concise=concise,
                     )
                 )
@@ -932,12 +1106,13 @@ def process_target(
     # Sort tasks by priority: TIER-0 > PRIV > TASK
     sorted_lines = _sort_tasks_by_priority(lines)
     backup_msg = f", {total} raw XMLs backed up" if backup_target_dir else ""
+    laps_msg = f" (LAPS: {laps_type_used})" if laps_used else ""
 
     priv_display = priv_count if (hv and hv.loaded) else 'N/A'
     status(f"[Collecting] {target} [+]")
     status(f"[TaskCount] {total} Tasks, {priv_display} Privileged")
-    good(f"{target}: Found {total} tasks, privileged {priv_display}{backup_msg}")
+    good(f"{target}: Found {total} tasks, privileged {priv_display}{backup_msg}{laps_msg}")
 
     # Combine credential loot output with task listing output
     # Put credentials first since they're the most valuable
-    return out_lines + sorted_lines
+    return out_lines + sorted_lines, laps_result

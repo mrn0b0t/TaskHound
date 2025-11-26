@@ -30,9 +30,16 @@
 # bh_data = "path/to/data.json"
 
 [cache]
-# Caching options for SID resolution and BloodHound queries
+# Caching options for SID resolution, BloodHound queries, and LAPS credentials
 # enabled = true
-# ttl = 86400  # 24 hours in seconds
+# ttl = 86400  # 24 hours in seconds (applies to all cached data)
+# file = "~/.taskhound/cache.db"  # SQLite cache file location
+
+[laps]
+# LAPS (Local Administrator Password Solution) settings
+# enabled = false  # Enable LAPS authentication mode
+# user = "Administrator"  # Override local admin username (default: from msLAPS-Password JSON or 'Administrator')
+# force = false  # Force LAPS usage even in OPSEC mode
 
 [bloodhound]
 # BloodHound connection settings

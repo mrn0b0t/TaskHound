@@ -1,8 +1,17 @@
+import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .config import build_parser, validate_args
 from .engine import process_offline_directory, process_target
+from .laps import (
+    LAPSCache,
+    LAPSConnectionError,
+    LAPSEmptyCacheError,
+    LAPSFailure,
+    get_laps_passwords,
+    print_laps_summary,
+)
 from .opengraph import generate_opengraph_files
 from .output.bloodhound import upload_opengraph_to_bloodhound
 from .output.printer import print_results
@@ -104,6 +113,44 @@ def main():
         else:
             warn("Failed to load High Value target data from file")
 
+    # Initialize LAPS if requested (online mode only)
+    laps_cache: Optional[LAPSCache] = None
+    laps_failures: List[LAPSFailure] = []
+    laps_successes: int = 0
+
+    if getattr(args, "laps", False) and not args.offline:
+        info("LAPS mode enabled - querying Active Directory for LAPS passwords...")
+        try:
+            laps_cache = get_laps_passwords(
+                dc_ip=args.dc_ip,
+                domain=args.domain,
+                username=args.username,
+                password=args.password,
+                hashes=args.hashes,
+                kerberos=args.kerberos,
+                laps_user_override=getattr(args, "laps_user", None),
+                use_cache=not args.no_cache,
+            )
+            stats = laps_cache.get_statistics()
+            good(f"LAPS: Loaded {stats['usable']} usable passwords ({stats['mslaps']} Windows LAPS, {stats['legacy']} Legacy LAPS)")
+            if stats["encrypted"] > 0:
+                warn(f"LAPS: {stats['encrypted']} encrypted passwords skipped (decryption not yet supported)")
+        except LAPSConnectionError as e:
+            print(f"[!] LAPS initialization failed: {e}")
+            print("[!] Cannot continue with LAPS mode - check your credentials and DC connectivity")
+            sys.exit(1)
+        except LAPSEmptyCacheError as e:
+            print(f"[!] {e}")
+            print("[!] No LAPS passwords found - your account may lack read permissions")
+            print("[!] Required permissions: 'Read ms-Mcs-AdmPwd' or 'Read msLAPS-Password' on computer objects")
+            sys.exit(1)
+        except Exception as e:
+            print(f"[!] Unexpected LAPS error: {e}")
+            if args.debug:
+                import traceback
+                traceback.print_exc()
+            sys.exit(1)
+
     # Process based on mode
     all_rows: List[Dict] = []
 
@@ -136,7 +183,7 @@ def main():
 
         # Process each target
         for tgt in targets:
-            lines = process_target(
+            lines, laps_result = process_target(
                 target=tgt,
                 domain=args.domain,
                 username=args.username,
@@ -163,7 +210,14 @@ def main():
                 concise=not args.verbose,
                 timeout=args.timeout,
                 opsec=args.opsec,
+                laps_cache=laps_cache,
             )
+            # Track LAPS results
+            if laps_result is not None:
+                if laps_result is True:
+                    laps_successes += 1
+                elif isinstance(laps_result, LAPSFailure):
+                    laps_failures.append(laps_result)
             print_results(lines)
             if args.plain and lines:
                 write_plain(args.plain, tgt, lines)
@@ -200,6 +254,10 @@ def main():
     if not args.no_summary:
         backup_dir = args.backup if hasattr(args, "backup") and args.backup else None
         print_summary_table(all_rows, backup_dir, hv_loaded)
+        
+        # Print LAPS summary if LAPS was used
+        if laps_cache is not None:
+            print_laps_summary(laps_cache, laps_successes, laps_failures)
 
     # BloodHound OpenGraph Integration
     if args.bh_opengraph:

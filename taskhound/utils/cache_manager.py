@@ -223,6 +223,57 @@ class CacheManager:
             except Exception as e:
                 debug(f"Cache delete error: {e}")
 
+    def get_all(self, category: str) -> Dict[str, Any]:
+        """
+        Get all non-expired cached values for a category.
+
+        Args:
+            category: Cache category (e.g., "laps", "computers", "users")
+
+        Returns:
+            Dictionary of key -> value for all valid entries in the category
+        """
+        result: Dict[str, Any] = {}
+
+        if not self.persistent_enabled or not self.conn:
+            return result
+
+        try:
+            now = time.time()
+            cursor = self.conn.execute(
+                "SELECT key, value, expires_at FROM cache WHERE category=?", (category,)
+            )
+            
+            expired_keys = []
+            for row in cursor.fetchall():
+                key, value_json, expires_at = row
+                
+                # Check expiration
+                if expires_at < now:
+                    expired_keys.append(key)
+                    continue
+                
+                try:
+                    value = json.loads(value_json)
+                    result[key] = value
+                except json.JSONDecodeError:
+                    debug(f"Corrupt cache entry: {category}:{key}")
+                    continue
+
+            # Clean up expired entries
+            if expired_keys:
+                for key in expired_keys:
+                    self.conn.execute(
+                        "DELETE FROM cache WHERE category=? AND key=?", (category, key)
+                    )
+                self.conn.commit()
+                debug(f"Cleaned up {len(expired_keys)} expired {category} cache entries")
+
+        except Exception as e:
+            debug(f"Cache get_all error: {e}")
+
+        return result
+
     def invalidate(self, category: Optional[str] = None, key: Optional[str] = None):
         """
         Invalidate cache entries.

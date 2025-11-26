@@ -7,7 +7,7 @@
 # This is horribly vibe-y but it works. Feel free to PR.
 
 import socket
-from typing import Optional
+from typing import Optional, Tuple
 
 from impacket.smbconnection import SMBConnection
 
@@ -75,6 +75,149 @@ def smb_connect(
         else:
             smb.login(username, pwd, domain)
     return smb
+
+
+def smb_negotiate(target: str, timeout: int = 60) -> SMBConnection:
+    """
+    Create an SMBConnection and perform negotiation only (no authentication).
+    
+    This is useful for LAPS mode where we need to discover the hostname
+    before we know which credentials to use.
+    
+    Args:
+        target: Target IP or hostname
+        timeout: Connection timeout in seconds
+        
+    Returns:
+        SMBConnection after negotiate (not yet authenticated)
+        
+    The caller can then:
+    1. Call smb.getServerName() to get the hostname
+    2. Look up credentials based on hostname
+    3. Call smb_login() to authenticate
+    """
+    return SMBConnection(remoteName=target, remoteHost=target, sess_port=445, timeout=timeout)
+
+
+def smb_login(
+    smb: SMBConnection,
+    domain: str,
+    username: str,
+    password: str = None,
+    kerberos: bool = False,
+    dc_ip: str = None,
+) -> None:
+    """
+    Authenticate an existing SMBConnection.
+    
+    This is the second half of a two-phase connection, used for LAPS mode
+    where we negotiate first, then authenticate with looked-up credentials.
+    
+    Args:
+        smb: Existing SMBConnection (after negotiate)
+        domain: Domain name (use "." for local accounts like LAPS)
+        username: Username to authenticate as
+        password: Password or NTLM hash
+        kerberos: Use Kerberos authentication
+        dc_ip: Domain controller IP (for Kerberos)
+    """
+    pwd, lmhash, nthash = _parse_hashes(password)
+    
+    if kerberos:
+        smb.kerberosLogin(
+            user=username,
+            password=pwd,
+            domain=domain,
+            lmhash=lmhash,
+            nthash=nthash,
+            aesKey=None,
+            TGT=None,
+            TGS=None,
+            kdcHost=dc_ip,
+        )
+    else:
+        if lmhash or nthash:
+            smb.login(username, "", domain, lmhash=lmhash, nthash=nthash)
+        else:
+            smb.login(username, pwd, domain)
+
+
+def smb_connect_with_laps(
+    target: str,
+    laps_cache,  # LAPSCache from laps.py
+    fallback_domain: str,
+    fallback_username: str,
+    fallback_password: Optional[str] = None,
+    fallback_hashes: Optional[str] = None,
+    fallback_kerberos: bool = False,
+    dc_ip: Optional[str] = None,
+    timeout: int = 60,
+) -> Tuple[SMBConnection, str, Optional[str], bool]:
+    """
+    Connect to target using LAPS credentials if available.
+    
+    This function implements the optimized LAPS flow:
+    1. Create SMB connection (negotiate only)
+    2. Extract hostname from negotiate response
+    3. Look up LAPS password for that hostname
+    4. Authenticate with LAPS credentials (or fallback if not found)
+    
+    Args:
+        target: Target IP or hostname
+        laps_cache: LAPSCache with LAPS passwords
+        fallback_domain: Domain for fallback auth (not used with LAPS)
+        fallback_username: Username for fallback auth
+        fallback_password: Password for fallback auth
+        fallback_hashes: Hashes for fallback auth
+        fallback_kerberos: Use Kerberos for fallback auth
+        dc_ip: Domain controller IP
+        timeout: Connection timeout
+        
+    Returns:
+        Tuple of (smb_connection, hostname, laps_type_used, used_laps)
+        - smb_connection: Authenticated SMBConnection
+        - hostname: Discovered hostname from SMB negotiate
+        - laps_type_used: "legacy" or "mslaps" if LAPS was used, None otherwise
+        - used_laps: True if LAPS credentials were used
+    """
+    # Phase 1: Negotiate to discover hostname
+    smb = smb_negotiate(target, timeout=timeout)
+    
+    # Get hostname from negotiate response
+    hostname = smb.getServerName()
+    if not hostname:
+        # Fallback to target if hostname not available
+        hostname = target
+    
+    # Phase 2: Look up LAPS credentials
+    laps_cred = laps_cache.get(hostname) if laps_cache else None
+    
+    if laps_cred and not laps_cred.encrypted:
+        # Use LAPS credentials (local account, domain = ".")
+        try:
+            smb_login(
+                smb,
+                domain=".",  # Local account
+                username=laps_cred.username,
+                password=laps_cred.password,
+                kerberos=False,  # LAPS is always NTLM
+            )
+            return smb, hostname, laps_cred.laps_type, True
+        except Exception:
+            # LAPS auth failed, connection is likely dead
+            # Re-raise to let caller handle
+            raise
+    
+    # Phase 3: Fallback to provided credentials
+    smb_login(
+        smb,
+        domain=fallback_domain,
+        username=fallback_username,
+        password=fallback_hashes or fallback_password,
+        kerberos=fallback_kerberos,
+        dc_ip=dc_ip,
+    )
+    return smb, hostname, None, False
 
 
 def get_server_sid(

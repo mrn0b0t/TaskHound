@@ -25,6 +25,7 @@ def write_csv(path: str, rows: List[Dict]):
     fieldnames = [
         "host",
         "target_ip",
+        "computer_sid",
         "path",
         "type",
         "runas",

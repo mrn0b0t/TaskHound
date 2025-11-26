@@ -9,11 +9,11 @@ import socket
 import struct
 from typing import Optional, Tuple
 
-from impacket.ldap import ldap as ldap_impacket
 from impacket.ldap import ldapasn1 as ldapasn1_impacket
 
 from ..parsers.highvalue import HighValueLoader
 from ..utils.cache_manager import get_cache
+from ..utils.ldap import LDAPConnectionError, get_ldap_connection
 from ..utils.logging import debug, info, warn
 
 
@@ -35,7 +35,7 @@ def resolve_sid_via_smb(sid: str, smb_connection) -> Optional[str]:
         return None
 
     try:
-        from impacket.dcerpc.v5 import lsat, transport
+        from impacket.dcerpc.v5 import lsad, lsat, transport
         from impacket.dcerpc.v5.dtypes import MAXIMUM_ALLOWED
         from impacket.dcerpc.v5.rpcrt import DCERPCException
 
@@ -53,9 +53,9 @@ def resolve_sid_via_smb(sid: str, smb_connection) -> Optional[str]:
         dce.connect()
         dce.bind(lsat.MSRPC_UUID_LSAT)
 
-        # Open policy
+        # Open policy using lsad module (hLsarOpenPolicy2 is in lsad, not lsat)
         # We need POLICY_LOOKUP_NAMES to resolve SIDs
-        resp = lsat.hLsarOpenPolicy2(dce, MAXIMUM_ALLOWED | lsat.POLICY_LOOKUP_NAMES)
+        resp = lsad.hLsarOpenPolicy2(dce, MAXIMUM_ALLOWED | lsat.POLICY_LOOKUP_NAMES)
         policyHandle = resp["PolicyHandle"]
 
         # Lookup SID
@@ -301,59 +301,18 @@ def resolve_sid_via_ldap(
             warn(f"Could not convert SID {sid} to binary format")
             return None
 
-        # Parse NTLM hashes if provided
-        lmhash = ""
-        nthash = ""
-        if hashes:
-            if ":" in hashes:
-                lmhash, nthash = hashes.split(":", 1)
-            else:
-                nthash = hashes
-            debug("Using NTLM hash authentication for LDAP SID resolution")
-
-        # Try connection with multiple ports/protocols: LDAPS (636) → LDAP (389)
-        conn = None
-        for use_ssl, target_port in [(True, 636), (False, 389)]:
-            try:
-                protocol = "ldaps" if use_ssl else "ldap"
-                ldap_url = f"{protocol}://{dc_ip}:{target_port}"
-                debug(f"Attempting LDAP connection to {ldap_url}")
-
-                conn = ldap_impacket.LDAPConnection(ldap_url, dstIp=dc_ip)
-
-                # Authenticate based on available credentials
-                # Priority: explicit hashes/password > Kerberos
-                # This allows using --ldap-user/--ldap-password even when -k is set
-                if hashes:
-                    # NTLM hash authentication (NEW CAPABILITY!)
-                    debug(f"Authenticating with NTLM hash as {domain}\\{username}")
-                    conn.login(user=username, password="", domain=domain, lmhash=lmhash, nthash=nthash)
-                elif password:
-                    # Password authentication (prefer explicit password over Kerberos)
-                    debug(f"Authenticating with password as {domain}\\{username}")
-                    conn.login(user=username, password=password, domain=domain)
-                elif kerberos:
-                    # Kerberos authentication (only if no explicit credentials)
-                    debug(f"Authenticating with Kerberos as {username}@{domain}")
-                    # Impacket's LDAP Kerberos requires TGT in cache (not just service ticket)
-                    # Note: This will fail if only CIFS/other service ticket is available
-                    conn.kerberosLogin(username, "", domain, lmhash, nthash)
-                else:
-                    # No credentials available
-                    debug("No credentials available for LDAP authentication")
-                    conn = None
-                    continue
-
-                debug(f"Successfully authenticated to LDAP server {dc_ip}")
-                break  # Success, exit loop
-
-            except Exception as e:
-                debug(f"Failed to connect/authenticate to {ldap_url}: {e}")
-                conn = None
-                continue
-
-        if not conn:
-            warn(f"Failed to bind to LDAP server {dc_ip} for SID resolution")
+        # Get LDAP connection using shared utility
+        try:
+            conn = get_ldap_connection(
+                dc_ip=dc_ip,
+                domain=domain,
+                username=username,
+                password=password,
+                hashes=hashes,
+                kerberos=kerberos,
+            )
+        except LDAPConnectionError as e:
+            warn(f"Failed to connect to LDAP server {dc_ip} for SID resolution: {e}")
             return None
 
         # Build search base DN from domain
@@ -458,50 +417,18 @@ def resolve_name_to_sid_via_ldap(
                 warn(f"Could not resolve domain {domain} to IP address")
                 return None
 
-        # Parse NTLM hashes if provided
-        lmhash = ""
-        nthash = ""
-        if hashes:
-            if ":" in hashes:
-                lmhash, nthash = hashes.split(":", 1)
-            else:
-                nthash = hashes
-            debug("Using NTLM hash authentication for LDAP name resolution")
-
-        # Try connection with multiple ports/protocols: LDAPS (636) → LDAP (389)
-        conn = None
-        for use_ssl, target_port in [(True, 636), (False, 389)]:
-            try:
-                protocol = "ldaps" if use_ssl else "ldap"
-                ldap_url = f"{protocol}://{dc_ip}:{target_port}"
-                debug(f"Attempting LDAP connection to {ldap_url}")
-
-                conn = ldap_impacket.LDAPConnection(ldap_url, dstIp=dc_ip)
-
-                # Authenticate based on available credentials
-                if hashes:
-                    # NTLM hash authentication (NEW CAPABILITY!)
-                    debug(f"Authenticating with NTLM hash as {domain}\\{username}")
-                    conn.login(user=username, password="", domain=domain, lmhash=lmhash, nthash=nthash)
-                elif kerberos:
-                    # Kerberos authentication
-                    debug(f"Authenticating with Kerberos as {username}@{domain}")
-                    conn.kerberosLogin(username, password, domain, lmhash, nthash)
-                else:
-                    # Password authentication
-                    debug(f"Authenticating with password as {domain}\\{username}")
-                    conn.login(user=username, password=password, domain=domain)
-
-                debug(f"Successfully authenticated to LDAP server {dc_ip}")
-                break  # Success, exit loop
-
-            except Exception as e:
-                debug(f"Failed to connect/authenticate to {ldap_url}: {e}")
-                conn = None
-                continue
-
-        if not conn:
-            warn(f"Failed to bind to LDAP server {dc_ip} for name resolution")
+        # Get LDAP connection using shared utility
+        try:
+            conn = get_ldap_connection(
+                dc_ip=dc_ip,
+                domain=domain,
+                username=username,
+                password=password,
+                hashes=hashes,
+                kerberos=kerberos,
+            )
+        except LDAPConnectionError as e:
+            warn(f"Failed to connect to LDAP server {dc_ip} for name resolution: {e}")
             return None
 
         debug(f"Successfully bound to LDAP server {dc_ip}")

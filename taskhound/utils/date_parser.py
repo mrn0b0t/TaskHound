@@ -75,3 +75,58 @@ def parse_iso_date(date_str: str) -> Optional[datetime]:
         return dt
     except (ValueError, TypeError):
         return None
+
+
+# Windows FILETIME epoch difference from Unix epoch
+# FILETIME epoch: January 1, 1601
+# Unix epoch: January 1, 1970
+# Difference: 11644473600 seconds
+_FILETIME_EPOCH_DIFF = 11644473600
+
+
+def parse_ad_timestamp(timestamp: int) -> Optional[datetime]:
+    """
+    Parse AD timestamp (100-nanosecond intervals since January 1, 1601).
+
+    Used in LAPS expiration times, AD account expiration, password last set, etc.
+
+    Args:
+        timestamp: Integer timestamp from AD attribute
+
+    Returns:
+        datetime object or None if parsing fails or timestamp indicates "never"
+    """
+    try:
+        # Special values that indicate "never expires" or not set
+        if timestamp == 0 or timestamp == 9223372036854775807:
+            return None
+
+        unix_timestamp = (timestamp / 10_000_000) - _FILETIME_EPOCH_DIFF
+        return datetime.fromtimestamp(unix_timestamp, tz=timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+def parse_filetime_hex(filetime_hex: str) -> Optional[datetime]:
+    """
+    Parse Windows FILETIME from hex string.
+
+    Windows FILETIME is 100-nanosecond intervals since January 1, 1601.
+    Often found in JSON attributes like msLAPS-Password.
+
+    Args:
+        filetime_hex: Hex string representing FILETIME (e.g., "1d9a2b3c...")
+
+    Returns:
+        datetime object or None if parsing fails
+    """
+    try:
+        # Convert hex to integer
+        filetime = int(filetime_hex, 16)
+
+        # Convert to Unix timestamp
+        unix_timestamp = (filetime / 10_000_000) - _FILETIME_EPOCH_DIFF
+
+        return datetime.fromtimestamp(unix_timestamp, tz=timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        return None

@@ -120,6 +120,15 @@ def load_config() -> Dict[str, Any]:
     if "file" in cache:
         defaults["cache_file"] = cache["file"]
 
+    # LAPS
+    laps = config_data.get("laps", {})
+    if "enabled" in laps:
+        defaults["laps"] = laps["enabled"]
+    if "user" in laps:
+        defaults["laps_user"] = laps["user"]
+    if "force" in laps:
+        defaults["force_laps"] = laps["force"]
+
     # BloodHound
     bh = config_data.get("bloodhound", {})
     if "live" in bh:
@@ -385,6 +394,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--ldap-domain", help="Alternative domain for SID lookup (can be different from main auth domain)"
     )
 
+    # LAPS (Local Administrator Password Solution) options
+    laps_group = ap.add_argument_group(
+        "LAPS Authentication",
+        description="Use LAPS passwords for SMB authentication. Queries AD for LAPS attributes and uses "
+        "per-host local admin credentials. Supports both Windows LAPS (msLAPS-Password) and "
+        "Legacy LAPS (ms-Mcs-AdmPwd).",
+    )
+    laps_group.add_argument(
+        "--laps",
+        action="store_true",
+        help="Enable LAPS authentication. Queries LAPS passwords from AD and uses them for SMB auth to each target.",
+    )
+    laps_group.add_argument(
+        "--laps-user",
+        help="Override local admin username for LAPS auth (default: from msLAPS-Password JSON or 'Administrator' for legacy LAPS)",
+    )
+    laps_group.add_argument(
+        "--force-laps",
+        action="store_true",
+        help="Force LAPS usage even in OPSEC mode. LAPS queries may be audited but other OPSEC-unsafe operations will remain disabled.",
+    )
+
     # Cache options
     cache_group = ap.add_argument_group("Cache options")
     cache_group.add_argument(
@@ -426,6 +457,41 @@ def validate_args(args):
         if not args.no_ldap:
             # We don't force no_ldap=True because engine handles it, but good to know
             pass
+
+    # Handle LAPS + OPSEC compatibility
+    if getattr(args, "laps", False):
+        if args.opsec and not getattr(args, "force_laps", False):
+            print("[!] ERROR: LAPS is incompatible with OPSEC mode")
+            print("[!] LAPS requires LDAP queries to retrieve passwords, which may trigger:")
+            print("[!]   - Event ID 4662 (Directory Service Access) for LAPS attribute reads")
+            print("[!]   - Event ID 4624 (Logon) for each LAPS-authenticated SMB connection")
+            print("[!]")
+            print("[!] Options:")
+            print("[!]   1. Remove --opsec flag to use LAPS normally")
+            print("[!]   2. Add --force-laps to use LAPS while keeping other OPSEC protections")
+            print("[!]      (SAMR SID lookup, LDAP SID resolution, CredGuard check remain disabled)")
+            sys.exit(1)
+        
+        if args.opsec and getattr(args, "force_laps", False):
+            print("[!] WARNING: LAPS enabled in OPSEC mode via --force-laps")
+            print("[!] LAPS LDAP queries may be audited (Event ID 4662)")
+            print("[!] Other OPSEC protections remain active")
+            print()
+        
+        # LAPS requires DC IP for LDAP queries
+        if not args.dc_ip:
+            print("[!] ERROR: LAPS requires --dc-ip for LDAP queries")
+            print("[!] Specify the domain controller IP address with --dc-ip")
+            sys.exit(1)
+        
+        # LAPS requires domain credentials to query AD
+        if not args.domain:
+            print("[!] ERROR: LAPS requires --domain for LDAP queries")
+            sys.exit(1)
+        
+        # Warn if using LAPS with single target (still works, but unusual)
+        if args.target and not args.targets_file:
+            print("[*] LAPS mode with single target - will query AD for LAPS password")
 
     # Handle --include-all flag expansion and warnings
     if args.include_all:
@@ -566,7 +632,8 @@ def validate_args(args):
                 traceback.print_exc()
 
     # Kerberos + IP check for targets list
-    if args.kerberos and args.targets_file:
+    # Exception: LAPS mode can resolve IPs to hostnames via DNS before connecting
+    if args.kerberos and args.targets_file and not getattr(args, "laps", False):
         with open(args.targets_file) as f:
             for line in f:
                 t = line.strip()
@@ -577,7 +644,8 @@ def validate_args(args):
                     sys.exit(1)
 
     # Kerberos + IP for single target
-    if args.kerberos and args.target and is_ipv4(args.target.strip()):
+    # Exception: LAPS mode can resolve IPs to hostnames via DNS before connecting
+    if args.kerberos and args.target and is_ipv4(args.target.strip()) and not getattr(args, "laps", False):
         print(
             "[!] Targets verification failed. Please supply hostnames or fqdns or switch to NTLM Auth (Kerberos doesn't like IP addresses)"
         )
