@@ -240,6 +240,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=60,
         help="Connection timeout in seconds (default: 60). Lower this to speed up scans of dead hosts.",
     )
+    target.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Number of parallel worker threads for scanning multiple targets (default: 1 = sequential). "
+        "Recommended: 10-20 for large networks. Higher values may trigger rate limiting.",
+    )
+    target.add_argument(
+        "--rate-limit",
+        type=float,
+        default=None,
+        help="Maximum targets per second (default: unlimited). Use to avoid triggering security alerts. "
+        "Example: --rate-limit 5 limits to 5 targets/second.",
+    )
 
     # High value / scanning options
     scan = ap.add_argument_group("Scanning options")

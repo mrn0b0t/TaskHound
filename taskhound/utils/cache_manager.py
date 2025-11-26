@@ -5,11 +5,16 @@ This module provides a three-tier caching system:
 1. Session cache (in-memory, single run)
 2. Persistent cache (SQLite database, across runs)
 3. Live queries (fallback)
+
+Thread-safety:
+- Session cache protected by RLock for concurrent access
+- SQLite uses WAL mode for concurrent reads/writes
 """
 
 import contextlib
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -21,7 +26,9 @@ class CacheManager:
     """
     Manages session and persistent caching for TaskHound using SQLite.
 
-    Thread-safe via SQLite's internal locking.
+    Thread-safe:
+    - Session cache (in-memory dict) protected by RLock
+    - SQLite uses WAL mode for concurrent access
     """
 
     def __init__(self, cache_file: Optional[Path] = None, ttl_hours: int = 24, enabled: bool = True):
@@ -37,6 +44,9 @@ class CacheManager:
         self.persistent_enabled = enabled
         self.conn = None
 
+        # Thread-safety: RLock for session cache access
+        self._session_lock = threading.RLock()
+
         # Default cache location
         if cache_file is None:
             cache_dir = Path.home() / ".taskhound"
@@ -49,7 +59,7 @@ class CacheManager:
         # Tier 1: Session cache (in-memory, cleared on exit)
         self.session: Dict[str, Any] = {}
 
-        # Statistics for reporting
+        # Statistics for reporting (also protected by _session_lock)
         self.stats = {
             "session_hits": 0,
             "session_misses": 0,
@@ -115,6 +125,8 @@ class CacheManager:
         """
         Get cached value (checks session first, then persistent).
 
+        Thread-safe: Uses RLock for session cache access.
+
         Args:
             category: Cache category ("computers", "users", "sids")
             key: Cache key (e.g., "DC.CORP.LOCAL", "S-1-5-21-...", etc.)
@@ -122,16 +134,17 @@ class CacheManager:
         Returns:
             Cached value or None if miss/expired
         """
-        # Tier 1: Check session cache first (fastest)
         session_key = f"{category}:{key}"
-        if session_key in self.session:
-            self.stats["session_hits"] += 1
-            debug(f"Cache hit (session): {category}:{key}")
-            return self.session[session_key]
+        
+        # Tier 1: Check session cache first (fastest, thread-safe)
+        with self._session_lock:
+            if session_key in self.session:
+                self.stats["session_hits"] += 1
+                debug(f"Cache hit (session): {category}:{key}")
+                return self.session[session_key]
+            self.stats["session_misses"] += 1
 
-        self.stats["session_misses"] += 1
-
-        # Tier 2: Check persistent cache
+        # Tier 2: Check persistent cache (SQLite handles concurrency via WAL)
         if self.persistent_enabled and self.conn:
             try:
                 now = time.time()
@@ -146,7 +159,8 @@ class CacheManager:
                     # Check expiration
                     if expires_at < now:
                         debug(f"Cache expired: {category}:{key}")
-                        self.stats["expired"] += 1
+                        with self._session_lock:
+                            self.stats["expired"] += 1
                         # Lazy delete
                         self.conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))
                         self.conn.commit()
@@ -155,11 +169,11 @@ class CacheManager:
                     # Valid hit
                     try:
                         value = json.loads(value_json)
-                        self.stats["persistent_hits"] += 1
+                        with self._session_lock:
+                            self.stats["persistent_hits"] += 1
+                            # Promote to session cache
+                            self.session[session_key] = value
                         debug(f"Cache hit (persistent): {category}:{key}")
-
-                        # Promote to session cache
-                        self.session[session_key] = value
                         return value
                     except json.JSONDecodeError:
                         warn(f"Corrupt cache entry: {category}:{key}")
@@ -167,12 +181,15 @@ class CacheManager:
             except Exception as e:
                 debug(f"Cache read error: {e}")
 
-        self.stats["persistent_misses"] += 1
+        with self._session_lock:
+            self.stats["persistent_misses"] += 1
         return None
 
     def set(self, category: str, key: str, value: Any, ttl_hours: Optional[int] = None):
         """
         Store value in both session and persistent caches.
+
+        Thread-safe: Uses RLock for session cache, SQLite handles persistence.
 
         Args:
             category: Cache category ("computers", "users", "sids")
@@ -182,10 +199,11 @@ class CacheManager:
         """
         session_key = f"{category}:{key}"
 
-        # Always store in session cache
-        self.session[session_key] = value
+        # Always store in session cache (thread-safe)
+        with self._session_lock:
+            self.session[session_key] = value
 
-        # Store in persistent cache if enabled
+        # Store in persistent cache if enabled (SQLite handles concurrency)
         if self.persistent_enabled and self.conn:
             try:
                 ttl = ttl_hours if ttl_hours is not None else self.ttl_hours
@@ -205,17 +223,20 @@ class CacheManager:
         """
         Remove value from both session and persistent caches.
 
+        Thread-safe: Uses RLock for session cache.
+
         Args:
             category: Cache category
             key: Cache key
         """
         session_key = f"{category}:{key}"
 
-        # Remove from session cache
-        if session_key in self.session:
-            del self.session[session_key]
+        # Remove from session cache (thread-safe)
+        with self._session_lock:
+            if session_key in self.session:
+                del self.session[session_key]
 
-        # Remove from persistent cache
+        # Remove from persistent cache (SQLite handles concurrency)
         if self.persistent_enabled and self.conn:
             try:
                 self.conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))

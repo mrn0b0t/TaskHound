@@ -1,9 +1,16 @@
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from .config import build_parser, validate_args
 from .engine import process_offline_directory, process_target
+from .engine_async import (
+    AsyncConfig,
+    AsyncTaskHound,
+    aggregate_results,
+    print_summary as print_async_summary,
+)
 from .laps import (
     LAPSCache,
     LAPSConnectionError,
@@ -181,47 +188,80 @@ def main():
         # Normalize (append domain for short names; leave IPs as-is)
         targets = normalize_targets(targets, args.domain)
 
-        # Process each target
-        for tgt in targets:
-            lines, laps_result = process_target(
-                target=tgt,
-                domain=args.domain,
-                username=args.username,
-                password=args.password,
-                kerberos=args.kerberos,
-                dc_ip=args.dc_ip,
-                include_ms=args.include_ms,
-                include_local=args.include_local,
-                hv=hv,
-                debug=args.debug,
-                all_rows=all_rows,
-                hashes=args.hashes,
-                show_unsaved_creds=args.unsaved_creds,
-                backup_dir=args.backup,
-                credguard_detect=args.credguard_detect,
-                no_ldap=args.no_ldap,
-                ldap_domain=args.ldap_domain,
-                ldap_user=args.ldap_user,
-                ldap_password=args.ldap_password,
-                ldap_hashes=args.ldap_hashes,
-                loot=args.loot,
-                dpapi_key=args.dpapi_key,
-                bh_connector=bh_connector,
-                concise=not args.verbose,
+        # Common kwargs for process_target
+        process_kwargs = dict(
+            domain=args.domain,
+            username=args.username,
+            password=args.password,
+            kerberos=args.kerberos,
+            dc_ip=args.dc_ip,
+            include_ms=args.include_ms,
+            include_local=args.include_local,
+            hv=hv,
+            debug=args.debug,
+            hashes=args.hashes,
+            show_unsaved_creds=args.unsaved_creds,
+            backup_dir=args.backup,
+            credguard_detect=args.credguard_detect,
+            no_ldap=args.no_ldap,
+            ldap_domain=args.ldap_domain,
+            ldap_user=args.ldap_user,
+            ldap_password=args.ldap_password,
+            ldap_hashes=args.ldap_hashes,
+            loot=args.loot,
+            dpapi_key=args.dpapi_key,
+            bh_connector=bh_connector,
+            concise=not args.verbose,
+            timeout=args.timeout,
+            opsec=args.opsec,
+            laps_cache=laps_cache,
+            validate_creds=args.validate_creds,
+        )
+
+        # Parallel mode (--threads > 1)
+        if args.threads > 1:
+            async_config = AsyncConfig(
+                workers=args.threads,
+                rate_limit=args.rate_limit,
                 timeout=args.timeout,
-                opsec=args.opsec,
-                laps_cache=laps_cache,
-                validate_creds=args.validate_creds,
+                show_progress=True,
             )
-            # Track LAPS results
-            if laps_result is not None:
-                if laps_result is True:
-                    laps_successes += 1
-                elif isinstance(laps_result, LAPSFailure):
-                    laps_failures.append(laps_result)
-            print_results(lines)
-            if args.plain and lines:
-                write_plain(args.plain, tgt, lines)
+            async_engine = AsyncTaskHound(async_config)
+
+            start_time = time.perf_counter()
+            results = async_engine.run(targets, process_target, **process_kwargs)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+            # Aggregate results
+            all_rows, laps_failures, laps_successes = aggregate_results(results)
+
+            # Print results (already captured in results)
+            for result in results:
+                if result.lines:
+                    print_results(result.lines)
+                if args.plain and result.lines:
+                    write_plain(args.plain, result.target, result.lines)
+
+            # Print summary
+            print_async_summary(results, laps_failures, laps_successes, elapsed_ms)
+
+        else:
+            # Sequential mode (default, --threads 1)
+            for tgt in targets:
+                lines, laps_result = process_target(
+                    target=tgt,
+                    all_rows=all_rows,
+                    **process_kwargs,
+                )
+                # Track LAPS results
+                if laps_result is not None:
+                    if laps_result is True:
+                        laps_successes += 1
+                    elif isinstance(laps_result, LAPSFailure):
+                        laps_failures.append(laps_result)
+                print_results(lines)
+                if args.plain and lines:
+                    write_plain(args.plain, tgt, lines)
 
     # Exports
     # Auto-generate JSON if OpenGraph is enabled and no explicit JSON output was specified
