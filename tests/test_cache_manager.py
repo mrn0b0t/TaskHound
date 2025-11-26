@@ -104,3 +104,49 @@ class TestCacheManager(unittest.TestCase):
             row = cursor.fetchone()
             conn.close()
             self.assertIsNone(row)
+
+    def test_host_deduplication(self):
+        """Test dual-homed host deduplication tracking with atomic operation."""
+        # First call should succeed (was_first=True)
+        was_first, previous = self.cache.try_mark_host_processed("DC.domain.lab", "192.168.1.10")
+        self.assertTrue(was_first)
+        self.assertIsNone(previous)
+        
+        # Second call with same host but different IP should fail (was_first=False)
+        was_first, previous = self.cache.try_mark_host_processed("DC.domain.lab", "192.168.1.11")
+        self.assertFalse(was_first)
+        self.assertEqual(previous, "192.168.1.10")
+        
+        # Case-insensitive check
+        was_first, previous = self.cache.try_mark_host_processed("dc.DOMAIN.LAB", "10.0.0.1")
+        self.assertFalse(was_first)
+        self.assertEqual(previous, "192.168.1.10")
+        
+        # Different host should succeed
+        was_first, previous = self.cache.try_mark_host_processed("SERVER.domain.lab", "192.168.1.20")
+        self.assertTrue(was_first)
+        self.assertIsNone(previous)
+        
+    def test_host_deduplication_multiple_hosts(self):
+        """Test that multiple hosts are tracked independently."""
+        # Mark all hosts - all should be first
+        w1, _ = self.cache.try_mark_host_processed("DC.domain.lab", "192.168.1.10")
+        w2, _ = self.cache.try_mark_host_processed("SERVER.domain.lab", "192.168.1.20")
+        w3, _ = self.cache.try_mark_host_processed("WS01.domain.lab", "10.0.0.5")
+        
+        self.assertTrue(w1)
+        self.assertTrue(w2)
+        self.assertTrue(w3)
+        
+        # Re-mark should all fail with original targets
+        w1, p1 = self.cache.try_mark_host_processed("DC.domain.lab", "10.10.10.1")
+        w2, p2 = self.cache.try_mark_host_processed("SERVER.domain.lab", "10.10.10.2")
+        w3, p3 = self.cache.try_mark_host_processed("WS01.domain.lab", "10.10.10.3")
+        
+        self.assertFalse(w1)
+        self.assertFalse(w2)
+        self.assertFalse(w3)
+        self.assertEqual(p1, "192.168.1.10")
+        self.assertEqual(p2, "192.168.1.20")
+        self.assertEqual(p3, "10.0.0.5")
+

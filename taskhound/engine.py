@@ -709,6 +709,25 @@ def process_target(
             warn(f"{target}: Could not resolve FQDN - using target as-is")
             server_fqdn = target
 
+        # Dual-homed host deduplication:
+        # Check if we've already processed this host via a different IP/interface
+        # This prevents duplicate entries when the same machine has multiple NICs
+        # Uses atomic try_mark_host_processed() to avoid TOCTOU race conditions
+        from .utils.cache_manager import get_cache
+        cache = get_cache()
+        if cache and server_fqdn != "UNKNOWN_HOST":
+            was_first, previous_target = cache.try_mark_host_processed(server_fqdn, target)
+            if not was_first:
+                warn(f"{target}: Skipping - already processed as {previous_target} (dual-homed host: {server_fqdn})")
+                status(f"[Collecting] {target} [SKIP] (duplicate of {previous_target})")
+                # Close SMB connection before returning
+                if smb:
+                    try:
+                        smb.close()
+                    except Exception:
+                        pass
+                return [], None
+
         # Extract the computer account SID via SAMR RPC (with LDAP fallback)
         # This enables SID-validated BloodHound lookups
         # Skipped in OPSEC mode to avoid noisy SAMR/LDAP calls

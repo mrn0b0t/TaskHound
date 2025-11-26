@@ -337,6 +337,37 @@ class CacheManager:
                 self.conn.close()
             self.conn = None
 
+    # ==========================================
+    # Host Deduplication (Session-only)
+    # ==========================================
+    # Used to prevent processing dual-homed hosts twice when
+    # multiple IPs resolve to the same FQDN
+    
+    def try_mark_host_processed(self, fqdn: str, target: str) -> tuple[bool, Optional[str]]:
+        """
+        Atomically check if host is processed and mark it if not.
+        
+        This is the thread-safe way to handle dual-homed host deduplication.
+        Combines check + mark in a single atomic operation to prevent TOCTOU
+        race conditions where two threads both pass the check before either marks.
+        
+        Args:
+            fqdn: Fully qualified domain name (e.g., "DC.domain.lab")
+            target: The target (IP or hostname) trying to claim this host
+            
+        Returns:
+            (True, None) if this thread successfully marked the host (proceed with scan)
+            (False, original_target) if already marked (skip, return who marked it first)
+        """
+        session_key = f"_processed_hosts:{fqdn.upper()}"
+        with self._session_lock:
+            if session_key in self.session:
+                # Already marked by another target
+                return (False, self.session[session_key])
+            # Mark it
+            self.session[session_key] = target
+            return (True, None)
+
     def print_stats(self):
         """Print cache performance statistics."""
         total_requests = self.stats["session_hits"] + self.stats["session_misses"]

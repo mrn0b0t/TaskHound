@@ -180,7 +180,11 @@ def main():
         # Build targets list
         targets = []
         if args.target:
-            targets.append(args.target)
+            # Support comma-separated targets: -t 192.168.1.1,192.168.1.2,192.168.1.3
+            for t in args.target.split(","):
+                t = t.strip()
+                if t:
+                    targets.append(t)
         if args.targets_file:
             with open(args.targets_file, encoding="utf-8") as f:
                 targets.extend([line.strip() for line in f if line.strip()])
