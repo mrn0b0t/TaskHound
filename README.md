@@ -443,7 +443,7 @@ TaskHound is strictly an **audit and educational tool**. Use only in environment
 
 [Pennyw0rth/NetExec](https://github.com/Pennyw0rth/NetExec) - LAPS encrypted password decryption reference implementation
 
-[jborean93/dpapi-ng](https://github.com/jborean93/dpapi-ng) - DPAPI-NG/CNG DPAPI research and implementation (incorporated into Impacket)
+[jborean93/dpapi-ng](https://github.com/jborean93/dpapi-ng) - DPAPI-NG/CNG DPAPI research and implementation
 
 [tijldeneut/DPAPIck3](https://github.com/tijldeneut/DPAPIck3) - DPAPI decryption implementation reference
 

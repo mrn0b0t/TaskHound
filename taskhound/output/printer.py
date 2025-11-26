@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..parsers.highvalue import HighValueLoader
 from ..utils import logging as log_utils
@@ -114,6 +114,7 @@ def format_block(
     meta: Optional[Dict[str, str]] = None,
     decrypted_creds: Optional[List] = None,
     concise: bool = False,
+    cred_validation: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     # Format a small pretty-print block used by the CLI output.
     #
@@ -186,6 +187,41 @@ def format_block(
         if password_analysis:
             base.append(f"        Password Analysis : {password_analysis}")
 
+        # Add credential validation results if available (from --validate-creds)
+        # Logic: RPC validation is authoritative when available, but falls back to
+        # password analysis when RPC returns UNKNOWN (task never ran)
+        if cred_validation:
+            cred_status = cred_validation.get("cred_status")
+            cred_valid = cred_validation.get("cred_password_valid")
+            cred_hijackable = cred_validation.get("cred_hijackable")
+            cred_detail = cred_validation.get("cred_detail")
+            cred_code = cred_validation.get("cred_return_code")
+            
+            # Check status enum first, then password_valid boolean
+            if cred_status == "unknown":
+                # RPC couldn't determine - fall back to password analysis if available
+                if password_analysis and "GOOD" in password_analysis.upper():
+                    status_display = "[+] LIKELY VALID (task never ran, but password newer than pwdLastSet)"
+                elif password_analysis and "BAD" in password_analysis.upper():
+                    status_display = "[-] LIKELY INVALID (task never ran, password older than pwdLastSet)"
+                else:
+                    status_display = f"[?] UNKNOWN - task never ran ({cred_code})"
+            elif cred_valid is True:
+                if cred_hijackable:
+                    status_display = "[+] VALID (hijackable)"
+                else:
+                    status_display = f"[+] VALID (restricted: {cred_status})"
+            elif cred_status == "invalid":
+                status_display = "[-] INVALID (wrong password)"
+            elif cred_status == "blocked":
+                status_display = "[-] BLOCKED (account disabled/expired)"
+            else:
+                status_display = f"[?] {cred_status} ({cred_code})"
+            
+            base.append(f"        Cred Validation : {status_display}")
+            if cred_detail and not cred_hijackable:
+                base.append(f"        Cred Detail     : {cred_detail}")
+
         # Check if we have a decrypted password for this user
         decrypted_password = None
         if decrypted_creds:
@@ -217,5 +253,36 @@ def format_block(
     elif kind == "TASK":
         if password_analysis:
             base.append(f"        Password Analysis : {password_analysis}")
+        
+        # Add credential validation results for regular tasks too
+        # Same layered logic: RPC authoritative, fall back to password analysis for UNKNOWN
+        if cred_validation:
+            cred_status = cred_validation.get("cred_status")
+            cred_valid = cred_validation.get("cred_password_valid")
+            cred_hijackable = cred_validation.get("cred_hijackable")
+            cred_code = cred_validation.get("cred_return_code")
+            
+            # Check status enum first, then password_valid boolean
+            if cred_status == "unknown":
+                # RPC couldn't determine - fall back to password analysis if available
+                if password_analysis and "GOOD" in password_analysis.upper():
+                    status_display = "[+] LIKELY VALID (task never ran, but password newer than pwdLastSet)"
+                elif password_analysis and "BAD" in password_analysis.upper():
+                    status_display = "[-] LIKELY INVALID (task never ran, password older than pwdLastSet)"
+                else:
+                    status_display = f"[?] UNKNOWN - task never ran ({cred_code})"
+            elif cred_valid is True:
+                if cred_hijackable:
+                    status_display = "[+] VALID (hijackable)"
+                else:
+                    status_display = f"[+] VALID (restricted: {cred_status})"
+            elif cred_status == "invalid":
+                status_display = "[-] INVALID (wrong password)"
+            elif cred_status == "blocked":
+                status_display = "[-] BLOCKED (account disabled/expired)"
+            else:
+                status_display = f"[?] {cred_status} ({cred_code})"
+            
+            base.append(f"        Cred Validation : {status_display}")
 
     return base

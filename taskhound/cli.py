@@ -211,6 +211,7 @@ def main():
                 timeout=args.timeout,
                 opsec=args.opsec,
                 laps_cache=laps_cache,
+                validate_creds=args.validate_creds,
             )
             # Track LAPS results
             if laps_result is not None:

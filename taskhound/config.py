@@ -129,6 +129,11 @@ def load_config() -> Dict[str, Any]:
     if "force" in laps:
         defaults["force_laps"] = laps["force"]
 
+    # Credential Validation
+    cred_validation = config_data.get("credential_validation", {})
+    if "enabled" in cred_validation:
+        defaults["validate_creds"] = cred_validation["enabled"]
+
     # BloodHound
     bh = config_data.get("bloodhound", {})
     if "live" in bh:
@@ -354,6 +359,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="EXPERIMENTAL: Attempt to detect Credential Guard status via remote registry (default: off). Only use if you know your environment supports it.",
+    )
+    scan.add_argument(
+        "--validate-creds",
+        action="store_true",
+        default=False,
+        help="Query Task Scheduler RPC to validate stored credentials based on task execution history. "
+        "Determines if passwords are valid/invalid/expired by checking LastReturnCode. "
+        "Requires additional RPC traffic (\\pipe\\atsvc). Disabled in OPSEC mode.",
     )
 
     # DPAPI decryption options

@@ -22,6 +22,7 @@ from .parsers.highvalue import HighValueLoader
 from .parsers.task_xml import parse_task_xml
 from .smb.connection import smb_connect, smb_negotiate, smb_login, get_server_fqdn, get_server_sid, _dns_ptr_lookup, _is_ip_address
 from .smb.credguard import check_credential_guard
+from .smb.task_rpc import TaskSchedulerRPC, TaskRunInfo, CredentialStatus
 from .smb.tasks import crawl_tasks, smb_listdir
 from .utils.logging import debug as log_debug, good, info, status, warn
 from .utils.sid_resolver import looks_like_domain_user
@@ -509,6 +510,13 @@ def _build_row(
         "days_interval": meta.get("days_interval"),
         "reason": None,
         "credentials_hint": credentials_hint,
+        # Credential validation fields (populated when --validate-creds is used)
+        "cred_status": None,  # valid, valid_restricted, invalid, blocked, unknown
+        "cred_password_valid": None,  # True/False - key field for DPAPI feasibility
+        "cred_hijackable": None,  # True/False - can the task be hijacked?
+        "cred_last_run": None,  # datetime of last run
+        "cred_return_code": None,  # hex return code from last execution
+        "cred_detail": None,  # human-readable detail
     }
 
 
@@ -540,6 +548,7 @@ def process_target(
     timeout: int = 60,
     opsec: bool = False,
     laps_cache: Optional[LAPSCache] = None,
+    validate_creds: bool = False,
 ) -> Tuple[List[str], Optional[Union[bool, LAPSFailure]]]:
     """
     Connect to `target`, enumerate scheduled tasks, and return printable lines.
@@ -572,6 +581,7 @@ def process_target(
         timeout: Connection timeout
         opsec: Enable OPSEC mode
         laps_cache: LAPS credential cache (if LAPS mode enabled)
+        validate_creds: Query Task Scheduler RPC to validate stored credentials
         
     Returns:
         Tuple of (lines, laps_result) where:
@@ -592,6 +602,7 @@ def process_target(
     laps_used = False
     laps_type_used = None
     discovered_hostname = None
+    cred_validation_results: Dict[str, TaskRunInfo] = {}  # RPC credential validation cache
     
     try:
         # LAPS Mode: Two-phase connection (negotiate -> lookup -> auth)
@@ -802,6 +813,67 @@ def process_target(
         warn(f"{target}: Unexpected error while crawling tasks: {e}")
         return out_lines, laps_result
 
+    # First pass: identify tasks with Password logon type for credential validation
+    password_task_paths: list[str] = []
+    if validate_creds and not opsec:
+        for rel_path, xml_bytes in items:
+            meta = parse_task_xml(xml_bytes)
+            logon_type = (meta.get("logon_type") or "").strip().lower()
+            if logon_type == "password":
+                password_task_paths.append(rel_path)
+        
+        if password_task_paths:
+            info(f"{target}: Found {len(password_task_paths)} tasks with stored credentials to validate")
+
+    # Credential validation via Task Scheduler RPC (if requested and not in OPSEC mode)
+    if validate_creds and not opsec and password_task_paths:
+        info(f"{target}: Querying Task Scheduler RPC for credential validation...")
+        try:
+            # Parse hashes for RPC auth
+            lm_hash = ""
+            nt_hash = ""
+            if hashes:
+                hash_parts = hashes.split(":")
+                if len(hash_parts) == 2:
+                    lm_hash, nt_hash = hash_parts
+                elif len(hash_parts) == 1 and len(hash_parts[0]) == 32:
+                    nt_hash = hash_parts[0]
+            
+            rpc_client = TaskSchedulerRPC(
+                target=target,
+                domain=domain,
+                username=username,
+                password=password or "",
+                lm_hash=lm_hash,
+                nt_hash=nt_hash,
+            )
+            
+            if rpc_client.connect():
+                # Validate only the tasks we know have Password logon type
+                cred_validation_results = rpc_client.validate_specific_tasks(password_task_paths)
+                rpc_client.disconnect()
+                
+                if cred_validation_results:
+                    valid_count = sum(1 for r in cred_validation_results.values() if r.password_valid)
+                    invalid_count = sum(1 for r in cred_validation_results.values() 
+                                       if r.credential_status == CredentialStatus.INVALID)
+                    unknown_count = sum(1 for r in cred_validation_results.values() 
+                                       if r.credential_status == CredentialStatus.UNKNOWN)
+                    good(f"{target}: Validated {len(cred_validation_results)} password tasks "
+                         f"({valid_count} valid, {invalid_count} invalid, {unknown_count} unknown)")
+                else:
+                    info(f"{target}: No run info available for password tasks")
+            else:
+                warn(f"{target}: Failed to connect to Task Scheduler RPC")
+        except Exception as e:
+            warn(f"{target}: Credential validation failed: {e}")
+            if debug:
+                traceback.print_exc()
+    elif validate_creds and not password_task_paths:
+        info(f"{target}: No password-authenticated tasks found - skipping credential validation")
+    elif validate_creds and opsec:
+        info(f"{target}: Skipping credential validation (OPSEC mode)")
+
     # Create backup directory structure if backup is requested
     backup_target_dir = None
     if backup_dir:
@@ -917,6 +989,33 @@ def process_target(
         hostname = server_fqdn if server_fqdn else target
         row = _build_row(hostname, rel_path, meta, target_ip=target, computer_sid=server_sid)
 
+        # Enrich row with credential validation data if available
+        # Task paths need normalization: SMB uses "TaskName", RPC uses "\TaskName"
+        if cred_validation_results:
+            # Try both with and without leading backslash
+            rpc_path = "\\" + rel_path if not rel_path.startswith("\\") else rel_path
+            rpc_path_alt = rel_path.lstrip("\\")
+            
+            task_run_info = cred_validation_results.get(rpc_path) or cred_validation_results.get(rpc_path_alt)
+            if task_run_info:
+                row["cred_status"] = task_run_info.credential_status.value
+                row["cred_password_valid"] = task_run_info.password_valid
+                row["cred_hijackable"] = task_run_info.task_hijackable
+                row["cred_last_run"] = task_run_info.last_run.isoformat() if task_run_info.last_run else None
+                row["cred_return_code"] = f"0x{task_run_info.return_code:08X}" if task_run_info.return_code is not None else None
+                # Build human-readable detail
+                if task_run_info.password_valid:
+                    if task_run_info.task_hijackable:
+                        row["cred_detail"] = "Password VALID - task can be hijacked"
+                    else:
+                        row["cred_detail"] = f"Password VALID but restricted ({task_run_info.credential_status.value})"
+                elif task_run_info.credential_status == CredentialStatus.INVALID:
+                    row["cred_detail"] = "Password INVALID - DPAPI dump not viable"
+                elif task_run_info.credential_status == CredentialStatus.BLOCKED:
+                    row["cred_detail"] = "Account blocked/expired - DPAPI dump not viable"
+                else:
+                    row["cred_detail"] = f"Unknown status (code: {row['cred_return_code']})"
+
         # Add Credential Guard status to each row
         row["credential_guard"] = credguard_status
         # Determine if the task stores credentials or runs with token/S4U (no saved credentials)
@@ -983,6 +1082,7 @@ def process_target(
                             meta=meta,
                             decrypted_creds=decrypted_creds,
                             concise=concise,
+                            cred_validation=row if row.get("cred_status") else None,
                         )
                     )
                     priv_count += 1
@@ -1037,6 +1137,7 @@ def process_target(
                             meta=meta,
                             decrypted_creds=decrypted_creds,
                             concise=concise,
+                            cred_validation=row if row.get("cred_status") else None,
                         )
                     )
                     priv_count += 1
@@ -1095,6 +1196,7 @@ def process_target(
                         meta=meta,
                         decrypted_creds=decrypted_creds,
                         concise=concise,
+                        cred_validation=row if row.get("cred_status") else None,
                     )
                 )
             row["password_analysis"] = password_analysis

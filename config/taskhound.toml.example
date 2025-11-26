@@ -41,6 +41,12 @@
 # user = "Administrator"  # Override local admin username (default: from msLAPS-Password JSON or 'Administrator')
 # force = false  # Force LAPS usage even in OPSEC mode
 
+[credential_validation]
+# Credential Validation via Task Scheduler RPC
+# Queries task execution history to determine if stored passwords are valid
+# WARNING: Creates additional RPC traffic - may be detectable
+# enabled = false
+
 [bloodhound]
 # BloodHound connection settings
 live = false
