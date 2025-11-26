@@ -1,9 +1,9 @@
-from typing import Dict, List
+from typing import Any, List
 
 from ..utils.console import print_summary_table as rich_summary_table
 
 
-def print_summary_table(all_rows: List[Dict], backup_dir: str = None, has_hv_data: bool = False):
+def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data: bool = False):
     """Print a nicely formatted summary table showing task counts per host."""
     if not all_rows:
         return
@@ -11,9 +11,12 @@ def print_summary_table(all_rows: List[Dict], backup_dir: str = None, has_hv_dat
     # Aggregate data by host
     host_stats = {}
     for row in all_rows:
-        host = row.get("host", "Unknown")
-        task_type = row.get("type", "TASK")
-        reason = row.get("reason", "")
+        # Support both dict and TaskRow objects
+        row_dict = row.to_dict() if hasattr(row, "to_dict") else row
+
+        host = row_dict.get("host", "Unknown")
+        task_type = row_dict.get("type", "TASK")
+        reason = row_dict.get("reason", "")
 
         if host not in host_stats:
             host_stats[host] = {"tier0": 0, "privileged": 0, "normal": 0, "status": "[+]", "failure_reason": ""}

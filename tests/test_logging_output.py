@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from taskhound.auth import AuthContext
 from taskhound.engine import process_target
+from taskhound.models.task import TaskType
 from taskhound.output.summary import print_summary_table
 from taskhound.utils.logging import set_verbosity
 
@@ -52,8 +53,8 @@ class TestLoggingOutput(unittest.TestCase):
 
         # Verify failure row added
         self.assertEqual(len(all_rows), 1)
-        self.assertEqual(all_rows[0]["type"], "FAILURE")
-        self.assertEqual(all_rows[0]["reason"], "SMB connection failed: Connection failed")
+        self.assertEqual(all_rows[0].type, TaskType.FAILURE.value)
+        self.assertEqual(all_rows[0].reason, "SMB connection failed: Connection failed")
 
     def test_summary_table_failure(self):
         all_rows = [

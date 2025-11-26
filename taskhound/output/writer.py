@@ -1,9 +1,14 @@
 import csv
 import json
 import os
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from ..utils.logging import good
+
+
+def _rows_to_dicts(rows: List[Any]) -> List[Dict]:
+    """Convert TaskRow objects to dicts for serialization."""
+    return [row.to_dict() if hasattr(row, "to_dict") else row for row in rows]
 
 
 def write_plain(outdir: str, host: str, lines: List[str]):
@@ -15,13 +20,13 @@ def write_plain(outdir: str, host: str, lines: List[str]):
     good(f"Wrote results to {path}")
 
 
-def write_json(path: str, rows: List[Dict]):
+def write_json(path: str, rows: List[Any]):
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(rows, f, indent=2)
+        json.dump(_rows_to_dicts(rows), f, indent=2)
     good(f"Wrote JSON results to {path}")
 
 
-def write_csv(path: str, rows: List[Dict]):
+def write_csv(path: str, rows: List[Any]):
     fieldnames = [
         "host",
         "target_ip",
@@ -44,9 +49,15 @@ def write_csv(path: str, rows: List[Dict]):
         "credentials_hint",
         "credential_guard",
         "password_analysis",
+        "cred_status",
+        "cred_password_valid",
+        "cred_hijackable",
+        "cred_last_run",
+        "cred_return_code",
+        "cred_detail",
     ]
     with open(path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
-        w.writerows(rows)
+        w.writerows(_rows_to_dicts(rows))
     good(f"Wrote CSV results to {path}")

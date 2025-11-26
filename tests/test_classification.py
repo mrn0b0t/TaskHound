@@ -8,6 +8,7 @@ from taskhound.classification import (
     _get_task_date_for_analysis,
     classify_task,
 )
+from taskhound.models.task import TaskRow, TaskType
 
 
 class TestGetTaskDateForAnalysis:
@@ -100,7 +101,12 @@ class TestClassifyTask:
         hv.check_tier0.return_value = (True, ["Domain Admin member"])
         hv.analyze_password_age.return_value = ("HIGH", "Password old")
 
-        row = {"credentials_hint": "stored_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\AdminTask",
+            runas="admin@domain.local",
+            credentials_hint="stored_credentials",
+        )
         meta = {"date": "2024-01-01"}
 
         result = classify_task(
@@ -117,7 +123,7 @@ class TestClassifyTask:
         assert result.reason == "Domain Admin member"
         assert result.password_analysis == "Password old"
         assert result.should_include is True
-        assert row["type"] == "TIER-0"
+        assert row.task_type == TaskType.TIER0
 
     def test_tier0_without_saved_credentials(self):
         """Should note when TIER-0 task has no saved credentials."""
@@ -125,7 +131,12 @@ class TestClassifyTask:
         hv.loaded = True
         hv.check_tier0.return_value = (True, ["Domain Admin"])
 
-        row = {"credentials_hint": "no_saved_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\AdminTask",
+            runas="admin@domain.local",
+            credentials_hint="no_saved_credentials",
+        )
         meta = {}
 
         result = classify_task(
@@ -150,7 +161,12 @@ class TestClassifyTask:
         hv.check_highvalue.return_value = True
         hv.analyze_password_age.return_value = ("MEDIUM", "Password 90 days old")
 
-        row = {"credentials_hint": "stored_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\ServiceTask",
+            runas="serviceaccount@domain.local",
+            credentials_hint="stored_credentials",
+        )
         meta = {"date": "2024-06-01"}
 
         result = classify_task(
@@ -166,7 +182,7 @@ class TestClassifyTask:
         assert result.task_type == "PRIV"
         assert "High Value match" in result.reason
         assert result.should_include is True
-        assert row["type"] == "PRIV"
+        assert row.task_type == TaskType.PRIV
 
     @patch("taskhound.utils.sid_resolver.looks_like_domain_user")
     def test_regular_task_domain_user(self, mock_looks_like):
@@ -179,7 +195,12 @@ class TestClassifyTask:
         hv.check_highvalue.return_value = False
         hv.analyze_password_age.return_value = ("UNKNOWN", None)
 
-        row = {"credentials_hint": "stored_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\UserTask",
+            runas="user@domain.local",
+            credentials_hint="stored_credentials",
+        )
         meta = {}
 
         result = classify_task(
@@ -200,7 +221,12 @@ class TestClassifyTask:
         """Should exclude tasks without saved credentials by default."""
         mock_looks_like.return_value = True
 
-        row = {"credentials_hint": "no_saved_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\Task",
+            runas="user@domain.local",
+            credentials_hint="no_saved_credentials",
+        )
         meta = {}
 
         result = classify_task(
@@ -225,7 +251,12 @@ class TestClassifyTask:
         hv.check_tier0.return_value = (False, [])
         hv.check_highvalue.return_value = False
 
-        row = {"credentials_hint": "no_saved_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\Task",
+            runas="user@domain.local",
+            credentials_hint="no_saved_credentials",
+        )
         meta = {}
 
         result = classify_task(
@@ -251,7 +282,12 @@ class TestClassifyTask:
         hv.check_highvalue.return_value = False
         hv.analyze_password_age.return_value = ("UNKNOWN", None)
 
-        row = {"credentials_hint": "stored_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\LocalTask",
+            runas="LocalAdmin",
+            credentials_hint="stored_credentials",
+        )
         meta = {}
 
         result = classify_task(
@@ -276,7 +312,12 @@ class TestClassifyTask:
         hv.check_tier0.return_value = (False, [])
         hv.check_highvalue.return_value = False
 
-        row = {"credentials_hint": None}  # No credential hint
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\LocalTask",
+            runas="LocalUser",
+            credentials_hint=None,
+        )
         meta = {}
 
         result = classify_task(
@@ -293,7 +334,12 @@ class TestClassifyTask:
 
     def test_no_hv_classification(self):
         """Should work without HighValueLoader (no privilege detection)."""
-        row = {"credentials_hint": "stored_credentials"}
+        row = TaskRow(
+            host="host1.domain.local",
+            path="\\Task",
+            runas="user@domain.local",
+            credentials_hint="stored_credentials",
+        )
         meta = {}
 
         with patch("taskhound.classification.looks_like_domain_user", return_value=True):

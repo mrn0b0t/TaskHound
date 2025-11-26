@@ -5,10 +5,15 @@
 # PRIV (high-value), or TASK (normal) based on the runas account.
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from .utils.logging import warn
 from .utils.sid_resolver import looks_like_domain_user
+
+if TYPE_CHECKING:
+    from .models.task import TaskRow
+
+from .models.task import TaskType
 
 
 @dataclass
@@ -82,7 +87,7 @@ def _analyze_password_age(
 
 
 def classify_task(
-    row: Dict[str, Any],
+    row: "TaskRow",
     meta: Dict[str, Any],
     runas: str,
     rel_path: str,
@@ -97,7 +102,7 @@ def classify_task(
     used by both online and offline processing modes.
 
     Args:
-        row: Task row dict (modified in place with type/reason/password_analysis)
+        row: TaskRow instance (modified in place with type/reason/password_analysis)
         meta: Parsed task XML metadata
         runas: The account the task runs as
         rel_path: Task path for display/warnings
@@ -108,8 +113,8 @@ def classify_task(
     Returns:
         ClassificationResult with task_type, reason, password_analysis, should_include
     """
-    has_no_saved_creds = row.get("credentials_hint") == "no_saved_credentials"
-    has_stored_creds = row.get("credentials_hint") == "stored_credentials"
+    has_no_saved_creds = row.credentials_hint == "no_saved_credentials"
+    has_stored_creds = row.credentials_hint == "stored_credentials"
 
     # Skip tasks without saved credentials unless user explicitly requested them
     if has_no_saved_creds and not show_unsaved_creds:
@@ -132,9 +137,9 @@ def classify_task(
                 password_analysis = _analyze_password_age(hv, runas, meta, rel_path)
 
             # Update row in place
-            row["type"] = "TIER-0"
-            row["reason"] = reason
-            row["password_analysis"] = password_analysis
+            row.task_type = TaskType.TIER0
+            row.reason = reason
+            row.password_analysis = password_analysis
 
             return ClassificationResult(
                 task_type="TIER-0",
@@ -154,9 +159,9 @@ def classify_task(
                 password_analysis = _analyze_password_age(hv, runas, meta, rel_path)
 
             # Update row in place
-            row["type"] = "PRIV"
-            row["reason"] = reason
-            row["password_analysis"] = password_analysis
+            row.task_type = TaskType.PRIV
+            row.reason = reason
+            row.password_analysis = password_analysis
 
             return ClassificationResult(
                 task_type="PRIV",
@@ -178,7 +183,7 @@ def classify_task(
     )
 
     if should_include:
-        row["password_analysis"] = password_analysis
+        row.password_analysis = password_analysis
 
     return ClassificationResult(
         task_type="TASK",

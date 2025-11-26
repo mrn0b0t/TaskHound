@@ -19,6 +19,7 @@ from .laps import (
     LAPSFailure,
     get_laps_credential_for_host,
 )
+from .models.task import TaskRow
 from .output.printer import format_block
 from .parsers.highvalue import HighValueLoader
 from .parsers.task_xml import parse_task_xml
@@ -190,7 +191,7 @@ def _process_offline_host(
     hv: Optional[HighValueLoader],
     show_unsaved_creds: bool,
     include_local: bool,
-    all_rows: List[Dict],
+    all_rows: List[TaskRow],
     debug: bool,
     no_ldap: bool = False,
     concise: bool = False,
@@ -243,7 +244,7 @@ def _process_offline_host(
             what = f"{what} {meta.get('arguments')}"
 
         # For offline processing, target_ip is not applicable (already offline)
-        row = _build_row(hostname, rel_path, meta, target_ip=None)
+        row = TaskRow.from_meta(hostname, rel_path, meta, target_ip=None)
 
         # Determine if the task stores credentials or runs with token/S4U (no saved credentials)
         logon_type = (meta.get("logon_type") or "").strip()
@@ -253,7 +254,7 @@ def _process_offline_host(
             "interactivetokenorpassword",
         )
         if no_saved_creds:
-            row["credentials_hint"] = "no_saved_credentials"
+            row.credentials_hint = "no_saved_credentials"
 
         # Use shared classification logic
         result = classify_task(
@@ -373,58 +374,10 @@ def _sort_tasks_by_priority(lines: List[str]) -> List[str]:
     return result
 
 
-def _build_row(
-    host: str, rel_path: str, meta: Dict[str, str], target_ip: Optional[str] = None, computer_sid: Optional[str] = None
-) -> Dict[str, Optional[str]]:
-    # Create a structured dict for CSV/JSON export representing a task.
-    #
-    # Keeps the same keys used by the writer so rows can be dumped directly.
-    # Now includes both FQDN (host) and IP address (target_ip) for flexibility.
-    # Also stores computer_sid for efficient BloodHound lookups without LDAP.
-
-    # Determine credentials hint based on logon type
-    logon_type_raw = meta.get("logon_type")
-    logon_type = logon_type_raw.strip().lower() if logon_type_raw else ""
-    if logon_type == "password":
-        credentials_hint = "stored_credentials"
-    elif logon_type in ("interactive", "interactivetoken", "s4u"):
-        credentials_hint = "no_saved_credentials"
-    else:
-        credentials_hint = None
-
-    return {
-        "host": host,
-        "target_ip": target_ip,  # Store the original target (IP or hostname)
-        "computer_sid": computer_sid,  # Computer account SID from SMB (enables SID-based lookups)
-        "path": rel_path,
-        "type": "TASK",
-        "runas": meta.get("runas"),
-        "command": meta.get("command"),
-        "arguments": meta.get("arguments"),
-        "author": meta.get("author"),
-        "date": meta.get("date"),
-        "logon_type": meta.get("logon_type"),
-        "enabled": meta.get("enabled"),
-        "trigger_type": meta.get("trigger_type"),
-        "start_boundary": meta.get("start_boundary"),
-        "interval": meta.get("interval"),
-        "duration": meta.get("duration"),
-        "days_interval": meta.get("days_interval"),
-        "reason": None,
-        "credentials_hint": credentials_hint,
-        # Credential validation fields (populated when --validate-creds is used)
-        "cred_status": None,  # valid, valid_restricted, invalid, blocked, unknown
-        "cred_password_valid": None,  # True/False - key field for DPAPI feasibility
-        "cred_hijackable": None,  # True/False - can the task be hijacked?
-        "cred_last_run": None,  # datetime of last run
-        "cred_return_code": None,  # hex return code from last execution
-        "cred_detail": None,  # human-readable detail
-    }
-
 
 def process_target(
     target: str,
-    all_rows: List[Dict],
+    all_rows: List[TaskRow],
     *,
     auth: AuthContext,
     include_ms: bool = False,
@@ -536,12 +489,11 @@ def process_target(
                 # No LAPS password for this host - skip target
                 warn(laps_failure.message)
                 status(f"[Collecting] {target} [-] (No LAPS password)")
-                all_rows.append({
-                    "host": discovered_hostname,
-                    "target_ip": target,
-                    "type": "FAILURE",
-                    "reason": f"LAPS: {laps_failure.failure_type}"
-                })
+                all_rows.append(TaskRow.failure(
+                    discovered_hostname,
+                    f"LAPS: {laps_failure.failure_type}",
+                    target_ip=target,
+                ))
                 try:
                     smb.close()
                 except Exception:
@@ -574,12 +526,11 @@ def process_target(
                     laps_user_tried=laps_cred.username,
                     laps_type_tried=laps_cred.laps_type,
                 )
-                all_rows.append({
-                    "host": discovered_hostname,
-                    "target_ip": target,
-                    "type": "FAILURE",
-                    "reason": f"LAPS auth failed: {e}"
-                })
+                all_rows.append(TaskRow.failure(
+                    discovered_hostname,
+                    f"LAPS auth failed: {e}",
+                    target_ip=target,
+                ))
                 try:
                     smb.close()
                 except Exception:
@@ -655,11 +606,10 @@ def process_target(
             traceback.print_exc()
         msg = str(e)
         status(f"[Collecting] {target} [-] ({msg})")
-        all_rows.append({
-            "host": target,
-            "type": "FAILURE",
-            "reason": f"SMB connection failed: {msg}"
-        })
+        all_rows.append(TaskRow.failure(
+            target,
+            f"SMB connection failed: {msg}",
+        ))
         if "STATUS_MORE_PROCESSING_REQUIRED" in msg:
             warn(f"{target}: Kerberos auth failed (SPN not found?). Try using FQDNs or switch to NTLM (-k off).")
         else:
@@ -688,12 +638,11 @@ def process_target(
                 laps_user_tried=laps_cred.username if laps_cache else None,
                 laps_type_tried=laps_type_used,
             )
-            all_rows.append({
-                "host": discovered_hostname or target,
-                "target_ip": target,
-                "type": "FAILURE",
-                "reason": "Remote UAC (token filtered)"
-            })
+            all_rows.append(TaskRow.failure(
+                discovered_hostname or target,
+                "Remote UAC (token filtered)",
+                target_ip=target,
+            ))
             return out_lines, laps_failure
         else:
             warn(f"{target}: Local admin check failed")
@@ -709,22 +658,20 @@ def process_target(
         if debug:
             traceback.print_exc()
         status(f"[Collecting] {target} [-] (Access Denied)")
-        all_rows.append({
-            "host": target,
-            "type": "FAILURE",
-            "reason": "Access Denied (Failed to crawl tasks)"
-        })
+        all_rows.append(TaskRow.failure(
+            target,
+            "Access Denied (Failed to crawl tasks)",
+        ))
         warn(f"{target}: Failed to Crawl Tasks. Skipping... (Are you Local Admin?)")
         return out_lines, laps_result
     except Exception as e:
         if debug:
             traceback.print_exc()
         status(f"[Collecting] {target} [-] ({e})")
-        all_rows.append({
-            "host": target,
-            "type": "FAILURE",
-            "reason": f"Crawling failed: {e}"
-        })
+        all_rows.append(TaskRow.failure(
+            target,
+            f"Crawling failed: {e}",
+        ))
         warn(f"{target}: Unexpected error while crawling tasks: {e}")
         return out_lines, laps_result
 
@@ -902,7 +849,7 @@ def process_target(
         # Use resolved FQDN as host, keep original target as IP
         # This ensures BloodHound gets proper FQDNs even when connecting via IP
         hostname = server_fqdn if server_fqdn else target
-        row = _build_row(hostname, rel_path, meta, target_ip=target, computer_sid=server_sid)
+        row = TaskRow.from_meta(hostname, rel_path, meta, target_ip=target, computer_sid=server_sid)
 
         # Enrich row with credential validation data if available
         # Task paths need normalization: SMB uses "TaskName", RPC uses "\TaskName"
@@ -913,26 +860,26 @@ def process_target(
 
             task_run_info = cred_validation_results.get(rpc_path) or cred_validation_results.get(rpc_path_alt)
             if task_run_info:
-                row["cred_status"] = task_run_info.credential_status.value
-                row["cred_password_valid"] = task_run_info.password_valid
-                row["cred_hijackable"] = task_run_info.task_hijackable
-                row["cred_last_run"] = task_run_info.last_run.isoformat() if task_run_info.last_run else None
-                row["cred_return_code"] = f"0x{task_run_info.return_code:08X}" if task_run_info.return_code is not None else None
+                row.cred_status = task_run_info.credential_status.value
+                row.cred_password_valid = task_run_info.password_valid
+                row.cred_hijackable = task_run_info.task_hijackable
+                row.cred_last_run = task_run_info.last_run.isoformat() if task_run_info.last_run else None
+                row.cred_return_code = f"0x{task_run_info.return_code:08X}" if task_run_info.return_code is not None else None
                 # Build human-readable detail
                 if task_run_info.password_valid:
                     if task_run_info.task_hijackable:
-                        row["cred_detail"] = "Password VALID - task can be hijacked"
+                        row.cred_detail = "Password VALID - task can be hijacked"
                     else:
-                        row["cred_detail"] = f"Password VALID but restricted ({task_run_info.credential_status.value})"
+                        row.cred_detail = f"Password VALID but restricted ({task_run_info.credential_status.value})"
                 elif task_run_info.credential_status == CredentialStatus.INVALID:
-                    row["cred_detail"] = "Password INVALID - DPAPI dump not viable"
+                    row.cred_detail = "Password INVALID - DPAPI dump not viable"
                 elif task_run_info.credential_status == CredentialStatus.BLOCKED:
-                    row["cred_detail"] = "Account blocked/expired - DPAPI dump not viable"
+                    row.cred_detail = "Account blocked/expired - DPAPI dump not viable"
                 else:
-                    row["cred_detail"] = f"Unknown status (code: {row['cred_return_code']})"
+                    row.cred_detail = f"Unknown status (code: {row.cred_return_code})"
 
         # Add Credential Guard status to each row
-        row["credential_guard"] = credguard_status
+        row.credential_guard = credguard_status
         # Determine if the task stores credentials or runs with token/S4U (no saved credentials)
         logon_type = (meta.get("logon_type") or "").strip()
         no_saved_creds = (not logon_type) or logon_type.lower() in (
@@ -941,9 +888,9 @@ def process_target(
             "interactivetokenorpassword",
         )
         if no_saved_creds:
-            row["credentials_hint"] = "no_saved_credentials"
+            row.credentials_hint = "no_saved_credentials"
         elif logon_type.lower() == "password":
-            row["credentials_hint"] = "stored_credentials"
+            row.credentials_hint = "stored_credentials"
 
         # Use shared classification logic
         result = classify_task(
@@ -989,7 +936,7 @@ def process_target(
                     meta=meta,
                     decrypted_creds=decrypted_creds,
                     concise=concise,
-                    cred_validation=row if row.get("cred_status") else None,
+                    cred_validation=row.to_dict() if row.cred_status else None,
                 )
             )
             priv_count += 1
@@ -1022,7 +969,7 @@ def process_target(
                     meta=meta,
                     decrypted_creds=decrypted_creds,
                     concise=concise,
-                    cred_validation=row if row.get("cred_status") else None,
+                    cred_validation=row.to_dict() if row.cred_status else None,
                 )
             )
 

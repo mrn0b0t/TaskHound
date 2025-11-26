@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 from taskhound.auth import AuthContext
 from taskhound.engine import process_target
+from taskhound.models.task import TaskType
 from taskhound.output.summary import print_summary_table
 
 
@@ -31,9 +32,9 @@ class TestCrawlFailure:
 
         # Verify all_rows contains the failure (host should NOT disappear now)
         assert len(all_rows) == 1
-        assert all_rows[0]["host"] == target
-        assert all_rows[0]["type"] == "FAILURE"
-        assert "Access Denied" in all_rows[0]["reason"]
+        assert all_rows[0].host == target
+        assert all_rows[0].type == TaskType.FAILURE.value
+        assert "Access Denied" in all_rows[0].reason
 
         # Verify summary table SHOWS the host
         captured_output = io.StringIO()
