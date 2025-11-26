@@ -160,7 +160,7 @@ def upload_opengraph_to_bloodhound(
     api_key_id: Optional[str] = None,
     set_icon: bool = False,
     force_icon: bool = False,
-    icon_name: str = "heart",
+    icon_name: str = "clock",
     icon_color: str = "#8B5CF6",
 ) -> bool:
     """
@@ -276,7 +276,7 @@ def _wait_for_job_completion(
                         2: "completed",  # success/completed
                         3: "failed",
                         4: "canceled",
-                        5: "timeout",
+                        5: "failed",  # timeout/all files failed
                         6: "ingesting",  # Still processing
                         7: "analyzing",  # Still processing
                     }
@@ -301,8 +301,9 @@ def _wait_for_job_completion(
                                     warn(f"  Error: {error}")
                             return False
 
-                    elif status_name in ["failed", "error"] or job_status == 3:
-                        error_msg = job.get("error", "Unknown error")
+                    elif status_name in ["failed", "error"] or job_status in [3, 4, 5]:
+                        # Status 3 = failed, 4 = canceled, 5 = timeout/all files failed
+                        error_msg = job.get("status_message", job.get("error", "Unknown error"))
                         warn(f"Job {job_id} failed: {error_msg}")
                         return False
 

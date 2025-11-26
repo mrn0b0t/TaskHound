@@ -333,7 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Force icon update even if ScheduledTask icon already exists (requires --bh-set-icon)",
     )
     bhog.add_argument(
-        "--bh-icon", default="heart", help="Font Awesome icon name for ScheduledTask nodes (default: heart)"
+        "--bh-icon", default="clock", help="Font Awesome icon name for ScheduledTask nodes (default: clock)"
     )
     bhog.add_argument(
         "--bh-color",

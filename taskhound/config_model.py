@@ -31,7 +31,7 @@ class BloodHoundConfig:
     # Icon configuration
     bh_set_icon: bool = False
     bh_force_icon: bool = False
-    bh_icon: str = "heart"
+    bh_icon: str = "clock"
     bh_color: str = "#8B5CF6"
 
     # Live connection (legacy)
