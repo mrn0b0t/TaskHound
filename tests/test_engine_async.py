@@ -259,3 +259,202 @@ class TestAggregateResults:
         all_rows, _, _ = aggregate_results(results)
         
         assert len(all_rows) == 2
+
+
+class TestCacheThreadSafety:
+    """Tests for thread-safe cache access during parallel processing."""
+    
+    def test_concurrent_cache_writes(self):
+        """Test that multiple threads can write to cache simultaneously."""
+        from taskhound.utils.cache_manager import CacheManager
+        
+        cache = CacheManager(ttl_hours=1, enabled=True, cache_file=None)
+        errors = []
+        write_count = 0
+        lock = threading.Lock()
+        
+        def writer_thread(thread_id):
+            nonlocal write_count
+            try:
+                for i in range(100):
+                    key = f"key_{i}"
+                    cache.set(f"thread_{thread_id}", key, f"value_{i}")
+                    # Also read to simulate real usage
+                    cache.get(f"thread_{thread_id}", key)
+                with lock:
+                    write_count += 100
+            except Exception as e:
+                with lock:
+                    errors.append(f"Thread {thread_id}: {e}")
+        
+        threads = [threading.Thread(target=writer_thread, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        
+        assert errors == [], f"Errors during concurrent writes: {errors}"
+        assert write_count == 1000
+    
+    def test_concurrent_cache_reads(self):
+        """Test that multiple threads can read from cache simultaneously."""
+        from taskhound.utils.cache_manager import CacheManager
+        
+        cache = CacheManager(ttl_hours=1, enabled=True, cache_file=None)
+        
+        # Pre-populate cache
+        for i in range(100):
+            cache.set("shared", f"key_{i}", f"value_{i}")
+        
+        read_values = []
+        lock = threading.Lock()
+        
+        def reader_thread(thread_id):
+            local_values = []
+            for i in range(100):
+                val = cache.get("shared", f"key_{i}")
+                if val:
+                    local_values.append(val)
+            with lock:
+                read_values.extend(local_values)
+        
+        threads = [threading.Thread(target=reader_thread, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        
+        # Each thread should read all 100 values
+        assert len(read_values) == 1000
+    
+    def test_cache_with_async_engine(self):
+        """Test cache access from within async engine workers."""
+        from taskhound.utils.cache_manager import CacheManager
+        
+        cache = CacheManager(ttl_hours=1, enabled=True, cache_file=None)
+        
+        def process_with_cache(target, all_rows, **kwargs):
+            # Simulate SID resolution caching
+            cached = cache.get("sids", target)
+            if not cached:
+                # Simulate LDAP lookup
+                time.sleep(0.01)
+                cache.set("sids", target, f"S-1-5-21-{target}")
+            
+            all_rows.append({"host": target, "sid": cache.get("sids", target)})
+            return [f"Processed {target}"], None
+        
+        config = AsyncConfig(workers=5, show_progress=False)
+        engine = AsyncTaskHound(config)
+        
+        targets = [f"host{i}" for i in range(20)]
+        results = engine.run(targets, process_with_cache)
+        
+        assert len(results) == 20
+        assert all(r.success for r in results)
+        
+        # Verify all SIDs were cached
+        for i in range(20):
+            assert cache.get("sids", f"host{i}") is not None
+
+
+class TestRealisticScenarios:
+    """Tests simulating real-world scanning scenarios."""
+    
+    def test_mixed_success_and_timeout(self):
+        """Simulate some hosts timing out while others succeed."""
+        def flaky_process(target, all_rows, **kwargs):
+            if "timeout" in target:
+                time.sleep(0.5)  # Simulate slow host
+                raise Exception("Connection timeout")
+            all_rows.append({"host": target, "type": "TASK"})
+            return [f"OK: {target}"], None
+        
+        config = AsyncConfig(workers=3, show_progress=False)
+        engine = AsyncTaskHound(config)
+        
+        targets = ["host1", "host2_timeout", "host3", "host4_timeout", "host5"]
+        results = engine.run(targets, flaky_process)
+        
+        assert len(results) == 5
+        successes = [r for r in results if r.success]
+        failures = [r for r in results if not r.success]
+        
+        assert len(successes) == 3
+        assert len(failures) == 2
+        assert all("timeout" in r.target for r in failures)
+    
+    def test_laps_results_aggregation(self):
+        """Test LAPS success/failure tracking across parallel workers."""
+        def laps_process(target, all_rows, **kwargs):
+            if "nolaps" in target:
+                failure = LAPSFailure(
+                    hostname=target,
+                    failure_type="no_password",
+                    message="No LAPS password found",
+                )
+                return [], failure
+            all_rows.append({"host": target})
+            return [f"LAPS OK: {target}"], True  # True = LAPS success
+        
+        config = AsyncConfig(workers=4, show_progress=False)
+        engine = AsyncTaskHound(config)
+        
+        targets = ["host1", "host2_nolaps", "host3", "host4_nolaps", "host5"]
+        results = engine.run(targets, laps_process)
+        
+        all_rows, laps_failures, laps_successes = aggregate_results(results)
+        
+        assert laps_successes == 3
+        assert len(laps_failures) == 2
+        assert all("nolaps" in f.hostname for f in laps_failures)
+    
+    def test_high_volume_parallel(self):
+        """Test processing many targets in parallel."""
+        processed = []
+        lock = threading.Lock()
+        
+        def fast_process(target, all_rows, **kwargs):
+            time.sleep(0.01)  # Small delay
+            with lock:
+                processed.append(target)
+            all_rows.append({"host": target})
+            return [target], None
+        
+        config = AsyncConfig(workers=20, show_progress=False)
+        engine = AsyncTaskHound(config)
+        
+        targets = [f"host{i:03d}" for i in range(100)]
+        
+        start = time.perf_counter()
+        results = engine.run(targets, fast_process)
+        elapsed = time.perf_counter() - start
+        
+        assert len(results) == 100
+        assert all(r.success for r in results)
+        assert set(processed) == set(targets)
+        
+        # 100 targets at 0.01s each with 20 workers should be ~0.05s
+        # Allow generous margin for thread overhead
+        assert elapsed < 1.0, f"High volume took too long: {elapsed}s"
+    
+    def test_rate_limit_accuracy(self):
+        """Test that rate limiting is approximately accurate."""
+        config = AsyncConfig(workers=10, rate_limit=10.0, show_progress=False)  # 10/sec
+        engine = AsyncTaskHound(config)
+        
+        targets = [f"host{i}" for i in range(10)]
+        
+        start = time.perf_counter()
+        results = engine.run(
+            targets,
+            mock_process_target,
+            delay=0.001,  # Near-instant processing
+        )
+        elapsed = time.perf_counter() - start
+        
+        assert len(results) == 10
+        # 10 targets at 10/sec should take ~0.9s (first one is immediate)
+        # Allow some variance
+        assert elapsed >= 0.7, f"Rate limiting too fast: {elapsed}s"
+        assert elapsed < 2.0, f"Rate limiting too slow: {elapsed}s"
