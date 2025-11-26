@@ -1,0 +1,351 @@
+# Offline processing for previously collected task XML files.
+#
+# This module handles processing of XML files from a directory structure
+# created by the --backup option, allowing offline analysis without
+# network access to the target hosts.
+
+import os
+import traceback
+from typing import List, Optional
+
+from ..classification import classify_task
+from ..models.task import TaskRow
+from ..output.printer import format_block
+from ..parsers.highvalue import HighValueLoader
+from ..parsers.task_xml import parse_task_xml
+from ..utils.logging import good, info, warn
+from .helpers import sort_tasks_by_priority
+
+
+def process_offline_directory(
+    offline_dir: str,
+    hv: Optional[HighValueLoader],
+    show_unsaved_creds: bool,
+    include_local: bool,
+    all_rows: List[TaskRow],
+    debug: bool,
+    no_ldap: bool = False,
+    dpapi_key: Optional[str] = None,
+    concise: bool = False,
+) -> List[str]:
+    """
+    Process previously collected XML files from a directory structure.
+
+    Expected directory structure:
+        offline_dir/
+        ├── hostname1/
+        │   └── Windows/System32/Tasks/...
+        └── hostname2/
+            └── Windows/System32/Tasks/...
+
+    Args:
+        offline_dir: Path to the offline directory containing host subdirectories
+        hv: HighValueLoader for privilege detection
+        show_unsaved_creds: Show tasks without saved credentials
+        include_local: Include local system account tasks
+        all_rows: List to append result rows to
+        debug: Enable debug output
+        no_ldap: Disable LDAP SID resolution
+        dpapi_key: DPAPI key for decryption
+        concise: Use concise output format
+
+    Returns:
+        List of printable output strings
+    """
+    out_lines: List[str] = []
+
+    if not os.path.exists(offline_dir) or not os.path.isdir(offline_dir):
+        warn(f"Offline directory does not exist or is not a directory: {offline_dir}")
+        return out_lines
+
+    # Check if offline_dir itself is a dpapi_loot structure (for direct decryption)
+    has_masterkeys = os.path.exists(os.path.join(offline_dir, "masterkeys"))
+    has_credentials = os.path.exists(os.path.join(offline_dir, "credentials"))
+
+    if has_masterkeys and has_credentials and dpapi_key:
+        # This is a direct dpapi_loot directory, process it directly
+        hostname = os.path.basename(offline_dir)
+        info(f"Detected DPAPI loot directory structure for {hostname}")
+        dpapi_lines = _process_offline_dpapi_decryption(hostname, offline_dir, dpapi_key, debug)
+        out_lines.extend(dpapi_lines)
+
+        # Also process any XML files in this directory
+        lines = _process_offline_host(
+            hostname, offline_dir, hv, show_unsaved_creds, include_local, all_rows, debug, no_ldap, concise
+        )
+        out_lines.extend(lines)
+        return out_lines
+
+    # Look for host directories (subdirectories of offline_dir)
+    try:
+        host_dirs = [
+            d for d in os.listdir(offline_dir) if os.path.isdir(os.path.join(offline_dir, d)) and not d.startswith(".")
+        ]
+    except Exception as e:
+        warn(f"Failed to list offline directory {offline_dir}: {e}")
+        return out_lines
+
+    if not host_dirs:
+        warn(f"No host directories found in offline directory: {offline_dir}")
+        return out_lines
+
+    total_hosts = len(host_dirs)
+    good(f"Offline mode: Found {total_hosts} host directories to process")
+
+    # If dpapi_key provided, decrypt collected DPAPI files first
+    if dpapi_key:
+        info("DPAPI key provided - will decrypt collected credential files")
+        for host in host_dirs:
+            host_path = os.path.join(offline_dir, host)
+            dpapi_lines = _process_offline_dpapi_decryption(host, host_path, dpapi_key, debug)
+            out_lines.extend(dpapi_lines)
+
+    # Process task XML files
+    for host_dir in host_dirs:
+        host_path = os.path.join(offline_dir, host_dir)
+        lines = _process_offline_host(
+            host_dir, host_path, hv, show_unsaved_creds, include_local, all_rows, debug, no_ldap, concise
+        )
+        out_lines.extend(lines)
+
+    return out_lines
+
+
+def _process_offline_dpapi_decryption(hostname: str, host_dir: str, dpapi_key: str, debug: bool) -> List[str]:
+    """
+    Process DPAPI files from offline collection.
+
+    Checks multiple directory structures for DPAPI loot:
+    1. Direct dpapi_loot structure (host_dir/masterkeys/)
+    2. Combined --backup --loot structure (host_dir/dpapi_loot/)
+    3. Legacy structure (host_dir/dpapi_loot/hostname/)
+
+    Args:
+        hostname: The hostname being processed
+        host_dir: Path to the host's directory
+        dpapi_key: DPAPI SYSTEM userkey for decryption
+        debug: Enable debug output
+
+    Returns:
+        List of printable output strings with decrypted credentials
+    """
+    out_lines: List[str] = []
+
+    # Check if this directory has dpapi_loot structure
+    # Priority order:
+    # 1. Check if current directory has masterkeys/ (direct dpapi_loot structure)
+    # 2. Check for dpapi_loot/ subdirectory (--backup --loot combined structure)
+    # 3. Check for dpapi_loot/hostname subdirectory (legacy structure)
+
+    dpapi_loot_dir = None
+
+    if os.path.exists(os.path.join(host_dir, "masterkeys")):
+        # Direct dpapi_loot structure
+        dpapi_loot_dir = host_dir
+    elif os.path.exists(os.path.join(host_dir, "dpapi_loot", "masterkeys")):
+        # Combined --backup --loot structure: backup_dir/hostname/dpapi_loot/
+        dpapi_loot_dir = os.path.join(host_dir, "dpapi_loot")
+    elif os.path.exists(os.path.join(host_dir, "dpapi_loot", hostname, "masterkeys")):
+        # Legacy structure: dpapi_loot/hostname/
+        dpapi_loot_dir = os.path.join(host_dir, "dpapi_loot", hostname)
+
+    if not dpapi_loot_dir:
+        # No DPAPI files found for this host
+        return out_lines
+
+    try:
+        from ..dpapi.looter import decrypt_offline_dpapi_files
+
+        info(f"{hostname}: Decrypting DPAPI files from offline collection...")
+        decrypted_creds = decrypt_offline_dpapi_files(dpapi_loot_dir, dpapi_key)
+
+        if decrypted_creds:
+            good(f"{hostname}: Successfully decrypted {len(decrypted_creds)} Task Scheduler credentials!")
+            out_lines.append("")
+            out_lines.append(f"{'=' * 80}")
+            out_lines.append(f"DECRYPTED CREDENTIALS FROM OFFLINE DPAPI FILES - {hostname}")
+            out_lines.append(f"{'=' * 80}")
+            out_lines.append("")
+            out_lines.append("NOTE: Task GUIDs from credential TargetName field:")
+            out_lines.append("      Domain:batch=TaskScheduler:Task:{GUID}")
+            out_lines.append("      If task is deleted, credential blob persists (orphaned credential)")
+            out_lines.append("")
+
+            for cred in decrypted_creds:
+                out_lines.append("")
+                out_lines.append(f"Task Name    : {cred.task_name or '(Unknown - see Task GUID)'}")
+                out_lines.append(f"Task GUID    : {cred.target}")
+                out_lines.append(f"Username     : {cred.username}")
+                out_lines.append(f"Password     : {cred.password}")
+                out_lines.append(f"Blob File    : {cred.blob_path}")
+                out_lines.append(f"{'-' * 80}")
+
+            out_lines.append(f"{'=' * 80}")
+            out_lines.append("")
+        else:
+            info(f"{hostname}: No credentials decrypted from offline files")
+
+    except Exception as e:
+        warn(f"{hostname}: Failed to decrypt offline DPAPI files: {e}")
+        if debug:
+            traceback.print_exc()
+
+    return out_lines
+
+
+def _process_offline_host(
+    hostname: str,
+    host_dir: str,
+    hv: Optional[HighValueLoader],
+    show_unsaved_creds: bool,
+    include_local: bool,
+    all_rows: List[TaskRow],
+    debug: bool,
+    no_ldap: bool = False,
+    concise: bool = False,
+) -> List[str]:
+    """
+    Process XML files for a single host from offline directory.
+
+    Args:
+        hostname: The hostname being processed
+        host_dir: Path to the host's directory
+        hv: HighValueLoader for privilege detection
+        show_unsaved_creds: Show tasks without saved credentials
+        include_local: Include local system account tasks
+        all_rows: List to append result rows to
+        debug: Enable debug output
+        no_ldap: Disable LDAP SID resolution
+        concise: Use concise output format
+
+    Returns:
+        List of printable output strings
+    """
+    out_lines: List[str] = []
+    xml_files = []
+
+    # Walk the host directory to find all XML files
+    for root, _, files in os.walk(host_dir):
+        for file in files:
+            # Skip system files that start with dot
+            if file.startswith("."):
+                continue
+
+            file_path = os.path.join(root, file)
+            # Convert absolute path back to relative path from host directory
+            rel_path = os.path.relpath(file_path, host_dir)
+            # Convert to Windows-style path for consistency with online mode
+            rel_path = rel_path.replace(os.sep, "\\")
+            xml_files.append((rel_path, file_path))
+
+    if not xml_files:
+        warn(f"{hostname}: No XML files found in offline directory")
+        return out_lines
+
+    good(f"{hostname}: Processing {len(xml_files)} XML files from offline directory")
+
+    priv_count = 0
+    priv_lines: List[str] = []
+    task_lines: List[str] = []
+
+    for rel_path, file_path in xml_files:
+        try:
+            with open(file_path, "rb") as f:
+                xml_bytes = f.read()
+        except Exception as e:
+            if debug:
+                warn(f"{hostname}: Failed to read {file_path}: {e}")
+            continue
+
+        meta = parse_task_xml(xml_bytes)
+        runas = meta.get("runas")
+        if not runas:
+            # If we can't determine who the task runs as, skip it for now
+            continue
+
+        what = meta.get("command") or ""
+        if meta.get("arguments"):
+            what = f"{what} {meta.get('arguments')}"
+
+        # For offline processing, target_ip is not applicable (already offline)
+        row = TaskRow.from_meta(hostname, rel_path, meta, target_ip=None)
+
+        # Determine if the task stores credentials or runs with token/S4U (no saved credentials)
+        logon_type = (meta.get("logon_type") or "").strip()
+        no_saved_creds = (not logon_type) or logon_type.lower() in (
+            "interactivetoken",
+            "s4u",
+            "interactivetokenorpassword",
+        )
+        if no_saved_creds:
+            row.credentials_hint = "no_saved_credentials"
+
+        # Use shared classification logic
+        result = classify_task(
+            row=row,
+            meta=meta,
+            runas=runas,
+            rel_path=rel_path,
+            hv=hv,
+            show_unsaved_creds=show_unsaved_creds,
+            include_local=include_local,
+        )
+
+        if not result.should_include:
+            continue
+
+        # Format output block based on classification
+        if result.task_type in ("TIER-0", "PRIV"):
+            priv_lines.extend(
+                format_block(
+                    result.task_type,
+                    rel_path,
+                    runas,
+                    what,
+                    meta.get("author"),
+                    meta.get("date"),
+                    extra_reason=result.reason,
+                    password_analysis=result.password_analysis,
+                    hv=hv,
+                    no_ldap=no_ldap,
+                    dc_ip=None,
+                    enabled=meta.get("enabled"),
+                    ldap_domain=None,
+                    ldap_user=None,
+                    ldap_password=None,
+                    meta=meta,
+                    concise=concise,
+                )
+            )
+            priv_count += 1
+        else:
+            # Regular TASK
+            task_lines.extend(
+                format_block(
+                    "TASK",
+                    rel_path,
+                    runas,
+                    what,
+                    meta.get("author"),
+                    meta.get("date"),
+                    password_analysis=result.password_analysis,
+                    hv=hv,
+                    no_ldap=no_ldap,
+                    dc_ip=None,
+                    enabled=meta.get("enabled"),
+                    ldap_domain=None,
+                    ldap_user=None,
+                    ldap_password=None,
+                    meta=meta,
+                    concise=concise,
+                )
+            )
+
+        all_rows.append(row)
+
+    lines = priv_lines + task_lines
+    # Sort tasks by priority: TIER-0 > PRIV > TASK
+    sorted_lines = sort_tasks_by_priority(lines)
+    total = len(xml_files)
+    good(f"{hostname}: Found {total} tasks, privileged {priv_count if (hv and hv.loaded) else 'N/A'}")
+    return sorted_lines

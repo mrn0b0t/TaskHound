@@ -21,8 +21,8 @@ class TestLoggingOutput(unittest.TestCase):
     def tearDown(self):
         sys.stdout = sys.__stdout__
 
-    @patch("taskhound.engine.smb_connect")
-    @patch("taskhound.engine.crawl_tasks")
+    @patch("taskhound.engine.online.smb_connect")
+    @patch("taskhound.engine.online.crawl_tasks")
     def test_concise_output_success(self, mock_crawl, mock_connect):
         # Mock success
         mock_connect.return_value = MagicMock()
@@ -39,7 +39,7 @@ class TestLoggingOutput(unittest.TestCase):
         # Should NOT contain verbose logs
         self.assertNotIn("Connected via SMB", output)
 
-    @patch("taskhound.engine.smb_connect")
+    @patch("taskhound.engine.online.smb_connect")
     def test_concise_output_failure(self, mock_connect):
         # Mock failure
         mock_connect.side_effect = Exception("Connection failed")

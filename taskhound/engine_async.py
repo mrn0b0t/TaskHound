@@ -29,6 +29,7 @@ from rich.progress import (
 )
 
 from .laps import LAPSFailure
+from .models.task import TaskRow
 from .utils.console import (
     console,
     good,
@@ -71,7 +72,7 @@ class TargetResult:
     lines: List[str] = field(default_factory=list)
     """Output lines from processing."""
 
-    rows: List[Dict[str, Any]] = field(default_factory=list)
+    rows: List[TaskRow] = field(default_factory=list)
     """Structured data rows for export."""
 
     laps_result: Optional[Union[bool, LAPSFailure]] = None
@@ -87,11 +88,11 @@ class TargetResult:
 class AsyncTaskHound:
     """
     Parallel task scanner using ThreadPoolExecutor.
-    
+
     Usage:
         async_engine = AsyncTaskHound(config=AsyncConfig(workers=20))
         results = async_engine.run(targets, process_fn, **kwargs)
-        
+
     The process_fn should have the signature:
         def process_fn(target: str, all_rows: List[Dict], **kwargs) -> Tuple[List[str], Optional[LAPSResult]]
     """
@@ -99,7 +100,7 @@ class AsyncTaskHound:
     def __init__(self, config: Optional[AsyncConfig] = None):
         """
         Initialize async engine.
-        
+
         Args:
             config: Async configuration. Uses defaults if not provided.
         """
@@ -160,12 +161,12 @@ class AsyncTaskHound:
     ) -> TargetResult:
         """
         Process a single target with rate limiting and error handling.
-        
+
         Args:
             target: Target to process
             process_fn: Function to call for processing
             kwargs: Keyword arguments to pass to process_fn
-            
+
         Returns:
             TargetResult with processing outcome
         """
@@ -187,9 +188,9 @@ class AsyncTaskHound:
             )
 
             # Check if processing actually succeeded by looking at rows
-            # process_target adds {"type": "FAILURE"} rows on connection errors
+            # process_target adds TaskRow.failure() rows on connection errors
             has_failure = any(
-                row.get("type") == "FAILURE"
+                row.type == "FAILURE"
                 for row in target_rows
             )
 
@@ -206,8 +207,8 @@ class AsyncTaskHound:
             if has_failure:
                 # Extract error reason from failure row
                 for row in target_rows:
-                    if row.get("type") == "FAILURE":
-                        result.error = row.get("reason", "Unknown failure")
+                    if row.type == "FAILURE":
+                        result.error = row.reason or "Unknown failure"
                         break
 
         except Exception as e:
@@ -229,8 +230,6 @@ class AsyncTaskHound:
                 self._succeeded += 1
             else:
                 self._failed += 1
-            completed = self._completed
-            total = self._total
 
         # Update Rich progress bar
         if self._progress and self._task_id is not None:
@@ -238,8 +237,8 @@ class AsyncTaskHound:
             if result.skipped:
                 status_text = f"[yellow]⊘[/] {target} [dim](skipped)[/]"
             elif result.success:
-                task_count = len([r for r in result.rows if r.get("type") not in ("FAILURE", None)])
-                priv_count = len([r for r in result.rows if r.get("type") in ("TIER-0", "PRIV")])
+                task_count = len([r for r in result.rows if r.type not in ("FAILURE", None)])
+                len([r for r in result.rows if r.type in ("TIER-0", "PRIV")])
                 status_text = f"[green]✓[/] {target} ({task_count} tasks)"
             else:
                 error_short = (result.error or "Error")[:30]
@@ -257,13 +256,13 @@ class AsyncTaskHound:
     ) -> List[TargetResult]:
         """
         Process multiple targets in parallel.
-        
+
         Args:
             targets: List of target IPs or hostnames
             process_fn: Function to process each target. Should have signature:
                         process_fn(target, all_rows, **kwargs) -> (lines, laps_result)
             **kwargs: Additional arguments passed to process_fn
-            
+
         Returns:
             List of TargetResult objects in completion order
         """
@@ -351,7 +350,7 @@ class AsyncTaskHound:
     ) -> List[TargetResult]:
         """
         Run targets sequentially (--threads 1 mode).
-        
+
         Behaves identically to the original non-async engine but with Rich progress.
         """
         self._total = len(targets)
@@ -396,7 +395,7 @@ class AsyncTaskHound:
 
                     # Check for failure rows
                     has_failure = any(
-                        row.get("type") == "FAILURE"
+                        row.type == "FAILURE"
                         for row in target_rows
                     )
 
@@ -411,8 +410,8 @@ class AsyncTaskHound:
 
                     if has_failure:
                         for row in target_rows:
-                            if row.get("type") == "FAILURE":
-                                result.error = row.get("reason", "Unknown failure")
+                            if row.type == "FAILURE":
+                                result.error = row.reason or "Unknown failure"
                                 break
 
                 except Exception as e:
@@ -429,7 +428,7 @@ class AsyncTaskHound:
                     status_text = f"[yellow]⊘[/] {target} [dim](skipped)[/]"
                 elif result.success:
                     self._succeeded += 1
-                    task_count = len([r for r in result.rows if r.get("type") not in ("FAILURE", None)])
+                    task_count = len([r for r in result.rows if r.type not in ("FAILURE", None)])
                     status_text = f"[green]✓[/] {target} ({task_count} tasks)"
                 else:
                     self._failed += 1
@@ -448,7 +447,7 @@ class AsyncTaskHound:
     def print_results_threadsafe(self, lines: List[str], print_fn: Callable[[List[str]], None]) -> None:
         """
         Print results with output lock to prevent interleaving.
-        
+
         Args:
             lines: Lines to print
             print_fn: Function to print lines (typically print_results from cli.py)
@@ -460,10 +459,10 @@ class AsyncTaskHound:
 def aggregate_results(results: List[TargetResult]) -> Tuple[List[Dict[str, Any]], List[LAPSFailure], int]:
     """
     Aggregate results from parallel processing.
-    
+
     Args:
         results: List of TargetResult objects
-        
+
     Returns:
         Tuple of (all_rows, laps_failures, laps_successes)
     """
@@ -491,7 +490,7 @@ def print_summary(
 ) -> None:
     """
     Print summary statistics after parallel processing.
-    
+
     Args:
         results: List of TargetResult objects
         laps_failures: List of LAPS failures

@@ -137,7 +137,7 @@ def classify_task(
                 password_analysis = _analyze_password_age(hv, runas, meta, rel_path)
 
             # Update row in place
-            row.task_type = TaskType.TIER0
+            row.type = TaskType.TIER0.value
             row.reason = reason
             row.password_analysis = password_analysis
 
@@ -159,7 +159,7 @@ def classify_task(
                 password_analysis = _analyze_password_age(hv, runas, meta, rel_path)
 
             # Update row in place
-            row.task_type = TaskType.PRIV
+            row.type = TaskType.PRIV.value
             row.reason = reason
             row.password_analysis = password_analysis
 

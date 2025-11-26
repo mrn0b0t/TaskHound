@@ -6,17 +6,18 @@ Contains logic for generating and writing OpenGraph files (nodes and edges).
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 from bhopengraph import Node, OpenGraph, Properties
 
+from ..models.task import TaskRow
 from ..utils.logging import debug, error, info, status, warn
 from .builder import _create_principal_id, _create_relationship_edges, _create_task_node, resolve_object_ids_chunked
 
 
 def generate_opengraph_files(
     output_dir: str,
-    tasks: List[Dict],
+    tasks: List[Union[Dict, TaskRow]],
     bh_connector=None,
     ldap_config: Optional[Dict] = None,
     allow_orphans: bool = False,
@@ -39,8 +40,16 @@ def generate_opengraph_files(
     :param allow_orphans: If True, create edges even when nodes are missing from BloodHound
     :param computer_sids: Optional mapping of FQDN→SID from SMB connections (preferred!)
     """
+    # Convert TaskRow objects to dicts if needed
+    task_dicts: List[Dict[str, Any]] = []
+    for t in tasks:
+        if isinstance(t, TaskRow):
+            task_dicts.append(t.to_dict())
+        else:
+            task_dicts.append(t)
+
     # Filter out failure rows (e.g. failed SMB connections)
-    valid_tasks = [t for t in tasks if t.get("type") != "FAILURE"]
+    valid_tasks = [t for t in task_dicts if t.get("type") != "FAILURE"]
 
     info(f"Generating OpenGraph data for {len(valid_tasks)} tasks...")
 

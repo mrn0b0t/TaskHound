@@ -10,7 +10,7 @@ from taskhound.output.summary import print_summary_table
 
 class TestCrawlFailure:
 
-    @patch("taskhound.engine.smb_connect")
+    @patch("taskhound.engine.online.smb_connect")
     def test_crawl_failure_silent_disappearance(self, mock_smb):
         # Mock smb_connect to return a mock SMB object
         mock_conn = Mock()

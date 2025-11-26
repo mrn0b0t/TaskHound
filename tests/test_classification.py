@@ -123,7 +123,7 @@ class TestClassifyTask:
         assert result.reason == "Domain Admin member"
         assert result.password_analysis == "Password old"
         assert result.should_include is True
-        assert row.task_type == TaskType.TIER0
+        assert row.type == TaskType.TIER0.value
 
     def test_tier0_without_saved_credentials(self):
         """Should note when TIER-0 task has no saved credentials."""
@@ -182,7 +182,7 @@ class TestClassifyTask:
         assert result.task_type == "PRIV"
         assert "High Value match" in result.reason
         assert result.should_include is True
-        assert row.task_type == TaskType.PRIV
+        assert row.type == TaskType.PRIV.value
 
     @patch("taskhound.utils.sid_resolver.looks_like_domain_user")
     def test_regular_task_domain_user(self, mock_looks_like):

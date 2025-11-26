@@ -2,7 +2,7 @@
 
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from taskhound.engine_async import (
     AsyncConfig,
@@ -11,12 +11,13 @@ from taskhound.engine_async import (
     aggregate_results,
 )
 from taskhound.laps import LAPSFailure
+from taskhound.models.task import TaskRow
 
 
 # Mock process function that simulates target processing
 def mock_process_target(
     target: str,
-    all_rows: List[Dict[str, Any]],
+    all_rows: List[TaskRow],
     delay: float = 0.1,
     should_fail: bool = False,
     **kwargs,
@@ -27,11 +28,11 @@ def mock_process_target(
 
     time.sleep(delay)  # Simulate network I/O
 
-    all_rows.append({
-        "host": target,
-        "type": "TASK",
-        "task_path": f"\\Tasks\\{target}_task",
-    })
+    all_rows.append(TaskRow(
+        host=target,
+        type="TASK",
+        path=f"\\Tasks\\{target}_task",
+    ))
 
     lines = [f"[TASK] {target}: Found 1 task"]
     return lines, None
@@ -186,7 +187,7 @@ class TestAsyncTaskHound:
         # Each result should have exactly 1 row
         for result in results:
             assert len(result.rows) == 1
-            assert result.rows[0]["host"] == result.target
+            assert result.rows[0].host == result.target
 
     def test_thread_safety_of_output_lock(self):
         """Test that output lock prevents interleaving."""
@@ -338,7 +339,7 @@ class TestCacheThreadSafety:
                 time.sleep(0.01)
                 cache.set("sids", target, f"S-1-5-21-{target}")
 
-            all_rows.append({"host": target, "sid": cache.get("sids", target)})
+            all_rows.append(TaskRow(host=target, path=f"\\Tasks\\{target}", computer_sid=cache.get("sids", target)))
             return [f"Processed {target}"], None
 
         config = AsyncConfig(workers=5, show_progress=False)
@@ -364,7 +365,7 @@ class TestRealisticScenarios:
             if "timeout" in target:
                 time.sleep(0.5)  # Simulate slow host
                 raise Exception("Connection timeout")
-            all_rows.append({"host": target, "type": "TASK"})
+            all_rows.append(TaskRow(host=target, path=f"\\Tasks\\{target}", type="TASK"))
             return [f"OK: {target}"], None
 
         config = AsyncConfig(workers=3, show_progress=False)
@@ -391,7 +392,7 @@ class TestRealisticScenarios:
                     message="No LAPS password found",
                 )
                 return [], failure
-            all_rows.append({"host": target})
+            all_rows.append(TaskRow(host=target, path=f"\\Tasks\\{target}"))
             return [f"LAPS OK: {target}"], True  # True = LAPS success
 
         config = AsyncConfig(workers=4, show_progress=False)
@@ -415,7 +416,7 @@ class TestRealisticScenarios:
             time.sleep(0.01)  # Small delay
             with lock:
                 processed.append(target)
-            all_rows.append({"host": target})
+            all_rows.append(TaskRow(host=target, path=f"\\Tasks\\{target}"))
             return [target], None
 
         config = AsyncConfig(workers=20, show_progress=False)
