@@ -243,7 +243,7 @@ def resolve_sid_via_bloodhound_api(sid: str, bh_connector) -> Optional[str]:
                     info(f"Resolved SID {sid} to {username} via BloodHound API")
                     return username
         else:
-            debug(f"BloodHound API SID query returned no data")
+            debug("BloodHound API SID query returned no data")
 
     except Exception as e:
         debug(f"BloodHound API SID resolution failed: {e}")

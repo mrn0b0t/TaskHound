@@ -138,7 +138,7 @@ def get_ldap_connection(
         if kerberos_target:
             debug(f"LDAP: Resolved DC hostname for Kerberos SPN: {kerberos_target}")
         else:
-            debug(f"LDAP: Could not resolve DC hostname, Kerberos may fail")
+            debug("LDAP: Could not resolve DC hostname, Kerberos may fail")
             kerberos_target = dc_ip
 
     # Try LDAPS first (port 636), then LDAP (port 389)
