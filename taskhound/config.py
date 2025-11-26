@@ -480,7 +480,7 @@ def validate_args(args):
         if args.credguard_detect:
             print("[!] OPSEC mode enabled: Disabling Credential Guard detection")
             args.credguard_detect = False
-        
+
         # Note: SID lookups are handled dynamically in engine.py, but we can warn here
         if not args.no_ldap:
             # We don't force no_ldap=True because engine handles it, but good to know
@@ -499,24 +499,24 @@ def validate_args(args):
             print("[!]   2. Add --force-laps to use LAPS while keeping other OPSEC protections")
             print("[!]      (SAMR SID lookup, LDAP SID resolution, CredGuard check remain disabled)")
             sys.exit(1)
-        
+
         if args.opsec and getattr(args, "force_laps", False):
             print("[!] WARNING: LAPS enabled in OPSEC mode via --force-laps")
             print("[!] LAPS LDAP queries may be audited (Event ID 4662)")
             print("[!] Other OPSEC protections remain active")
             print()
-        
+
         # LAPS requires DC IP for LDAP queries
         if not args.dc_ip:
             print("[!] ERROR: LAPS requires --dc-ip for LDAP queries")
             print("[!] Specify the domain controller IP address with --dc-ip")
             sys.exit(1)
-        
+
         # LAPS requires domain credentials to query AD
         if not args.domain:
             print("[!] ERROR: LAPS requires --domain for LDAP queries")
             sys.exit(1)
-        
+
         # Warn if using LAPS with single target (still works, but unusual)
         if args.target and not args.targets_file:
             print("[*] LAPS mode with single target - will query AD for LAPS password")

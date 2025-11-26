@@ -1,5 +1,6 @@
 import json
-from typing import Optional, Dict, Union
+from typing import Dict, Optional, Union
+
 import requests
 
 from .bh_api import bhce_signed_request, get_bloodhound_token
@@ -56,7 +57,7 @@ class BloodHoundAuthenticator:
             warn(f"Invalid authentication response from BloodHound: {e}")
         except Exception as e:
             warn(f"Unexpected authentication error: {e}")
-        
+
         return None
 
     def request(

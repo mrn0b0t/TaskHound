@@ -262,7 +262,7 @@ TaskHound integrates with BloodHound Community Edition's **OpenGraph** platform 
 **Quick Start:**
 
 ```bash
-# Collect and auto-upload in one command (bh_connector.config is preferred)
+# Collect and auto-upload in one command (taskhound.toml config is preferred)
 taskhound -u homer.simpson -p pass -t moe.thesimpsons.local -d thesimpsons.local --bh-set-icon
 
 # Manual generation (no upload)
@@ -356,7 +356,7 @@ BloodHound Live Connection:
 
 BloodHound OpenGraph Integration (BHCE ONLY):
   --bh-opengraph        Generate BloodHound OpenGraph JSON files (auto-enabled if 
-                        bh_connector.config has valid BHCE credentials)
+                        taskhound.toml has valid BHCE credentials)
   --bh-output BH_OUTPUT Directory to save OpenGraph files (default: ./opengraph)
   --bh-no-upload        Generate OpenGraph files but skip automatic upload
   --bh-set-icon         Automatically set custom icon for ScheduledTask nodes

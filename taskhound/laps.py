@@ -16,10 +16,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from pyasn1.codec.der import decoder
-from pyasn1_modules import rfc5652
-
-from impacket.ldap import ldapasn1 as ldapasn1_impacket
 from impacket.dcerpc.v5 import transport
 from impacket.dcerpc.v5.epm import hept_map
 from impacket.dcerpc.v5.gkdi import MSRPC_UUID_GKDI, GkdiGetKey, GroupKeyEnvelope
@@ -32,15 +28,19 @@ from impacket.dpapi_ng import (
     decrypt_plaintext,
     unwrap_cek,
 )
+from impacket.ldap import ldapasn1 as ldapasn1_impacket
+from pyasn1.codec.der import decoder
+from pyasn1_modules import rfc5652
 
 from .utils.cache_manager import get_cache
 from .utils.date_parser import parse_ad_timestamp, parse_filetime_hex
 from .utils.ldap import (
     LDAPConnectionError as LAPSConnectionError_Base,
+)
+from .utils.ldap import (
     get_ldap_connection,
 )
 from .utils.logging import debug, good, info, warn
-
 
 # Cache category for LAPS credentials
 LAPS_CACHE_CATEGORY = "laps"
@@ -177,7 +177,7 @@ class LAPSCredential:
                 expiration = datetime.fromisoformat(data["expiration"])
             except (ValueError, TypeError):
                 pass
-        
+
         return cls(
             password=data["password"],
             username=data["username"],
@@ -210,14 +210,14 @@ class LAPSCache:
         """
         # Normalize: uppercase, without trailing $
         normalized_name = cred.computer_name.upper().rstrip("$")
-        
+
         # Create cache key - include domain for multi-domain support
         # Format: "DOMAIN\COMPUTERNAME" or just "COMPUTERNAME" if no domain
         if self.domain:
             key = f"{self.domain.upper()}\\{normalized_name}"
         else:
             key = normalized_name
-        
+
         self._cache[key] = cred
 
         # Update statistics
@@ -305,31 +305,31 @@ class LAPSCache:
         """
         # Normalize hostname to uppercase, strip $ suffix
         normalized = hostname.upper().rstrip("$")
-        
+
         # Extract short name from FQDN if present
         short_name = normalized.split(".")[0] if "." in normalized else normalized
-        
+
         # Build list of keys to try (most specific to least specific)
         keys_to_try = []
-        
+
         # If domain is set on cache, try domain-qualified key first
         if self.domain:
             keys_to_try.append(f"{self.domain.upper()}\\{short_name}")
-        
+
         # Try unqualified short name (for backward compat and single-domain use)
         keys_to_try.append(short_name)
-        
+
         # Also try the full normalized name if different from short name
         if normalized != short_name:
             if self.domain:
                 keys_to_try.append(f"{self.domain.upper()}\\{normalized}")
             keys_to_try.append(normalized)
-        
+
         # Check in-memory cache first
         for key in keys_to_try:
             if key in self._cache:
                 return self._cache[key]
-        
+
         # Check persistent cache
         for key in keys_to_try:
             cred = self._load_from_persistent(key)
@@ -391,7 +391,7 @@ class LAPSCache:
             cache = cls(domain=domain)
             loaded = 0
             expired = 0
-            
+
             # Normalize domain for comparison
             domain_prefix = f"{domain.upper()}\\" if domain else None
 
@@ -399,7 +399,7 @@ class LAPSCache:
                 try:
                     # Normalize key to uppercase for consistent lookup
                     normalized_key = key.upper()
-                    
+
                     # If domain specified, only load entries for that domain
                     if domain_prefix:
                         if not normalized_key.startswith(domain_prefix):
@@ -408,14 +408,14 @@ class LAPSCache:
                             if "\\" in normalized_key:
                                 # Key belongs to a different domain, skip
                                 continue
-                    
+
                     cred = LAPSCredential.from_cache_dict(data)
                     if cred.is_expired():
                         expired += 1
                         # Clean up expired entry
                         sqlite_cache.delete(LAPS_CACHE_CATEGORY, key)
                         continue
-                    
+
                     # Add to cache without re-persisting
                     cache._cache[normalized_key] = cred
                     if cred.encrypted:
@@ -559,10 +559,10 @@ class LAPSDecryptionContext:
     kerberos: bool = False
     kdc_host: Optional[str] = None
     dns_server: Optional[str] = None
-    
+
     # Cache for Group Key Envelopes to avoid repeated RPC calls
     _gke_cache: Dict[bytes, Any] = field(default_factory=dict)
-    
+
     @classmethod
     def from_credentials(
         cls,
@@ -582,7 +582,7 @@ class LAPSDecryptionContext:
                 lmhash, nthash = hashes.split(":")
             else:
                 nthash = hashes
-        
+
         return cls(
             domain=domain,
             username=username,
@@ -623,77 +623,77 @@ def decrypt_laps_password(
         LAPSError: If decryption fails
     """
     debug("LAPS: Unpacking encrypted password blob...")
-    
+
     try:
         # Parse the encrypted blob structure
         encrypted_laps = EncryptedPasswordBlob(encrypted_blob)
         cms_blob = encrypted_laps["Blob"]
-        
+
         # Decode the CMS (PKCS#7) structure
         parsed_cms, remaining = decoder.decode(cms_blob, asn1Spec=rfc5652.ContentInfo())
         enveloped_data_blob = parsed_cms["content"]
         parsed_enveloped, _ = decoder.decode(enveloped_data_blob, asn1Spec=rfc5652.EnvelopedData())
-        
+
         # Extract recipient info (contains the encrypted key)
         recipient_infos = parsed_enveloped["recipientInfos"]
         kek_recipient_info = recipient_infos[0]["kekri"]
         kek_identifier = kek_recipient_info["kekid"]
-        
+
         # Parse the Key Identifier
         key_id = KeyIdentifier(bytes(kek_identifier["keyIdentifier"]))
-        
+
         # Extract the SID from the protection descriptor
         tmp, _ = decoder.decode(kek_identifier["other"]["keyAttr"])
         sid = tmp["field-1"][0][0][1].asOctets().decode("utf-8")
         target_sd = create_sd(sid)
-        
+
         debug(f"LAPS: Key ID root: {key_id['RootKeyId']}, SID: {sid}")
-        
+
     except Exception as e:
         raise LAPSError(f"Failed to parse encrypted LAPS blob: {e}")
-    
+
     # Check cache for Group Key Envelope
     root_key_id = key_id["RootKeyId"]
     gke = ctx._gke_cache.get(root_key_id)
-    
+
     if not gke:
         debug("LAPS: Connecting to MS-GKDI for key retrieval...")
         gke = _get_group_key_envelope(ctx, target_sd, key_id)
         ctx._gke_cache[root_key_id] = gke
     else:
         debug("LAPS: Using cached Group Key Envelope")
-    
+
     try:
         # Compute the Key Encryption Key (KEK)
         kek = compute_kek(gke, key_id)
         debug(f"LAPS: Computed KEK: {kek.hex()[:32]}...")
-        
+
         # Extract IV from content encryption parameters
         enc_content_param = bytes(
             parsed_enveloped["encryptedContentInfo"]["contentEncryptionAlgorithm"]["parameters"]
         )
         iv, _ = decoder.decode(enc_content_param)
         iv = bytes(iv[0])
-        
+
         # Unwrap the Content Encryption Key (CEK)
         cek = unwrap_cek(kek, bytes(kek_recipient_info["encryptedKey"]))
         debug(f"LAPS: Unwrapped CEK: {cek.hex()[:32]}...")
-        
+
         # Decrypt the password
         # The 'remaining' data contains the encrypted content (not in PKCS#7 structure)
         plaintext = decrypt_plaintext(cek, iv, remaining)
-        
+
         # Remove padding (last 18 bytes are padding/signature)
         json_data = plaintext[:-18].decode("utf-16-le")
         debug(f"LAPS: Decrypted JSON: {json_data}")
-        
+
         # Parse the JSON to extract password and username
         data = json.loads(json_data)
         password = data.get("p", "")
         username = data.get("n", "Administrator")
-        
+
         return password, username
-        
+
     except Exception as e:
         raise LAPSError(f"Failed to decrypt LAPS password: {e}")
 
@@ -725,12 +725,12 @@ def _get_group_key_envelope(
             remoteIf=MSRPC_UUID_GKDI,
             protocol="ncacn_ip_tcp"
         )
-        
+
         debug(f"LAPS: MS-GKDI binding: {string_binding}")
-        
+
         # Create RPC transport
         rpc_transport = transport.DCERPCTransportFactory(string_binding)
-        
+
         if hasattr(rpc_transport, "set_credentials"):
             rpc_transport.set_credentials(
                 username=ctx.username,
@@ -739,20 +739,20 @@ def _get_group_key_envelope(
                 lmhash=ctx.lmhash,
                 nthash=ctx.nthash,
             )
-        
+
         if ctx.kerberos:
             rpc_transport.set_kerberos(True, kdcHost=ctx.kdc_host)
-        
+
         # Connect and bind
         dce = rpc_transport.get_dce_rpc()
         dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
-        
+
         debug("LAPS: Connecting to MS-GKDI...")
         dce.connect()
-        
+
         debug("LAPS: Binding to MS-GKDI interface...")
         dce.bind(MSRPC_UUID_GKDI)
-        
+
         # Call GetKey
         debug("LAPS: Calling GetKey...")
         resp = GkdiGetKey(
@@ -763,14 +763,14 @@ def _get_group_key_envelope(
             l2=key_id["L2Index"],
             root_key_id=key_id["RootKeyId"],
         )
-        
+
         # Parse response into GroupKeyEnvelope
         gke = GroupKeyEnvelope(b"".join(resp["pbbOut"]))
-        
+
         debug(f"LAPS: Got Group Key Envelope (Root Key: {gke['RootKeyId']})")
-        
+
         return gke
-        
+
     except Exception as e:
         raise LAPSError(f"MS-GKDI GetKey failed: {e}")
 
@@ -929,7 +929,7 @@ def query_laps_passwords(
         "msLAPS-EncryptedPassword",  # Windows LAPS (DPAPI-NG encrypted)
         "msLAPS-PasswordExpirationTime",  # Windows LAPS expiration
     ]
-    
+
     # Create decryption context if we need to decrypt encrypted passwords
     decrypt_ctx = None
     if decrypt_encrypted:
@@ -1079,7 +1079,7 @@ def _parse_ldap_entry(
                 info(f"LAPS: Decrypting password for {computer_name}...")
                 password, username = decrypt_laps_password(mslaps_encrypted, decrypt_ctx)
                 good(f"LAPS: Successfully decrypted password for {computer_name}")
-                
+
                 return LAPSCredential(
                     password=password,
                     username=laps_user_override or username,

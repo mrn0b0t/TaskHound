@@ -26,7 +26,6 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
-from rich.text import Text
 
 # Global console instance - thread-safe by default
 console = Console(highlight=False)
@@ -151,7 +150,7 @@ def scan_progress(total: int, description: str = "Scanning"):
         update function that takes (current_item, success=True, error_msg=None)
     """
     global _progress, _progress_task_id, _live
-    
+
     progress = Progress(
         SpinnerColumn(),
         TextColumn("[bold blue]{task.description}"),
@@ -163,12 +162,12 @@ def scan_progress(total: int, description: str = "Scanning"):
         console=console,
         transient=False,
     )
-    
+
     task_id = progress.add_task(description, total=total, status="")
-    
+
     # Track statistics
     stats = {"success": 0, "failed": 0}
-    
+
     def update(item: str, success: bool = True, error_msg: Optional[str] = None):
         """Update progress with current item status."""
         if success:
@@ -180,19 +179,19 @@ def scan_progress(total: int, description: str = "Scanning"):
                 status_text = f"[red]✗[/] {item}: {error_msg[:30]}"
             else:
                 status_text = f"[red]✗[/] {item}"
-        
+
         progress.update(task_id, advance=1, status=status_text)
-    
+
     _progress = progress
     _progress_task_id = task_id
-    
+
     try:
         with progress:
             yield update
     finally:
         _progress = None
         _progress_task_id = None
-        
+
         # Print summary after progress completes
         total_done = stats["success"] + stats["failed"]
         if stats["failed"] > 0:
@@ -232,9 +231,9 @@ def spinner(description: str = "Processing"):
         console=console,
         transient=True,  # Remove when done
     )
-    
+
     task_id = progress.add_task(description, total=None)  # None = indeterminate
-    
+
     try:
         with progress:
             yield
@@ -291,34 +290,34 @@ def print_summary_table(
     """
     if not host_stats:
         return
-    
+
     table = Table(
         title="[bold]SUMMARY[/]",
         show_header=True,
         header_style="bold cyan",
         border_style="dim",
     )
-    
+
     table.add_column("Hostname", style="white", no_wrap=True)
     table.add_column("Tier-0", justify="center", style="red")
     table.add_column("Privileged", justify="center", style="yellow")
     table.add_column("Normal", justify="center", style="green")
     table.add_column("Status", style="dim")
-    
+
     total_tier0 = 0
     total_priv = 0
     total_normal = 0
-    
+
     for host in sorted(host_stats.keys()):
         stats = host_stats[host]
-        
+
         if stats["status"] == "[+]":
             # Success
             tier0 = str(stats["tier0"]) if has_hv_data else "N/A"
             priv = str(stats["privileged"]) if has_hv_data else "N/A"
             normal = str(stats["normal"])
             status_cell = "[green]✓[/]"
-            
+
             total_tier0 += stats["tier0"]
             total_priv += stats["privileged"]
             total_normal += stats["normal"]
@@ -331,9 +330,9 @@ def print_summary_table(
             if len(reason) > 40:
                 reason = reason[:37] + "..."
             status_cell = f"[red]✗[/] [dim]{reason}[/]"
-        
+
         table.add_row(host, tier0, priv, normal, status_cell)
-    
+
     # Add totals row if multiple hosts
     if len(host_stats) > 1:
         table.add_section()
@@ -346,17 +345,17 @@ def print_summary_table(
             f"[bold]{total_normal}[/]",
             "",
         )
-    
+
     console.print()
     console.print(table)
     console.print()
-    
+
     # Additional hints
     if not has_hv_data:
         console.print(
             "[dim]Note: Tier-0/Privileged detection requires --bh-data or --bh-live[/]"
         )
-    
+
     if backup_dir:
         console.print(f"[dim]Raw XML files saved to: {backup_dir}[/]")
 
@@ -374,22 +373,22 @@ def print_scan_complete(
 ):
     """Print scan completion summary."""
     console.print()
-    
+
     # Build the content lines
     content_lines = [
         "[bold green]Scan Complete[/]\n",
         f"  [green]✓[/] Succeeded: [bold]{succeeded}[/]",
     ]
-    
+
     if skipped > 0:
         content_lines.append(f"  [yellow]⊘[/] Skipped: [bold]{skipped}[/] [dim](dual-homed)[/]")
-    
+
     content_lines.extend([
         f"  [red]✗[/] Failed: [bold]{failed}[/]",
         f"  [dim]Total time: {total_time:.2f}s[/]",
         f"  [dim]Avg per target: {avg_time_ms:.0f}ms[/]",
     ])
-    
+
     console.print(
         Panel(
             "\n".join(content_lines),
@@ -416,13 +415,13 @@ def format_task_line(
         prefix = "[yellow][PRIV][/]"
     else:
         prefix = "[dim][TASK][/]"
-    
+
     line = f"{prefix} {task_name} [dim]→[/] {run_as}"
-    
+
     if command:
         # Truncate long commands
         if len(command) > 60:
             command = command[:57] + "..."
         line += f"\n        [dim]{command}[/]"
-    
+
     return line

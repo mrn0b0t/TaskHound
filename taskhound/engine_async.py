@@ -28,17 +28,12 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from .laps import LAPSCache, LAPSFailure
+from .laps import LAPSFailure
 from .utils.console import (
-    collecting_done,
-    collecting_fail,
-    collecting_skip,
-    collecting_start,
     console,
     good,
     info,
     print_scan_complete,
-    status,
     warn,
 )
 
@@ -46,16 +41,16 @@ from .utils.console import (
 @dataclass
 class AsyncConfig:
     """Configuration for async/parallel processing."""
-    
+
     workers: int = 10
     """Number of concurrent worker threads."""
-    
+
     rate_limit: Optional[float] = None
     """Maximum targets per second. None = unlimited."""
-    
+
     timeout: int = 30
     """Per-target timeout in seconds."""
-    
+
     show_progress: bool = True
     """Show progress bar during processing."""
 
@@ -63,28 +58,28 @@ class AsyncConfig:
 @dataclass
 class TargetResult:
     """Result from processing a single target."""
-    
+
     target: str
     """Target IP or hostname."""
-    
+
     success: bool
     """Whether processing succeeded."""
-    
+
     skipped: bool = False
     """Whether target was skipped (e.g., dual-homed duplicate)."""
-    
+
     lines: List[str] = field(default_factory=list)
     """Output lines from processing."""
-    
+
     rows: List[Dict[str, Any]] = field(default_factory=list)
     """Structured data rows for export."""
-    
+
     laps_result: Optional[Union[bool, LAPSFailure]] = None
     """LAPS authentication result if applicable."""
-    
+
     error: Optional[str] = None
     """Error message if processing failed."""
-    
+
     elapsed_ms: float = 0.0
     """Processing time in milliseconds."""
 
@@ -100,7 +95,7 @@ class AsyncTaskHound:
     The process_fn should have the signature:
         def process_fn(target: str, all_rows: List[Dict], **kwargs) -> Tuple[List[str], Optional[LAPSResult]]
     """
-    
+
     def __init__(self, config: Optional[AsyncConfig] = None):
         """
         Initialize async engine.
@@ -113,7 +108,7 @@ class AsyncTaskHound:
         self._rate_semaphore: Optional[threading.Semaphore] = None
         self._rate_thread: Optional[threading.Thread] = None
         self._stop_rate_limiter = threading.Event()
-        
+
         # Statistics
         self._completed = 0
         self._succeeded = 0
@@ -121,29 +116,29 @@ class AsyncTaskHound:
         self._skipped = 0
         self._total = 0
         self._lock = threading.Lock()
-        
+
         # Rich progress bar
         self._progress: Optional[Progress] = None
         self._task_id: Optional[int] = None
-    
+
     def _start_rate_limiter(self) -> None:
         """Start background thread that releases rate limiter tokens."""
         if self.config.rate_limit is None or self.config.rate_limit <= 0:
             return
-        
+
         # Semaphore starts empty; background thread adds tokens at rate_limit/sec
         self._rate_semaphore = threading.Semaphore(0)
         self._stop_rate_limiter.clear()
-        
+
         def token_generator():
             interval = 1.0 / self.config.rate_limit
             while not self._stop_rate_limiter.is_set():
                 self._rate_semaphore.release()
                 time.sleep(interval)
-        
+
         self._rate_thread = threading.Thread(target=token_generator, daemon=True)
         self._rate_thread.start()
-    
+
     def _stop_rate_limiter_thread(self) -> None:
         """Stop the rate limiter background thread."""
         if self._rate_thread:
@@ -151,12 +146,12 @@ class AsyncTaskHound:
             self._rate_thread.join(timeout=1.0)
             self._rate_thread = None
             self._rate_semaphore = None
-    
+
     def _acquire_rate_token(self) -> None:
         """Wait for a rate limiter token before processing."""
         if self._rate_semaphore:
             self._rate_semaphore.acquire()
-    
+
     def _process_single(
         self,
         target: str,
@@ -176,13 +171,13 @@ class AsyncTaskHound:
         """
         # Wait for rate limiter token
         self._acquire_rate_token()
-        
+
         start_time = time.perf_counter()
         result = TargetResult(target=target, success=False)
-        
+
         # Each worker gets its own row collector
         target_rows: List[Dict[str, Any]] = []
-        
+
         try:
             # Call the actual processing function
             lines, laps_result = process_fn(
@@ -190,41 +185,41 @@ class AsyncTaskHound:
                 all_rows=target_rows,
                 **kwargs
             )
-            
+
             # Check if processing actually succeeded by looking at rows
             # process_target adds {"type": "FAILURE"} rows on connection errors
             has_failure = any(
-                row.get("type") == "FAILURE" 
+                row.get("type") == "FAILURE"
                 for row in target_rows
             )
-            
+
             result.success = not has_failure
             result.lines = lines
             result.rows = target_rows
             result.laps_result = laps_result
-            
+
             # Detect skipped targets (dual-homed duplicates)
             # These return empty lines and no rows, but are not failures
             if not has_failure and not lines and not target_rows:
                 result.skipped = True
-            
+
             if has_failure:
                 # Extract error reason from failure row
                 for row in target_rows:
                     if row.get("type") == "FAILURE":
                         result.error = row.get("reason", "Unknown failure")
                         break
-            
+
         except Exception as e:
             result.error = str(e)
             result.rows = target_rows  # May have partial data
-            
+
             # Log error with output lock
             with self._output_lock:
                 warn(f"{target}: Processing failed: {e}")
-        
+
         result.elapsed_ms = (time.perf_counter() - start_time) * 1000
-        
+
         # Update progress
         with self._lock:
             self._completed += 1
@@ -236,7 +231,7 @@ class AsyncTaskHound:
                 self._failed += 1
             completed = self._completed
             total = self._total
-        
+
         # Update Rich progress bar
         if self._progress and self._task_id is not None:
             # Build status text
@@ -249,11 +244,11 @@ class AsyncTaskHound:
             else:
                 error_short = (result.error or "Error")[:30]
                 status_text = f"[red]✗[/] {target}: {error_short}"
-            
+
             self._progress.update(self._task_id, advance=1, status=status_text)
-        
+
         return result
-    
+
     def run(
         self,
         targets: List[str],
@@ -274,11 +269,11 @@ class AsyncTaskHound:
         """
         if not targets:
             return []
-        
+
         # Handle single-threaded mode (--threads 1)
         if self.config.workers == 1:
             return self._run_sequential(targets, process_fn, kwargs)
-        
+
         self._total = len(targets)
         self._completed = 0
         self._succeeded = 0
@@ -286,14 +281,14 @@ class AsyncTaskHound:
         self._skipped = 0
         results: List[TargetResult] = []
         start_time = time.perf_counter()
-        
+
         info(f"Starting parallel scan: {len(targets)} targets, {self.config.workers} workers")
         if self.config.rate_limit:
             info(f"Rate limit: {self.config.rate_limit} targets/second")
-        
+
         # Start rate limiter if configured
         self._start_rate_limiter()
-        
+
         # Create Rich progress bar
         progress = Progress(
             SpinnerColumn(),
@@ -308,21 +303,21 @@ class AsyncTaskHound:
             console=console,
             transient=False,
         )
-        
+
         try:
             with progress:
                 self._progress = progress
                 self._task_id = progress.add_task(
                     "Scanning", total=len(targets), status=""
                 )
-                
+
                 with ThreadPoolExecutor(max_workers=self.config.workers) as executor:
                     # Submit all tasks
                     futures = {
                         executor.submit(self._process_single, target, process_fn, kwargs): target
                         for target in targets
                     }
-                    
+
                     # Collect results as they complete
                     for future in as_completed(futures):
                         target = futures[future]
@@ -340,14 +335,14 @@ class AsyncTaskHound:
             self._progress = None
             self._task_id = None
             self._stop_rate_limiter_thread()
-        
+
         # Print completion summary
         total_time = time.perf_counter() - start_time
         avg_time = (total_time / len(targets)) * 1000 if targets else 0
         print_scan_complete(self._succeeded, self._failed, total_time, avg_time, self._skipped)
-        
+
         return results
-    
+
     def _run_sequential(
         self,
         targets: List[str],
@@ -366,9 +361,9 @@ class AsyncTaskHound:
         self._skipped = 0
         results: List[TargetResult] = []
         start_time = time.perf_counter()
-        
+
         info(f"Sequential scan: {len(targets)} targets")
-        
+
         # Create Rich progress bar for sequential mode too
         progress = Progress(
             SpinnerColumn(),
@@ -383,51 +378,51 @@ class AsyncTaskHound:
             console=console,
             transient=False,
         )
-        
+
         with progress:
             task_id = progress.add_task("Scanning", total=len(targets), status="")
-            
+
             for target in targets:
                 result = TargetResult(target=target, success=False)
                 target_rows: List[Dict[str, Any]] = []
                 target_start = time.perf_counter()
-                
+
                 try:
                     lines, laps_result = process_fn(
                         target=target,
                         all_rows=target_rows,
                         **kwargs
                     )
-                    
+
                     # Check for failure rows
                     has_failure = any(
-                        row.get("type") == "FAILURE" 
+                        row.get("type") == "FAILURE"
                         for row in target_rows
                     )
-                    
+
                     result.success = not has_failure
                     result.lines = lines
                     result.rows = target_rows
                     result.laps_result = laps_result
-                    
+
                     # Detect skipped targets (dual-homed duplicates)
                     if not has_failure and not lines and not target_rows:
                         result.skipped = True
-                    
+
                     if has_failure:
                         for row in target_rows:
                             if row.get("type") == "FAILURE":
                                 result.error = row.get("reason", "Unknown failure")
                                 break
-                    
+
                 except Exception as e:
                     result.error = str(e)
                     result.rows = target_rows
                     warn(f"{target}: Processing failed: {e}")
-                
+
                 result.elapsed_ms = (time.perf_counter() - target_start) * 1000
                 results.append(result)
-                
+
                 self._completed += 1
                 if result.skipped:
                     self._skipped += 1
@@ -440,16 +435,16 @@ class AsyncTaskHound:
                     self._failed += 1
                     error_short = (result.error or "Error")[:30]
                     status_text = f"[red]✗[/] {target}: {error_short}"
-                
+
                 progress.update(task_id, advance=1, status=status_text)
-        
+
         # Print completion summary
         total_time = time.perf_counter() - start_time
         avg_time = (total_time / len(targets)) * 1000 if targets else 0
         print_scan_complete(self._succeeded, self._failed, total_time, avg_time, self._skipped)
-        
+
         return results
-    
+
     def print_results_threadsafe(self, lines: List[str], print_fn: Callable[[List[str]], None]) -> None:
         """
         Print results with output lock to prevent interleaving.
@@ -475,16 +470,16 @@ def aggregate_results(results: List[TargetResult]) -> Tuple[List[Dict[str, Any]]
     all_rows: List[Dict[str, Any]] = []
     laps_failures: List[LAPSFailure] = []
     laps_successes = 0
-    
+
     for result in results:
         all_rows.extend(result.rows)
-        
+
         if result.laps_result is not None:
             if result.laps_result is True:
                 laps_successes += 1
             elif isinstance(result.laps_result, LAPSFailure):
                 laps_failures.append(result.laps_result)
-    
+
     return all_rows, laps_failures, laps_successes
 
 
@@ -506,14 +501,14 @@ def print_summary(
     total = len(results)
     succeeded = sum(1 for r in results if r.success)
     failed = total - succeeded
-    
+
     avg_time = sum(r.elapsed_ms for r in results) / total if total > 0 else 0
-    
+
     good(f"\n{'=' * 60}")
     good(f"Scan Complete: {succeeded}/{total} targets succeeded")
     if failed > 0:
         warn(f"  Failed: {failed} targets")
-    
+
     # LAPS summary if applicable
     if laps_successes > 0 or laps_failures:
         total_laps = laps_successes + len(laps_failures)
@@ -521,7 +516,7 @@ def print_summary(
         if laps_failures:
             for failure in laps_failures:
                 warn(f"    - {failure.hostname}: {failure.failure_type}")
-    
+
     info(f"  Total time: {total_time_ms / 1000:.2f}s")
     info(f"  Avg per target: {avg_time:.0f}ms")
     good(f"{'=' * 60}\n")

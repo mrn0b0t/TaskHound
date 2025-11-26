@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .auth import AuthContext
 from .config import build_parser, validate_args
 from .engine import process_offline_directory, process_target
 from .engine_async import (
@@ -192,31 +193,36 @@ def main():
         # Normalize (append domain for short names; leave IPs as-is)
         targets = normalize_targets(targets, args.domain)
 
-        # Common kwargs for process_target
-        process_kwargs = dict(
-            domain=args.domain,
+        # Build AuthContext from args
+        auth = AuthContext(
             username=args.username,
             password=args.password,
+            domain=args.domain,
+            hashes=args.hashes,
             kerberos=args.kerberos,
             dc_ip=args.dc_ip,
-            include_ms=args.include_ms,
-            include_local=args.include_local,
-            hv=hv,
-            debug=args.debug,
-            hashes=args.hashes,
-            show_unsaved_creds=args.unsaved_creds,
-            backup_dir=args.backup,
-            credguard_detect=args.credguard_detect,
-            no_ldap=args.no_ldap,
+            timeout=args.timeout,
             ldap_domain=args.ldap_domain,
             ldap_user=args.ldap_user,
             ldap_password=args.ldap_password,
             ldap_hashes=args.ldap_hashes,
+        )
+
+        # Common kwargs for process_target
+        process_kwargs = dict(
+            auth=auth,
+            include_ms=args.include_ms,
+            include_local=args.include_local,
+            hv=hv,
+            debug=args.debug,
+            show_unsaved_creds=args.unsaved_creds,
+            backup_dir=args.backup,
+            credguard_detect=args.credguard_detect,
+            no_ldap=args.no_ldap,
             loot=args.loot,
             dpapi_key=args.dpapi_key,
             bh_connector=bh_connector,
             concise=not args.verbose,
-            timeout=args.timeout,
             opsec=args.opsec,
             laps_cache=laps_cache,
             validate_creds=args.validate_creds,
@@ -298,7 +304,7 @@ def main():
     if not args.no_summary:
         backup_dir = args.backup if hasattr(args, "backup") and args.backup else None
         print_summary_table(all_rows, backup_dir, hv_loaded)
-        
+
         # Print LAPS summary if LAPS was used
         if laps_cache is not None:
             print_laps_summary(laps_cache, laps_successes, laps_failures)
@@ -381,7 +387,7 @@ def main():
                     warn("You can upload manually via BloodHound UI")
             else:
                 warn("No BloodHound credentials available - skipping upload")
-                warn("Configure credentials in config/bh_connector.config or use CLI flags")
+                warn("Configure credentials in taskhound.toml [bloodhound] section or use CLI flags")
         else:
             info(f"OpenGraph file generated: {opengraph_file}")
             info("Upload disabled with --bh-no-upload")

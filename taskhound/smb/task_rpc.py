@@ -12,10 +12,11 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from impacket.dcerpc.v5 import tsch, transport
+from impacket.dcerpc.v5 import transport, tsch
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY
 
-from taskhound.utils.logging import debug as log_debug, warn
+from taskhound.utils.logging import debug as log_debug
+from taskhound.utils.logging import warn
 
 
 class CredentialStatus(Enum):
@@ -340,30 +341,30 @@ class TaskSchedulerRPC:
             (preserves the SMB path format for correlation)
         """
         results = {}
-        
+
         # Task root prefix from SMB crawling
         SMB_TASK_PREFIX = "Windows\\System32\\Tasks\\"
         SMB_TASK_PREFIX_ALT = "Windows/System32/Tasks/"
-        
+
         for original_path in task_paths:
             # Convert SMB path to RPC path
-            # SMB: "Windows\System32\Tasks\HIGH_PRIV_CREDS" 
+            # SMB: "Windows\System32\Tasks\HIGH_PRIV_CREDS"
             # RPC: "\HIGH_PRIV_CREDS"
             rpc_path = original_path
-            
+
             # Strip SMB task root prefix
             if rpc_path.startswith(SMB_TASK_PREFIX):
                 rpc_path = rpc_path[len(SMB_TASK_PREFIX):]
             elif rpc_path.startswith(SMB_TASK_PREFIX_ALT):
                 rpc_path = rpc_path[len(SMB_TASK_PREFIX_ALT):]
-            
+
             # Ensure path starts with backslash for RPC
             if not rpc_path.startswith("\\"):
                 rpc_path = "\\" + rpc_path
-            
+
             # Normalize path separators (SMB uses \, RPC uses \)
             rpc_path = rpc_path.replace("/", "\\")
-            
+
             log_debug(f"Validating credentials for task: {rpc_path} (SMB: {original_path})")
             run_info = self.get_task_run_info(rpc_path)
             if run_info:

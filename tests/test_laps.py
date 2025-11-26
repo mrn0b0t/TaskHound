@@ -6,19 +6,20 @@
 #   - Legacy LAPS handling
 #   - Error handling and edge cases
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
 
 from taskhound.laps import (
+    LAPS_ERRORS,
     LAPSCache,
     LAPSCredential,
     LAPSFailure,
     LAPSParseError,
-    parse_mslaps_password,
+    get_laps_credential_for_host,
     parse_ad_timestamp,
     parse_filetime,
-    get_laps_credential_for_host,
-    LAPS_ERRORS,
+    parse_mslaps_password,
 )
 
 
@@ -88,7 +89,7 @@ class TestLAPSCache:
             computer_name="WS01$",
         )
         cache.add(cred)
-        
+
         result = cache.get("WS01")
         assert result is not None
         assert result.password == "TestP@ss"
@@ -103,7 +104,7 @@ class TestLAPSCache:
             computer_name="WORKSTATION01$",
         )
         cache.add(cred)
-        
+
         # All these should find the credential
         assert cache.get("WORKSTATION01") is not None
         assert cache.get("workstation01") is not None
@@ -119,7 +120,7 @@ class TestLAPSCache:
             computer_name="SERVER01$",
         )
         cache.add(cred)
-        
+
         # Both with and without $ should work
         assert cache.get("SERVER01$") is not None
         assert cache.get("SERVER01") is not None
@@ -134,7 +135,7 @@ class TestLAPSCache:
             computer_name="WS01$",
         )
         cache.add(cred)
-        
+
         # FQDN should resolve to short name
         assert cache.get("WS01.domain.local") is not None
         assert cache.get("ws01.DOMAIN.LOCAL") is not None
@@ -147,13 +148,13 @@ class TestLAPSCache:
     def test_statistics(self):
         """Test cache statistics tracking"""
         cache = LAPSCache()
-        
+
         # Add various credential types
         cache.add(LAPSCredential("p1", "Admin", "mslaps", "WS01$"))
         cache.add(LAPSCredential("p2", "Admin", "mslaps", "WS02$"))
         cache.add(LAPSCredential("p3", "Admin", "legacy", "WS03$"))
         cache.add(LAPSCredential("", "Admin", "mslaps", "WS04$", encrypted=True))
-        
+
         stats = cache.get_statistics()
         assert stats["total"] == 4
         assert stats["mslaps"] == 2
@@ -165,7 +166,7 @@ class TestLAPSCache:
         """Test __contains__ implementation"""
         cache = LAPSCache()
         cache.add(LAPSCredential("pass", "Admin", "legacy", "WS01$"))
-        
+
         assert "WS01" in cache
         assert "ws01" in cache
         assert "NONEXISTENT" not in cache
@@ -178,7 +179,7 @@ class TestMSLAPSParsing:
         """Test parsing basic Windows LAPS JSON"""
         json_data = '{"n": "Administrator", "p": "MyP@ssw0rd123"}'
         password, username, encrypted = parse_mslaps_password(json_data)
-        
+
         assert password == "MyP@ssw0rd123"
         assert username == "Administrator"
         assert encrypted is False
@@ -187,7 +188,7 @@ class TestMSLAPSParsing:
         """Test parsing with custom username"""
         json_data = '{"n": "LocalAdmin", "p": "Secret123"}'
         password, username, encrypted = parse_mslaps_password(json_data)
-        
+
         assert username == "LocalAdmin"
         assert password == "Secret123"
 
@@ -195,7 +196,7 @@ class TestMSLAPSParsing:
         """Test fallback when username not in JSON"""
         json_data = '{"p": "Password123"}'
         password, username, encrypted = parse_mslaps_password(json_data, default_username="CustomAdmin")
-        
+
         assert username == "CustomAdmin"
         assert password == "Password123"
 
@@ -203,7 +204,7 @@ class TestMSLAPSParsing:
         """Test that default_username overrides JSON username"""
         json_data = '{"n": "Administrator", "p": "Pass"}'
         password, username, encrypted = parse_mslaps_password(json_data, default_username="OverrideAdmin")
-        
+
         # When default_username is provided, it should NOT override - it's a fallback
         # Actually looking at the code, it uses default_username OR json value
         # The current implementation uses JSON value if present
@@ -215,7 +216,7 @@ class TestMSLAPSParsing:
         encrypted_blob = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY3ODkwYWJjZGVmZ2hpamts"
         json_data = f'{{"n": "Admin", "p": "{encrypted_blob}"}}'
         password, username, encrypted = parse_mslaps_password(json_data)
-        
+
         assert encrypted is True
 
     def test_invalid_json(self):
@@ -238,7 +239,7 @@ class TestTimestampParsing:
         # 133480032000000000 is roughly Jan 1, 2024
         timestamp = 133480032000000000
         result = parse_ad_timestamp(timestamp)
-        
+
         assert result is not None
         assert isinstance(result, datetime)
 
@@ -246,7 +247,7 @@ class TestTimestampParsing:
         """Test handling of 'never expires' timestamps"""
         # 0 means never expires
         assert parse_ad_timestamp(0) is None
-        
+
         # Max int64 also means never
         assert parse_ad_timestamp(9223372036854775807) is None
 
@@ -254,7 +255,7 @@ class TestTimestampParsing:
         """Test parsing Windows FILETIME from hex"""
         # Example hex FILETIME
         result = parse_filetime("01D9A2B3C4D5E6F7")
-        
+
         # Should return a datetime or None, not crash
         assert result is None or isinstance(result, datetime)
 
@@ -266,9 +267,9 @@ class TestGetLAPSCredentialForHost:
         """Test successful credential lookup"""
         cache = LAPSCache()
         cache.add(LAPSCredential("password123", "Admin", "mslaps", "WS01$"))
-        
+
         cred, failure = get_laps_credential_for_host(cache, "WS01")
-        
+
         assert cred is not None
         assert failure is None
         assert cred.password == "password123"
@@ -276,9 +277,9 @@ class TestGetLAPSCredentialForHost:
     def test_not_found(self):
         """Test missing credential returns failure"""
         cache = LAPSCache()
-        
+
         cred, failure = get_laps_credential_for_host(cache, "NONEXISTENT")
-        
+
         assert cred is None
         assert failure is not None
         assert failure.failure_type == "not_found"
@@ -287,9 +288,9 @@ class TestGetLAPSCredentialForHost:
         """Test encrypted credential returns failure"""
         cache = LAPSCache()
         cache.add(LAPSCredential("", "Admin", "mslaps", "WS01$", encrypted=True))
-        
+
         cred, failure = get_laps_credential_for_host(cache, "WS01")
-        
+
         assert cred is None
         assert failure is not None
         assert failure.failure_type == "encrypted"
@@ -305,7 +306,7 @@ class TestLAPSFailure:
             failure_type="not_found",
             message="No LAPS password",
         )
-        
+
         assert failure.hostname == "WS01"
         assert failure.failure_type == "not_found"
 
@@ -318,7 +319,7 @@ class TestLAPSFailure:
             laps_user_tried="Administrator",
             laps_type_tried="mslaps",
         )
-        
+
         assert failure.laps_user_tried == "Administrator"
         assert failure.laps_type_tried == "mslaps"
 
@@ -350,7 +351,7 @@ class TestLAPSCredentialSerialization:
             computer_name="WS01$",
         )
         data = cred.to_cache_dict()
-        
+
         assert data["password"] == "TestP@ss123"
         assert data["username"] == "Administrator"
         assert data["laps_type"] == "mslaps"
@@ -370,7 +371,7 @@ class TestLAPSCredentialSerialization:
             expiration=exp,
         )
         data = cred.to_cache_dict()
-        
+
         assert data["dns_hostname"] == "WS02.domain.local"
         assert data["expiration"] == "2025-06-15T12:00:00+00:00"
 
@@ -386,7 +387,7 @@ class TestLAPSCredentialSerialization:
             "encrypted": False,
         }
         cred = LAPSCredential.from_cache_dict(data)
-        
+
         assert cred.password == "Secret123"
         assert cred.username == "LocalAdmin"
         assert cred.laps_type == "legacy"
@@ -405,7 +406,7 @@ class TestLAPSCredentialSerialization:
             "encrypted": False,
         }
         cred = LAPSCredential.from_cache_dict(data)
-        
+
         assert cred.dns_hostname == "WS03.domain.local"
         assert cred.expiration is not None
         assert cred.expiration.year == 2025
@@ -422,10 +423,10 @@ class TestLAPSCredentialSerialization:
             expiration=datetime.now(timezone.utc) + timedelta(days=30),
             encrypted=False,
         )
-        
+
         data = original.to_cache_dict()
         restored = LAPSCredential.from_cache_dict(data)
-        
+
         assert restored.password == original.password
         assert restored.username == original.username
         assert restored.laps_type == original.laps_type
@@ -476,7 +477,7 @@ class TestLAPSCacheDomainScoping:
             computer_name="WS01$",
         )
         cache.add(cred, persist=False)
-        
+
         # Key should be uppercase computer name without $
         assert "WS01" in cache._cache
         assert cache.get("ws01") is not None  # Case-insensitive lookup
@@ -491,10 +492,10 @@ class TestLAPSCacheDomainScoping:
             computer_name="WS01$",
         )
         cache.add(cred, persist=False)
-        
+
         # Key should be DOMAIN\COMPUTERNAME
         assert "CONTOSO.LOCAL\\WS01" in cache._cache
-        
+
         # Lookup should still work with just hostname
         assert cache.get("WS01") is not None
         assert cache.get("ws01") is not None  # Case-insensitive
@@ -509,7 +510,7 @@ class TestLAPSCacheDomainScoping:
             computer_name="DESKTOP-ABC$",
         )
         cache.add(cred, persist=False)
-        
+
         # All these lookups should find the credential
         assert cache.get("DESKTOP-ABC") is not None
         assert cache.get("desktop-abc") is not None
@@ -526,7 +527,7 @@ class TestLAPSCacheDomainScoping:
             computer_name="SRV01$",
         )
         cache.add(cred, persist=False)
-        
+
         # Should find via FQDN
         assert cache.get("SRV01.corp.local") is not None
         assert cache.get("srv01.corp.local") is not None
@@ -535,7 +536,7 @@ class TestLAPSCacheDomainScoping:
         """Test that domain attribute is set correctly"""
         cache1 = LAPSCache()
         assert cache1.domain is None
-        
+
         cache2 = LAPSCache(domain="test.local")
         assert cache2.domain == "test.local"
 
@@ -546,24 +547,23 @@ class TestCLIValidation:
     def test_laps_help_text(self):
         """Test that LAPS options appear in help"""
         from taskhound.config import build_parser
-        
+
         parser = build_parser()
         # Check that LAPS arguments exist
         actions = {action.dest: action for action in parser._actions}
-        
+
         assert "laps" in actions
         assert "laps_user" in actions
         assert "force_laps" in actions
 
     def test_laps_opsec_validation(self):
         """Test LAPS + OPSEC validation logic"""
+
         from taskhound.config import build_parser
-        import sys
-        from io import StringIO
-        
+
         parser = build_parser()
-        
+
         # This would normally exit, so we just verify the args parse
-        args = parser.parse_args(["--laps", "-u", "user", "-p", "pass", "-d", "domain.local", 
+        args = parser.parse_args(["--laps", "-u", "user", "-p", "pass", "-d", "domain.local",
                                   "--dc-ip", "10.0.0.1", "-t", "target"])
         assert args.laps is True

@@ -3,6 +3,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from taskhound.auth import AuthContext
 from taskhound.engine import process_target
 from taskhound.output.summary import print_summary_table
 from taskhound.utils.logging import set_verbosity
@@ -26,8 +27,9 @@ class TestLoggingOutput(unittest.TestCase):
         mock_connect.return_value = MagicMock()
         mock_crawl.return_value = []
 
+        auth = AuthContext(username="user", password="pass", domain="domain")
         all_rows = []
-        process_target("target", "domain", "user", "pass", False, None, False, False, None, False, all_rows)
+        process_target("target", all_rows, auth=auth)
 
         output = self.capturedOutput.getvalue()
         self.assertIn("[Collecting] target ...", output)
@@ -41,8 +43,9 @@ class TestLoggingOutput(unittest.TestCase):
         # Mock failure
         mock_connect.side_effect = Exception("Connection failed")
 
+        auth = AuthContext(username="user", password="pass", domain="domain")
         all_rows = []
-        process_target("target", "domain", "user", "pass", False, None, False, False, None, False, all_rows)
+        process_target("target", all_rows, auth=auth)
 
         output = self.capturedOutput.getvalue()
         self.assertIn("[Collecting] target [-] (Connection failed)", output)

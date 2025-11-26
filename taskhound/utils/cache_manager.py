@@ -135,7 +135,7 @@ class CacheManager:
             Cached value or None if miss/expired
         """
         session_key = f"{category}:{key}"
-        
+
         # Tier 1: Check session cache first (fastest, thread-safe)
         with self._session_lock:
             if session_key in self.session:
@@ -264,16 +264,16 @@ class CacheManager:
             cursor = self.conn.execute(
                 "SELECT key, value, expires_at FROM cache WHERE category=?", (category,)
             )
-            
+
             expired_keys = []
             for row in cursor.fetchall():
                 key, value_json, expires_at = row
-                
+
                 # Check expiration
                 if expires_at < now:
                     expired_keys.append(key)
                     continue
-                
+
                 try:
                     value = json.loads(value_json)
                     result[key] = value
@@ -342,7 +342,7 @@ class CacheManager:
     # ==========================================
     # Used to prevent processing dual-homed hosts twice when
     # multiple IPs resolve to the same FQDN
-    
+
     def try_mark_host_processed(self, fqdn: str, target: str) -> tuple[bool, Optional[str]]:
         """
         Atomically check if host is processed and mark it if not.

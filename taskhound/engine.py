@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from impacket.smbconnection import SessionError
 
+from .auth import AuthContext
 from .laps import (
     LAPS_ERRORS,
     LAPSCache,
@@ -20,11 +21,20 @@ from .laps import (
 from .output.printer import format_block
 from .parsers.highvalue import HighValueLoader
 from .parsers.task_xml import parse_task_xml
-from .smb.connection import smb_connect, smb_negotiate, smb_login, get_server_fqdn, get_server_sid, _dns_ptr_lookup, _is_ip_address
+from .smb.connection import (
+    _dns_ptr_lookup,
+    _is_ip_address,
+    get_server_fqdn,
+    get_server_sid,
+    smb_connect,
+    smb_login,
+    smb_negotiate,
+)
 from .smb.credguard import check_credential_guard
-from .smb.task_rpc import TaskSchedulerRPC, TaskRunInfo, CredentialStatus
+from .smb.task_rpc import CredentialStatus, TaskRunInfo, TaskSchedulerRPC
 from .smb.tasks import crawl_tasks, smb_listdir
-from .utils.logging import debug as log_debug, good, info, status, warn
+from .utils.logging import debug as log_debug
+from .utils.logging import good, info, status, warn
 from .utils.sid_resolver import looks_like_domain_user
 
 
@@ -522,73 +532,67 @@ def _build_row(
 
 def process_target(
     target: str,
-    domain: str,
-    username: str,
-    password: Optional[str],
-    kerberos: bool,
-    dc_ip: Optional[str],
-    include_ms: bool,
-    include_local: bool,
-    hv: Optional[HighValueLoader],
-    debug: bool,
     all_rows: List[Dict],
-    hashes: Optional[str] = None,
+    *,
+    auth: AuthContext,
+    include_ms: bool = False,
+    include_local: bool = False,
+    hv: Optional[HighValueLoader] = None,
+    debug: bool = False,
     show_unsaved_creds: bool = False,
     backup_dir: Optional[str] = None,
     credguard_detect: bool = False,
     no_ldap: bool = False,
-    ldap_domain: Optional[str] = None,
-    ldap_user: Optional[str] = None,
-    ldap_password: Optional[str] = None,
-    ldap_hashes: Optional[str] = None,
     loot: bool = False,
     dpapi_key: Optional[str] = None,
     bh_connector: Optional[Any] = None,
     concise: bool = False,
-    timeout: int = 60,
     opsec: bool = False,
     laps_cache: Optional[LAPSCache] = None,
     validate_creds: bool = False,
 ) -> Tuple[List[str], Optional[Union[bool, LAPSFailure]]]:
     """
     Connect to `target`, enumerate scheduled tasks, and return printable lines.
-    
+
     Args:
         target: Target IP or hostname
-        domain: Domain name for authentication
-        username: Username for authentication
-        password: Password for authentication
-        kerberos: Use Kerberos authentication
-        dc_ip: Domain controller IP
+        all_rows: List to append result rows to
+        auth: AuthContext containing all authentication parameters
         include_ms: Include Microsoft scheduled tasks
         include_local: Include local system account tasks
         hv: HighValueLoader for privilege detection
         debug: Enable debug output
-        all_rows: List to append result rows to
-        hashes: NTLM hashes (alternative to password)
         show_unsaved_creds: Show tasks without saved credentials
         backup_dir: Directory to backup raw XML files
         credguard_detect: Detect Credential Guard
         no_ldap: Disable LDAP SID resolution
-        ldap_domain: Alternative domain for LDAP
-        ldap_user: Alternative user for LDAP
-        ldap_password: Alternative password for LDAP
-        ldap_hashes: Alternative hashes for LDAP
         loot: Enable DPAPI credential looting
         dpapi_key: DPAPI key for decryption
         bh_connector: BloodHound connector
         concise: Use concise output format
-        timeout: Connection timeout
         opsec: Enable OPSEC mode
         laps_cache: LAPS credential cache (if LAPS mode enabled)
         validate_creds: Query Task Scheduler RPC to validate stored credentials
-        
+
     Returns:
         Tuple of (lines, laps_result) where:
         - lines: List of printable output strings
         - laps_result: None if LAPS not used, True if LAPS succeeded,
                        LAPSFailure if LAPS failed for this target
     """
+    # Extract values from auth for use throughout the function
+    domain = auth.domain
+    username = auth.username
+    password = auth.password
+    hashes = auth.hashes
+    kerberos = auth.kerberos
+    dc_ip = auth.dc_ip
+    timeout = auth.timeout
+    ldap_domain = auth.ldap_domain
+    ldap_user = auth.ldap_user
+    ldap_password = auth.ldap_password
+    ldap_hashes = auth.ldap_hashes
+
     out_lines: List[str] = []
     laps_result: Optional[Union[bool, LAPSFailure]] = None
 
@@ -603,14 +607,14 @@ def process_target(
     laps_type_used = None
     discovered_hostname = None
     cred_validation_results: Dict[str, TaskRunInfo] = {}  # RPC credential validation cache
-    
+
     try:
         # LAPS Mode: Two-phase connection (negotiate -> lookup -> auth)
         if laps_cache is not None:
             # Phase 1: Negotiate to discover hostname
             smb = smb_negotiate(target, timeout=timeout)
             discovered_hostname = smb.getServerName()
-            
+
             if not discovered_hostname:
                 # SMBv3 doesn't populate server name during negotiate
                 # Try DNS reverse lookup as fallback
@@ -620,7 +624,7 @@ def process_target(
                         discovered_hostname = _dns_ptr_lookup(target, nameserver=dc_ip)
                     if not discovered_hostname:
                         discovered_hostname = _dns_ptr_lookup(target, nameserver=None)
-                    
+
                     if discovered_hostname:
                         # Extract just the hostname part (before first dot) for LAPS lookup
                         info(f"{target}: Resolved hostname via DNS: {discovered_hostname}")
@@ -632,10 +636,10 @@ def process_target(
                     discovered_hostname = target
             else:
                 info(f"{target}: Discovered hostname from SMB: {discovered_hostname}")
-            
+
             # Phase 2: Look up LAPS credentials
             laps_cred, laps_failure = get_laps_credential_for_host(laps_cache, discovered_hostname)
-            
+
             if laps_failure:
                 # No LAPS password for this host - skip target
                 warn(laps_failure.message)
@@ -651,7 +655,7 @@ def process_target(
                 except Exception:
                     pass
                 return out_lines, laps_failure
-            
+
             # Phase 3: Authenticate with LAPS credentials
             try:
                 smb_login(
@@ -694,7 +698,7 @@ def process_target(
             smb = smb_connect(
                 target, domain, username, hashes or password, kerberos=kerberos, dc_ip=dc_ip, timeout=timeout
             )
-        
+
         good(f"{target}: Connected via SMB")
 
         # Resolve the actual FQDN from SMB connection
@@ -778,7 +782,7 @@ def process_target(
     except Exception as e:
         if debug:
             traceback.print_exc()
-        
+
         # Check if this is Remote UAC blocking LAPS
         if laps_used and "STATUS_ACCESS_DENIED" in str(e):
             warn(LAPS_ERRORS["remote_uac_short"].format(hostname=discovered_hostname or target))
@@ -840,7 +844,7 @@ def process_target(
             logon_type = (meta.get("logon_type") or "").strip().lower()
             if logon_type == "password":
                 password_task_paths.append(rel_path)
-        
+
         if password_task_paths:
             info(f"{target}: Found {len(password_task_paths)} tasks with stored credentials to validate")
 
@@ -857,7 +861,7 @@ def process_target(
                     lm_hash, nt_hash = hash_parts
                 elif len(hash_parts) == 1 and len(hash_parts[0]) == 32:
                     nt_hash = hash_parts[0]
-            
+
             rpc_client = TaskSchedulerRPC(
                 target=target,
                 domain=domain,
@@ -866,17 +870,17 @@ def process_target(
                 lm_hash=lm_hash,
                 nt_hash=nt_hash,
             )
-            
+
             if rpc_client.connect():
                 # Validate only the tasks we know have Password logon type
                 cred_validation_results = rpc_client.validate_specific_tasks(password_task_paths)
                 rpc_client.disconnect()
-                
+
                 if cred_validation_results:
                     valid_count = sum(1 for r in cred_validation_results.values() if r.password_valid)
-                    invalid_count = sum(1 for r in cred_validation_results.values() 
+                    invalid_count = sum(1 for r in cred_validation_results.values()
                                        if r.credential_status == CredentialStatus.INVALID)
-                    unknown_count = sum(1 for r in cred_validation_results.values() 
+                    unknown_count = sum(1 for r in cred_validation_results.values()
                                        if r.credential_status == CredentialStatus.UNKNOWN)
                     good(f"{target}: Validated {len(cred_validation_results)} password tasks "
                          f"({valid_count} valid, {invalid_count} invalid, {unknown_count} unknown)")
@@ -1014,7 +1018,7 @@ def process_target(
             # Try both with and without leading backslash
             rpc_path = "\\" + rel_path if not rel_path.startswith("\\") else rel_path
             rpc_path_alt = rel_path.lstrip("\\")
-            
+
             task_run_info = cred_validation_results.get(rpc_path) or cred_validation_results.get(rpc_path_alt)
             if task_run_info:
                 row["cred_status"] = task_run_info.credential_status.value

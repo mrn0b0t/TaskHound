@@ -223,7 +223,7 @@ def format_block(
             cred_hijackable = cred_validation.get("cred_hijackable")
             cred_detail = cred_validation.get("cred_detail")
             cred_code = cred_validation.get("cred_return_code")
-            
+
             # Check status enum first, then password_valid boolean
             if cred_status == "unknown":
                 # RPC couldn't determine - fall back to password analysis if available
@@ -244,7 +244,7 @@ def format_block(
                 status_display = "[-] BLOCKED (account disabled/expired)"
             else:
                 status_display = f"[?] {cred_status} ({cred_code})"
-            
+
             base.append(f"        Cred Validation : {status_display}")
             if cred_detail and not cred_hijackable:
                 base.append(f"        Cred Detail     : {cred_detail}")
@@ -280,7 +280,7 @@ def format_block(
     elif kind == "TASK":
         if password_analysis:
             base.append(f"        Password Analysis : {password_analysis}")
-        
+
         # Add credential validation results for regular tasks too
         # Same layered logic: RPC authoritative, fall back to password analysis for UNKNOWN
         if cred_validation:
@@ -288,7 +288,7 @@ def format_block(
             cred_valid = cred_validation.get("cred_password_valid")
             cred_hijackable = cred_validation.get("cred_hijackable")
             cred_code = cred_validation.get("cred_return_code")
-            
+
             # Check status enum first, then password_valid boolean
             if cred_status == "unknown":
                 # RPC couldn't determine - fall back to password analysis if available
@@ -309,7 +309,7 @@ def format_block(
                 status_display = "[-] BLOCKED (account disabled/expired)"
             else:
                 status_display = f"[?] {cred_status} ({cred_code})"
-            
+
             base.append(f"        Cred Validation : {status_display}")
 
     return base

@@ -18,7 +18,6 @@ Workflow:
 
 import contextlib
 import logging
-from ..utils.logging import good, info, status
 import ntpath
 from binascii import unhexlify
 from typing import Dict, List, Optional
@@ -32,6 +31,8 @@ from impacket.dpapi import (
 )
 from impacket.smbconnection import SMBConnection as ImpacketSMBConnection
 from impacket.uuid import bin_to_string
+
+from ..utils.logging import good, info, status
 
 
 class MasterkeyInfo:

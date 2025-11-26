@@ -200,7 +200,7 @@ def upload_opengraph_to_bloodhound(
             api_key_id=api_key_id,
             timeout=TIMEOUT,
         )
-        
+
         # Test authentication
         if api_key and api_key_id:
             info(f"Using API key authentication for BloodHound at {bloodhound_url}")
@@ -259,7 +259,7 @@ def _wait_for_job_completion(
             if not status_response:
                 warn("Failed to get job status")
                 continue
-                
+
             status_response.raise_for_status()
 
             jobs = status_response.json().get("data", [])
@@ -359,7 +359,7 @@ def _upload_file(
         if not job_response:
             warn("Failed to start upload job")
             return False
-            
+
         job_response.raise_for_status()
         job_id = job_response.json()["data"]["id"]
         info(f"Started upload job {job_id}")
@@ -373,18 +373,18 @@ def _upload_file(
             # For file upload, we need to be careful with Content-Type if using Bearer token
             # The authenticator handles JSON body encoding, but here we are sending raw bytes (JSON string)
             # The API expects application/json
-            
+
             upload_response = authenticator.request(
-                "POST", 
-                f"/api/v2/file-upload/{job_id}", 
+                "POST",
+                f"/api/v2/file-upload/{job_id}",
                 body=file_data.encode(),
                 headers={"Content-Type": "application/json"}
             )
-            
+
             if not upload_response:
                 warn("Failed to upload file content")
                 return False
-                
+
             upload_response.raise_for_status()
 
             # End job
@@ -392,7 +392,7 @@ def _upload_file(
             if not end_response:
                 warn("Failed to end upload job")
                 return False
-                
+
             end_response.raise_for_status()
 
             # Wait for processing with exponential backoff

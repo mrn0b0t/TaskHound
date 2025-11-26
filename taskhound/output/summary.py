@@ -1,6 +1,6 @@
 from typing import Dict, List
 
-from ..utils.console import console, good, print_summary_table as rich_summary_table
+from ..utils.console import print_summary_table as rich_summary_table
 
 
 def print_summary_table(all_rows: List[Dict], backup_dir: str = None, has_hv_data: bool = False):

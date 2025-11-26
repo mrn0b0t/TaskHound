@@ -407,7 +407,7 @@ def resolve_name_to_sid_via_ldap(
         # For computers, strip the trailing $ if present
         if is_computer and search_name.endswith("$"):
             search_name = search_name[:-1]
-        
+
         # For computers, also strip the domain suffix (FQDN -> hostname)
         # e.g., "testclient2.badsuccessor.lab" -> "testclient2"
         if is_computer and "." in search_name:

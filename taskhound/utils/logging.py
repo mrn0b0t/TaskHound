@@ -6,14 +6,24 @@
 import os
 
 from .console import (
-    console,
     debug as _debug,
+)
+from .console import (
     error as _error,
+)
+from .console import (
     good as _good,
+)
+from .console import (
     info as _info,
+)
+from .console import (
     set_verbosity as _set_verbosity,
-    spinner,
+)
+from .console import (
     status as _status,
+)
+from .console import (
     warn as _warn,
 )
 
@@ -27,7 +37,7 @@ def set_verbosity(verbose: bool, debug_flag: bool):
     _VERBOSE = verbose
     _DEBUG = debug_flag
     _set_verbosity(verbose, debug_flag)
-    
+
     # Also set env var for compatibility with other modules
     if debug_flag:
         os.environ["TASKHOUND_DEBUG"] = "1"

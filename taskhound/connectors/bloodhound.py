@@ -142,7 +142,7 @@ class BloodHoundConnector:
         try:
             # Test connection
             response = self.authenticator.request("GET", "/api/version")
-            
+
             if not response or response.status_code != 200:
                 warn(f"BloodHound connection failed - HTTP {response.status_code if response else 'No Response'}")
                 return False
@@ -361,7 +361,7 @@ class BloodHoundConnector:
             # BHCE API v2 usually returns properties by default in "nodes" map if we return the node.
             # Let's check if run_cypher_query is sufficient.
             # The query returns 'g' (the node).
-            
+
             data = self.run_cypher_query(group_query)
 
             if data:

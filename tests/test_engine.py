@@ -18,13 +18,12 @@ def test_process_target_signature_has_dpapi_params():
 
 
 def test_process_target_signature_has_bloodhound_params():
-    """Test that process_target has BloodHound/LDAP parameters."""
+    """Test that process_target has BloodHound/LDAP parameters via AuthContext."""
     sig = inspect.signature(process_target)
     params = list(sig.parameters.keys())
 
-    assert "ldap_domain" in params, "Missing 'ldap_domain' parameter"
-    assert "ldap_user" in params, "Missing 'ldap_user' parameter"
-    assert "ldap_password" in params, "Missing 'ldap_password' parameter"
+    # AuthContext bundles LDAP params (ldap_domain, ldap_user, ldap_password, ldap_hashes)
+    assert "auth" in params, "Missing 'auth' parameter (AuthContext)"
 
 
 def test_format_block_signature_has_all_params():
@@ -45,8 +44,11 @@ def test_process_target_parameter_count():
     sig = inspect.signature(process_target)
     params = list(sig.parameters.keys())
 
-    # Should have parameters from both features merged
-    assert len(params) >= 20, f"Expected at least 20 parameters, got {len(params)}"
+    # After AuthContext refactor: 18 params (11 auth params bundled into AuthContext)
+    # target, all_rows, auth, include_ms, include_local, hv, debug, show_unsaved_creds,
+    # backup_dir, credguard_detect, no_ldap, loot, dpapi_key, bh_connector, concise,
+    # opsec, laps_cache, validate_creds
+    assert len(params) >= 18, f"Expected at least 18 parameters, got {len(params)}"
 
 
 def test_format_block_parameter_count():

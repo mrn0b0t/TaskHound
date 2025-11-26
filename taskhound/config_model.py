@@ -11,7 +11,7 @@ class BloodHoundConfig:
 
     Merges settings from:
     1. Command-line arguments (highest priority)
-    2. bh_connector.config file (if present)
+    2. taskhound.toml [bloodhound] section (if present)
     3. Defaults
     """
 

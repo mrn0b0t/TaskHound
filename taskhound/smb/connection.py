@@ -122,7 +122,7 @@ def smb_login(
         dc_ip: Domain controller IP (for Kerberos)
     """
     pwd, lmhash, nthash = _parse_hashes(password)
-    
+
     if kerberos:
         smb.kerberosLogin(
             user=username,
@@ -182,16 +182,16 @@ def smb_connect_with_laps(
     """
     # Phase 1: Negotiate to discover hostname
     smb = smb_negotiate(target, timeout=timeout)
-    
+
     # Get hostname from negotiate response
     hostname = smb.getServerName()
     if not hostname:
         # Fallback to target if hostname not available
         hostname = target
-    
+
     # Phase 2: Look up LAPS credentials
     laps_cred = laps_cache.get(hostname) if laps_cache else None
-    
+
     if laps_cred and not laps_cred.encrypted:
         # Use LAPS credentials (local account, domain = ".")
         try:
@@ -207,7 +207,7 @@ def smb_connect_with_laps(
             # LAPS auth failed, connection is likely dead
             # Re-raise to let caller handle
             raise
-    
+
     # Phase 3: Fallback to provided credentials
     smb_login(
         smb,
