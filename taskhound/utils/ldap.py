@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 
 from impacket.ldap import ldap as ldap_impacket
 
-from .logging import debug, warn
+from .logging import debug
 
 
 def parse_ntlm_hashes(hashes: Optional[str]) -> Tuple[str, str]:

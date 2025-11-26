@@ -20,7 +20,7 @@ except ImportError:
     GraphDatabase = None
 from ..utils.bh_auth import BloodHoundAuthenticator
 from ..utils.helpers import sanitize_json_string
-from ..utils.logging import good, info, status, warn
+from ..utils.logging import good, status, warn
 
 
 def _safe_get_sam(data: dict, key: str) -> str:

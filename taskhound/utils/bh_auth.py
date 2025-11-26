@@ -1,5 +1,5 @@
 import json
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Union
 import requests
 
 from .bh_api import bhce_signed_request, get_bloodhound_token

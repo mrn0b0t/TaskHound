@@ -8,7 +8,7 @@ import contextlib
 import json
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 from ..utils.bh_auth import BloodHoundAuthenticator
 from ..utils.logging import good, info, status, warn

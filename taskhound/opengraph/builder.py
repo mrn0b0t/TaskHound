@@ -5,13 +5,10 @@ Contains logic for building OpenGraph nodes, edges, and resolving identities.
 """
 
 import hashlib
-import json
 from typing import Dict, List, Optional, Set, Tuple
 
-import requests
 from bhopengraph import Edge, Node, Properties
 
-from ..utils.bh_api import get_bloodhound_token
 from ..utils.cache_manager import get_cache
 from ..utils.logging import debug, good, info, warn
 from ..utils.sid_resolver import resolve_name_to_sid_via_ldap

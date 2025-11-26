@@ -15,7 +15,7 @@ from typing import Optional
 from impacket.dcerpc.v5 import tsch, transport
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY
 
-from taskhound.utils.logging import debug as log_debug, info, warn
+from taskhound.utils.logging import debug as log_debug, warn
 
 
 class CredentialStatus(Enum):

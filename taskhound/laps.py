@@ -12,8 +12,6 @@
 # Author: TaskHound Contributors
 
 import json
-import struct
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -40,7 +38,6 @@ from .utils.date_parser import parse_ad_timestamp, parse_filetime_hex
 from .utils.ldap import (
     LDAPConnectionError as LAPSConnectionError_Base,
     get_ldap_connection,
-    resolve_dc_hostname,
 )
 from .utils.logging import debug, good, info, warn
 

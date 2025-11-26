@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..utils.date_parser import parse_iso_date, parse_timestamp
 from ..utils.helpers import sanitize_json_string
-from ..utils.logging import good, info, warn
+from ..utils.logging import good, warn
 
 
 def _analyze_password_freshness(task_date: Optional[str], pwd_change_date: Optional[datetime]) -> Tuple[str, str]:
