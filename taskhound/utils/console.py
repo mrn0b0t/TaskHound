@@ -198,13 +198,6 @@ def scan_progress(total: int, description: str = "Scanning"):
             )
 
 
-def update_progress_status(status_text: str):
-    """Update the progress bar status text (for external use)."""
-    global _progress, _progress_task_id
-    if _progress and _progress_task_id is not None:
-        _progress.update(_progress_task_id, status=status_text)
-
-
 @contextmanager
 def spinner(description: str = "Processing"):
     """
@@ -236,36 +229,6 @@ def spinner(description: str = "Processing"):
             yield
     finally:
         pass  # Spinner removed automatically (transient=True)
-
-
-# =============================================================================
-# Collecting Status (for per-target output during scanning)
-# =============================================================================
-
-def collecting_start(target: str):
-    """Show that we're starting to collect from a target."""
-    console.print(f"[dim][Collecting][/] {target} [dim]...[/]")
-
-
-def collecting_done(target: str, task_count: int, priv_count: int):
-    """Show successful collection from a target."""
-    console.print(
-        f"[dim][Collecting][/] {target} [green][+][/] "
-        f"[dim]({task_count} tasks, {priv_count} privileged)[/]"
-    )
-
-
-def collecting_skip(target: str, reason: str):
-    """Show that a target was skipped."""
-    console.print(f"[dim][Collecting][/] {target} [yellow][SKIP][/] [dim]({reason})[/]")
-
-
-def collecting_fail(target: str, error_msg: str):
-    """Show that collection from a target failed."""
-    # Truncate long error messages
-    if len(error_msg) > 60:
-        error_msg = error_msg[:57] + "..."
-    console.print(f"[dim][Collecting][/] {target} [red][-][/] [dim]({error_msg})[/]")
 
 
 # =============================================================================

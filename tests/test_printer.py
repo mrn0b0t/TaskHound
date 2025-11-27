@@ -4,7 +4,7 @@ Test printer utility functions in taskhound.output.printer.
 
 from unittest.mock import MagicMock, patch
 
-from taskhound.output.printer import format_block, format_trigger_info, print_results
+from taskhound.output.printer import format_block, format_trigger_info
 
 
 class TestPrinter:
@@ -672,55 +672,24 @@ class TestFormatBlockDecryptedCredMatching:
         assert "Next Step" not in text
 
 
-class TestPrintResults:
-    """Tests for print_results function.
-    
-    Note: print_results is now a no-op since tables are printed directly
-    by format_block via print_task_table. These tests verify the no-op behavior.
-    """
+class TestColorsScheme:
+    """Tests for shared COLORS constant."""
 
-    @patch("taskhound.output.printer.console")
-    def test_print_results_verbose(self, mock_console):
-        """Test print_results is no-op (tables printed by format_block)."""
-        lines = [
-            "[TIER-0] Test task",
-            "[PRIV] Privileged task",
-            "[TASK] Normal task",
-        ]
-        print_results(lines)
-        # print_results is now a no-op - tables are printed by format_block
-        mock_console.print.assert_not_called()
-
-    @patch("taskhound.output.printer.console")
-    def test_print_results_not_verbose(self, mock_console):
-        """Test print_results is no-op when not verbose."""
-        lines = ["[TASK] Test"]
-        print_results(lines)
-        mock_console.print.assert_not_called()
-
-    @patch("taskhound.output.printer.console")
-    def test_print_results_empty(self, mock_console):
-        """Test print_results with empty list."""
-        print_results([])
-        mock_console.print.assert_not_called()
-
-    def test_print_results_colorizes_tier0(self):
-        """Test that TIER-0 tables are colorized (via print_task_table)."""
-        # Coloring is now handled by print_task_table in format_block
-        # This test verifies the color scheme is defined
-        from taskhound.output.printer import COLORS
+    def test_colors_tier0(self):
+        """Test that TIER-0 colors are defined."""
+        from taskhound.output import COLORS
         assert COLORS["tier0_header"] == "bold red"
         assert COLORS["tier0_border"] == "red"
 
-    def test_print_results_colorizes_priv(self):
-        """Test that PRIV tables are colorized (via print_task_table)."""
-        from taskhound.output.printer import COLORS
+    def test_colors_priv(self):
+        """Test that PRIV colors are defined."""
+        from taskhound.output import COLORS
         assert COLORS["priv_header"] == "bold yellow"
         assert COLORS["priv_border"] == "yellow"
 
-    def test_print_results_colorizes_task(self):
-        """Test that TASK tables are colorized (via print_task_table)."""
-        from taskhound.output.printer import COLORS
+    def test_colors_task(self):
+        """Test that TASK colors are defined."""
+        from taskhound.output import COLORS
         assert COLORS["task_header"] == "bold green"
         assert COLORS["task_border"] == "green"
 

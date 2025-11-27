@@ -8,20 +8,8 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+from . import COLORS
 from ..utils.logging import good
-
-# Colors for task types (matching printer.py)
-COLORS = {
-    "tier0_header": "bold red",
-    "tier0_border": "red",
-    "priv_header": "bold yellow",
-    "priv_border": "yellow",
-    "task_header": "bold green",
-    "task_border": "green",
-    "label": "cyan",
-    "value": "white",
-    "password": "bold green",
-}
 
 
 def _rows_to_dicts(rows: List[Any]) -> List[Dict]:
@@ -121,21 +109,6 @@ def _format_task_table(row_dict: Dict[str, Any]) -> Table:
         table.add_row("Reason", row_dict["reason"])
 
     return table
-
-
-def write_plain(outdir: str, host: str, lines: List[str]):
-    """
-    Legacy plain text writer - writes raw text lines.
-
-    .. deprecated::
-        Use write_rich_plain() instead for Rich-formatted output with tables.
-    """
-    os.makedirs(outdir, exist_ok=True)
-    safe = host.replace(":", "_")
-    path = os.path.join(outdir, f"{safe}.txt")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + ("\n" if lines else ""))
-    good(f"Wrote results to {path}")
 
 
 def write_rich_plain(outdir: str, all_rows: List[Any], force_color: bool = True):

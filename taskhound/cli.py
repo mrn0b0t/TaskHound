@@ -21,7 +21,6 @@ from .laps import (
 )
 from .opengraph import generate_opengraph_files
 from .output.bloodhound import upload_opengraph_to_bloodhound
-from .output.printer import print_results
 from .output.summary import print_decrypted_credentials, print_summary_table
 from .output.writer import write_csv, write_json, write_rich_plain
 from .parsers.highvalue import HighValueLoader
@@ -175,7 +174,6 @@ def main():
             dpapi_key=args.dpapi_key,
             concise=not args.verbose,
         )
-        print_results(lines)
     else:
         # Online mode: process targets via SMB
         # Build targets list
@@ -246,13 +244,6 @@ def main():
             # Aggregate results
             all_rows, laps_failures, laps_successes = aggregate_results(results)
 
-            # Print results (already captured in results)
-            for result in results:
-                if result.lines:
-                    print_results(result.lines)
-
-            # Summary already printed by async engine's Rich progress bar
-
         else:
             # Sequential mode (default, --threads 1)
             for tgt in targets:
@@ -267,7 +258,6 @@ def main():
                         laps_successes += 1
                     elif isinstance(laps_result, LAPSFailure):
                         laps_failures.append(laps_result)
-                print_results(lines)
 
     # Exports
     # Auto-generate JSON if OpenGraph is enabled and no explicit JSON output was specified

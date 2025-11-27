@@ -1,44 +1,13 @@
-import re
 from typing import Any, Dict, List, Optional
 
 from rich.table import Table
 
+from . import COLORS
 from ..parsers.highvalue import HighValueLoader
 from ..utils import logging as log_utils
 from ..utils.console import console
 from ..utils.date_parser import parse_iso_date
 from ..utils.sid_resolver import format_runas_with_sid_resolution
-
-# Color scheme for task output
-COLORS = {
-    "tier0_header": "bold red",
-    "tier0_border": "red",
-    "priv_header": "bold yellow",
-    "priv_border": "yellow",
-    "task_header": "bold green",
-    "task_border": "green",
-    "label": "dim",
-    "value": "white",
-    "password": "bold green",
-    "warning": "yellow",
-    "error": "red",
-    "success": "green",
-}
-
-
-def print_results(lines: List[str]):
-    """
-    Legacy print function - no longer prints to console.
-
-    Tables are now printed directly by format_block() via print_task_table().
-    This function exists for backward compatibility but does nothing since
-    the Rich tables are already printed when format_block is called.
-
-    The text lines are still used for file output (--plain flag).
-    """
-    # Tables are already printed by print_task_table() in format_block()
-    # This function is kept for API compatibility but no longer prints
-    pass
 
 
 def print_task_table(

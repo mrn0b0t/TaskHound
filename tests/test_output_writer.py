@@ -3,9 +3,9 @@ Test suite for output writer functions.
 
 Tests cover:
 - _rows_to_dicts helper function
-- write_plain function
 - write_json function
 - write_csv function
+- write_rich_plain function
 """
 
 import csv
@@ -14,7 +14,7 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch
 
-from taskhound.output.writer import _rows_to_dicts, write_plain, write_json, write_csv
+from taskhound.output.writer import _rows_to_dicts, write_json, write_csv
 
 
 # ============================================================================
@@ -89,65 +89,6 @@ class TestRowsToDicts:
         assert len(result) == 2
         assert result[0] == sample_task_dict
         assert result[1] == {"host": "WS01.example.com", "path": "\\MaintTask", "type": "TASK"}
-
-
-# ============================================================================
-# Unit Tests: write_plain
-# ============================================================================
-
-
-class TestWritePlain:
-    """Tests for write_plain function"""
-
-    @patch('taskhound.output.writer.good')
-    def test_creates_output_directory(self, mock_good, temp_output_dir):
-        """Should create output directory if it doesn't exist"""
-        subdir = temp_output_dir / "subdir"
-        lines = ["Line 1", "Line 2"]
-        
-        write_plain(str(subdir), "host1", lines)
-        
-        assert subdir.exists()
-
-    @patch('taskhound.output.writer.good')
-    def test_writes_lines_to_file(self, mock_good, temp_output_dir):
-        """Should write lines to file with newlines"""
-        lines = ["Line 1", "Line 2", "Line 3"]
-        
-        write_plain(str(temp_output_dir), "host1.example.com", lines)
-        
-        output_file = temp_output_dir / "host1.example.com.txt"
-        assert output_file.exists()
-        
-        content = output_file.read_text()
-        assert content == "Line 1\nLine 2\nLine 3\n"
-
-    @patch('taskhound.output.writer.good')
-    def test_empty_lines_creates_file(self, mock_good, temp_output_dir):
-        """Should create file even with empty lines"""
-        write_plain(str(temp_output_dir), "host1", [])
-        
-        output_file = temp_output_dir / "host1.txt"
-        assert output_file.exists()
-        content = output_file.read_text()
-        assert content == ""
-
-    @patch('taskhound.output.writer.good')
-    def test_colon_replaced_in_filename(self, mock_good, temp_output_dir):
-        """Should replace colons with underscores in filename"""
-        write_plain(str(temp_output_dir), "host:port", ["test"])
-        
-        output_file = temp_output_dir / "host_port.txt"
-        assert output_file.exists()
-
-    @patch('taskhound.output.writer.good')
-    def test_logs_success_message(self, mock_good, temp_output_dir):
-        """Should log success message"""
-        write_plain(str(temp_output_dir), "host1", ["test"])
-        
-        mock_good.assert_called_once()
-        call_arg = mock_good.call_args[0][0]
-        assert "Wrote results to" in call_arg
 
 
 # ============================================================================
