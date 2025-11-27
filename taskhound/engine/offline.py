@@ -296,6 +296,11 @@ def _process_offline_host(
         if not result.should_include:
             continue
 
+        # Update row with classification results (like online mode does)
+        row.type = result.task_type
+        row.reason = result.reason
+        row.password_analysis = result.password_analysis
+
         # Format output block based on classification
         if result.task_type in ("TIER-0", "PRIV"):
             priv_lines.extend(

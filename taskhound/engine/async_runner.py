@@ -235,14 +235,14 @@ class AsyncTaskHound:
         if self._progress and self._task_id is not None:
             # Build status text
             if result.skipped:
-                status_text = f"[yellow]⊘[/] {target} [dim](skipped)[/]"
+                status_text = f"[yellow][~][/] {target} [dim](skipped)[/]"
             elif result.success:
                 task_count = len([r for r in result.rows if r.type not in ("FAILURE", None)])
                 len([r for r in result.rows if r.type in ("TIER-0", "PRIV")])
-                status_text = f"[green]✓[/] {target} ({task_count} tasks)"
+                status_text = f"[green][+][/] {target} ({task_count} tasks)"
             else:
                 error_short = (result.error or "Error")[:30]
-                status_text = f"[red]✗[/] {target}: {error_short}"
+                status_text = f"[red][-][/] {target}: {error_short}"
 
             self._progress.update(self._task_id, advance=1, status=status_text)
 
@@ -425,15 +425,15 @@ class AsyncTaskHound:
                 self._completed += 1
                 if result.skipped:
                     self._skipped += 1
-                    status_text = f"[yellow]⊘[/] {target} [dim](skipped)[/]"
+                    status_text = f"[yellow][~][/] {target} [dim](skipped)[/]"
                 elif result.success:
                     self._succeeded += 1
                     task_count = len([r for r in result.rows if r.type not in ("FAILURE", None)])
-                    status_text = f"[green]✓[/] {target} ({task_count} tasks)"
+                    status_text = f"[green][+][/] {target} ({task_count} tasks)"
                 else:
                     self._failed += 1
                     error_short = (result.error or "Error")[:30]
-                    status_text = f"[red]✗[/] {target}: {error_short}"
+                    status_text = f"[red][-][/] {target}: {error_short}"
 
                 progress.update(task_id, advance=1, status=status_text)
 

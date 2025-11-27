@@ -316,3 +316,192 @@ class TestWriteCsv:
         assert len(rows) == 2
         assert rows[0]["host"] == "DC01.example.com"
         assert rows[1]["host"] == "WS02.example.com"
+
+
+# ============================================================================
+# Unit Tests: write_rich_plain
+# ============================================================================
+
+from taskhound.output.writer import write_rich_plain, _format_task_table
+
+
+class TestWriteRichPlain:
+    """Tests for write_rich_plain function"""
+
+    @patch('taskhound.output.writer.good')
+    def test_creates_output_directory(self, mock_good, temp_output_dir):
+        """Should create output directory if it doesn't exist"""
+        subdir = temp_output_dir / "nested" / "output"
+        rows = [{"host": "DC01.example.com", "path": "\\Task1", "type": "TASK"}]
+        
+        write_rich_plain(str(subdir), rows)
+        
+        assert subdir.exists()
+
+    @patch('taskhound.output.writer.good')
+    def test_writes_summary_and_host_dirs(self, mock_good, temp_output_dir):
+        """Should write summary.txt and create host subdirectories"""
+        rows = [
+            {"host": "DC01.example.com", "path": "\\Task1", "type": "TASK"},
+            {"host": "DC01.example.com", "path": "\\Task2", "type": "PRIV"},
+            {"host": "WS01.example.com", "path": "\\Task3", "type": "TIER-0"},
+        ]
+        
+        write_rich_plain(str(temp_output_dir), rows)
+        
+        # Check summary file exists
+        assert (temp_output_dir / "summary.txt").exists()
+        # Check host subdirectories with tasks.txt
+        assert (temp_output_dir / "DC01.example.com" / "tasks.txt").exists()
+        assert (temp_output_dir / "WS01.example.com" / "tasks.txt").exists()
+
+    @patch('taskhound.output.writer.good')
+    def test_includes_task_type_in_output(self, mock_good, temp_output_dir):
+        """Should include task type tags in output"""
+        rows = [
+            {"host": "DC01.example.com", "path": "\\Task1", "type": "TIER-0", "reason": "High privilege"},
+        ]
+        
+        write_rich_plain(str(temp_output_dir), rows)
+        
+        content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
+        assert "TIER-0" in content
+        assert "Task1" in content
+
+    @patch('taskhound.output.writer.good')
+    def test_includes_decrypted_password(self, mock_good, temp_output_dir):
+        """Should include decrypted password in output"""
+        rows = [
+            {
+                "host": "DC01.example.com",
+                "path": "\\Task1",
+                "type": "PRIV",
+                "runas": "DOMAIN\\user",
+                "decrypted_password": "SecretPass123!",
+            },
+        ]
+        
+        write_rich_plain(str(temp_output_dir), rows)
+        
+        # Check in tasks file
+        content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
+        assert "SecretPass123!" in content
+        # Also check in summary
+        summary = (temp_output_dir / "summary.txt").read_text()
+        assert "SecretPass123!" in summary
+
+    @patch('taskhound.output.writer.good')
+    def test_sorts_by_task_type(self, mock_good, temp_output_dir):
+        """Should sort tasks with TIER-0 first, then PRIV, then TASK"""
+        rows = [
+            {"host": "DC01.example.com", "path": "\\TaskNormal", "type": "TASK"},
+            {"host": "DC01.example.com", "path": "\\TaskTier0", "type": "TIER-0"},
+            {"host": "DC01.example.com", "path": "\\TaskPriv", "type": "PRIV"},
+        ]
+        
+        write_rich_plain(str(temp_output_dir), rows)
+        
+        content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
+        # TIER-0 should appear before PRIV which should appear before TASK
+        tier0_pos = content.find("TaskTier0")
+        priv_pos = content.find("TaskPriv")
+        task_pos = content.find("TaskNormal")
+        
+        assert tier0_pos < priv_pos < task_pos
+
+    @patch('taskhound.output.writer.good')
+    def test_handles_taskrow_objects(self, mock_good, temp_output_dir, sample_task_object):
+        """Should handle TaskRow objects with to_dict method"""
+        sample_task_object.to_dict.return_value = {
+            "host": "WS01.example.com",
+            "path": "\\MaintTask",
+            "type": "TASK"
+        }
+        
+        write_rich_plain(str(temp_output_dir), [sample_task_object])
+        
+        assert (temp_output_dir / "WS01.example.com" / "tasks.txt").exists()
+        sample_task_object.to_dict.assert_called()
+
+    @patch('taskhound.output.writer.good')
+    def test_logs_success_message(self, mock_good, temp_output_dir):
+        """Should log success message with host count"""
+        rows = [
+            {"host": "DC01.example.com", "path": "\\Task1", "type": "TASK"},
+        ]
+        
+        write_rich_plain(str(temp_output_dir), rows)
+        
+        mock_good.assert_called_once()
+        call_arg = mock_good.call_args[0][0]
+        assert "Wrote results to" in call_arg
+        assert "1 hosts" in call_arg
+
+    @patch('taskhound.output.writer.good')
+    def test_handles_failure_type(self, mock_good, temp_output_dir):
+        """Should handle FAILURE type tasks"""
+        rows = [
+            {"host": "DC01.example.com", "path": "", "type": "FAILURE", "reason": "Connection refused"},
+        ]
+        
+        write_rich_plain(str(temp_output_dir), rows)
+        
+        content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
+        assert "FAILURE" in content
+        assert "Connection refused" in content
+
+    @patch('taskhound.output.writer.good')
+    def test_summary_contains_stats(self, mock_good, temp_output_dir):
+        """Summary file should contain overall statistics"""
+        rows = [
+            {"host": "DC01.example.com", "path": "\\Task1", "type": "TIER-0"},
+            {"host": "DC01.example.com", "path": "\\Task2", "type": "PRIV"},
+            {"host": "WS01.example.com", "path": "\\Task3", "type": "TASK"},
+        ]
+        
+        write_rich_plain(str(temp_output_dir), rows)
+        
+        summary = (temp_output_dir / "summary.txt").read_text()
+        assert "Hosts Scanned" in summary
+        assert "TIER-0" in summary
+        assert "Privileged" in summary
+
+
+class TestFormatTaskTable:
+    """Tests for _format_task_table helper function"""
+
+    def test_tier0_styling(self):
+        """Should use red styling for TIER-0 tasks"""
+        table = _format_task_table({"type": "TIER-0", "path": "\\Task1"})
+        assert table.title is not None
+        assert "TIER-0" in table.title
+
+    def test_priv_styling(self):
+        """Should use yellow styling for PRIV tasks"""
+        table = _format_task_table({"type": "PRIV", "path": "\\Task1"})
+        assert "PRIV" in table.title
+
+    def test_task_styling(self):
+        """Should use green styling for TASK tasks"""
+        table = _format_task_table({"type": "TASK", "path": "\\Task1"})
+        assert "TASK" in table.title
+
+    def test_includes_runas(self):
+        """Should include RunAs in table"""
+        table = _format_task_table({
+            "type": "TASK",
+            "path": "\\Task1",
+            "runas": "DOMAIN\\user"
+        })
+        # Table should have rows
+        assert table.row_count > 0
+
+    def test_resolved_runas_display(self):
+        """Should format resolved SID with original SID"""
+        table = _format_task_table({
+            "type": "TASK",
+            "path": "\\Task1",
+            "runas": "S-1-5-21-123-456-789-1001",
+            "resolved_runas": "DOMAIN\\user"
+        })
+        assert table.row_count > 0

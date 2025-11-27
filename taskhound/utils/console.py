@@ -172,10 +172,10 @@ def scan_progress(total: int, description: str = "Scanning"):
         """Update progress with current item status."""
         if success:
             stats["success"] += 1
-            status_text = f"[green]✓[/] {item}"
+            status_text = f"[green][+][/] {item}"
         else:
             stats["failed"] += 1
-            status_text = f"[red]✗[/] {item}: {error_msg[:30]}" if error_msg else f"[red]✗[/] {item}"
+            status_text = f"[red][-][/] {item}: {error_msg[:30]}" if error_msg else f"[red][-][/] {item}"
 
         progress.update(task_id, advance=1, status=status_text)
 
@@ -193,8 +193,8 @@ def scan_progress(total: int, description: str = "Scanning"):
         total_done = stats["success"] + stats["failed"]
         if stats["failed"] > 0:
             console.print(
-                f"\n[green]✓ {stats['success']}[/] succeeded, "
-                f"[red]✗ {stats['failed']}[/] failed out of {total_done} targets"
+                f"\n[green][+] {stats['success']}[/] succeeded, "
+                f"[red][-] {stats['failed']}[/] failed out of {total_done} targets"
             )
 
 
@@ -313,7 +313,7 @@ def print_summary_table(
             tier0 = str(stats["tier0"]) if has_hv_data else "N/A"
             priv = str(stats["privileged"]) if has_hv_data else "N/A"
             normal = str(stats["normal"])
-            status_cell = "[green]✓[/]"
+            status_cell = "[green][+][/]"
 
             total_tier0 += stats["tier0"]
             total_priv += stats["privileged"]
@@ -326,7 +326,7 @@ def print_summary_table(
             reason = stats.get("failure_reason", "Unknown error")
             if len(reason) > 40:
                 reason = reason[:37] + "..."
-            status_cell = f"[red]✗[/] [dim]{reason}[/]"
+            status_cell = f"[red][-][/] [dim]{reason}[/]"
 
         table.add_row(host, tier0, priv, normal, status_cell)
 
@@ -374,14 +374,14 @@ def print_scan_complete(
     # Build the content lines
     content_lines = [
         "[bold green]Scan Complete[/]\n",
-        f"  [green]✓[/] Succeeded: [bold]{succeeded}[/]",
+        f"  [green][+][/] Succeeded: [bold]{succeeded}[/]",
     ]
 
     if skipped > 0:
-        content_lines.append(f"  [yellow]⊘[/] Skipped: [bold]{skipped}[/] [dim](dual-homed)[/]")
+        content_lines.append(f"  [yellow][~][/] Skipped: [bold]{skipped}[/] [dim](dual-homed)[/]")
 
     content_lines.extend([
-        f"  [red]✗[/] Failed: [bold]{failed}[/]",
+        f"  [red][-][/] Failed: [bold]{failed}[/]",
         f"  [dim]Total time: {total_time:.2f}s[/]",
         f"  [dim]Avg per target: {avg_time_ms:.0f}ms[/]",
     ])

@@ -603,7 +603,7 @@ def resolve_object_ids_chunked(
 
                     if len(node_list) > 1:
                         # DUPLICATE NAMES DETECTED!
-                        warn(f"⚠️  Duplicate {node_type} nodes found for {name}: {len(node_list)} nodes")
+                        warn(f"[!] Duplicate {node_type} nodes found for {name}: {len(node_list)} nodes")
                         warn(f"   Node IDs: {[n[0] for n in node_list]}")
                         warn(f"   SIDs: {[n[1] for n in node_list]}")
 
@@ -619,7 +619,7 @@ def resolve_object_ids_chunked(
                         debug(f"[+] Validated {name} → node_id={matched_node[0]}, SID={matched_node[1]}")
                     else:
                         # SID mismatch - wrong computer!
-                        warn(f"⚠️  SID mismatch for {name}:")
+                        warn(f"[!] SID mismatch for {name}:")
                         warn(f"   Expected SID: {expected_sid}")
                         warn(f"   BloodHound returned: {[n[1] for n in node_list]}")
                         warn("   Skipping this node (possible stale data or wrong computer)")

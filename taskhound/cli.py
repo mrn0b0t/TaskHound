@@ -23,7 +23,7 @@ from .opengraph import generate_opengraph_files
 from .output.bloodhound import upload_opengraph_to_bloodhound
 from .output.printer import print_results
 from .output.summary import print_decrypted_credentials, print_summary_table
-from .output.writer import write_csv, write_json, write_plain
+from .output.writer import write_csv, write_json, write_rich_plain
 from .parsers.highvalue import HighValueLoader
 from .utils.cache_manager import init_cache
 from .utils.console import print_banner
@@ -250,8 +250,6 @@ def main():
             for result in results:
                 if result.lines:
                     print_results(result.lines)
-                if args.plain and result.lines:
-                    write_plain(args.plain, result.target, result.lines)
 
             # Summary already printed by async engine's Rich progress bar
 
@@ -270,8 +268,6 @@ def main():
                     elif isinstance(laps_result, LAPSFailure):
                         laps_failures.append(laps_result)
                 print_results(lines)
-                if args.plain and lines:
-                    write_plain(args.plain, tgt, lines)
 
     # Exports
     # Auto-generate JSON if OpenGraph is enabled and no explicit JSON output was specified
@@ -298,6 +294,16 @@ def main():
         write_json(args.json, all_rows)
     if args.csv:
         write_csv(args.csv, all_rows)
+
+    # Auto-enable plain output in concise mode (default) to ./output
+    # In verbose/debug mode, user sees details on screen so auto-output is optional
+    is_concise = not (args.verbose or args.debug)
+    if args.plain:
+        write_rich_plain(args.plain, all_rows)
+    elif is_concise and all_rows:
+        # Auto-write to ./output in concise mode
+        write_rich_plain("./output", all_rows)
+
     if args.opengraph:
         generate_opengraph_files(args.opengraph, all_rows)
 
