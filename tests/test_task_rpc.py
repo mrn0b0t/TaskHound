@@ -1,0 +1,645 @@
+"""Tests for taskhound/smb/task_rpc.py module."""
+
+import pytest
+from datetime import datetime
+from unittest.mock import Mock, patch, MagicMock
+
+from taskhound.smb.task_rpc import (
+    CredentialStatus,
+    TaskRunInfo,
+    PASSWORD_VALID_CODES,
+    TASK_RUNNABLE_CODES,
+    PASSWORD_INVALID_CODES,
+    ACCOUNT_BLOCKED_CODES,
+    RETURN_CODE_DESCRIPTIONS,
+    get_return_code_description,
+    TaskSchedulerRPC,
+)
+
+
+class TestCredentialStatus:
+    """Tests for CredentialStatus enum."""
+
+    def test_valid_status(self):
+        """Test VALID status value."""
+        assert CredentialStatus.VALID.value == "valid"
+
+    def test_valid_restricted_status(self):
+        """Test VALID_RESTRICTED status value."""
+        assert CredentialStatus.VALID_RESTRICTED.value == "valid_restricted"
+
+    def test_invalid_status(self):
+        """Test INVALID status value."""
+        assert CredentialStatus.INVALID.value == "invalid"
+
+    def test_blocked_status(self):
+        """Test BLOCKED status value."""
+        assert CredentialStatus.BLOCKED.value == "blocked"
+
+    def test_unknown_status(self):
+        """Test UNKNOWN status value."""
+        assert CredentialStatus.UNKNOWN.value == "unknown"
+
+    def test_all_statuses_exist(self):
+        """Test all expected statuses exist."""
+        expected = {"VALID", "VALID_RESTRICTED", "INVALID", "BLOCKED", "UNKNOWN"}
+        actual = {s.name for s in CredentialStatus}
+        assert actual == expected
+
+
+class TestTaskRunInfo:
+    """Tests for TaskRunInfo dataclass."""
+
+    def test_create_task_run_info(self):
+        """Test creating TaskRunInfo dataclass."""
+        info = TaskRunInfo(
+            task_path="\\TestTask",
+            last_run=datetime(2024, 1, 1, 12, 0, 0),
+            return_code=0,
+            credential_status=CredentialStatus.VALID,
+            status_detail="Task completed successfully",
+            password_valid=True,
+            task_hijackable=True,
+        )
+        assert info.task_path == "\\TestTask"
+        assert info.last_run == datetime(2024, 1, 1, 12, 0, 0)
+        assert info.return_code == 0
+        assert info.credential_status == CredentialStatus.VALID
+        assert info.status_detail == "Task completed successfully"
+        assert info.password_valid is True
+        assert info.task_hijackable is True
+
+    def test_task_run_info_with_none_last_run(self):
+        """Test TaskRunInfo with None last_run."""
+        info = TaskRunInfo(
+            task_path="\\TestTask",
+            last_run=None,
+            return_code=0x00041303,
+            credential_status=CredentialStatus.UNKNOWN,
+            status_detail="Task has never run",
+            password_valid=False,
+            task_hijackable=False,
+        )
+        assert info.last_run is None
+        assert info.credential_status == CredentialStatus.UNKNOWN
+
+    def test_task_run_info_blocked(self):
+        """Test TaskRunInfo with blocked account."""
+        info = TaskRunInfo(
+            task_path="\\BlockedTask",
+            last_run=datetime(2024, 1, 1),
+            return_code=0x8007056B,
+            credential_status=CredentialStatus.BLOCKED,
+            status_detail="Account disabled",
+            password_valid=False,
+            task_hijackable=False,
+        )
+        assert info.credential_status == CredentialStatus.BLOCKED
+        assert info.password_valid is False
+
+
+class TestReturnCodeSets:
+    """Tests for return code sets."""
+
+    def test_password_valid_codes_contains_success(self):
+        """Test SUCCESS code is in PASSWORD_VALID_CODES."""
+        assert 0x00000000 in PASSWORD_VALID_CODES
+
+    def test_password_valid_codes_contains_file_not_found(self):
+        """Test FILE_NOT_FOUND code is in PASSWORD_VALID_CODES."""
+        assert 0x00000002 in PASSWORD_VALID_CODES
+
+    def test_password_valid_codes_contains_logon_type_not_granted(self):
+        """Test ERROR_LOGON_TYPE_NOT_GRANTED is in PASSWORD_VALID_CODES."""
+        assert 0x80070569 in PASSWORD_VALID_CODES
+
+    def test_task_runnable_codes_subset_of_valid(self):
+        """Test TASK_RUNNABLE_CODES is subset of PASSWORD_VALID_CODES."""
+        assert TASK_RUNNABLE_CODES.issubset(PASSWORD_VALID_CODES)
+
+    def test_task_runnable_codes_contains_success(self):
+        """Test SUCCESS code is in TASK_RUNNABLE_CODES."""
+        assert 0x00000000 in TASK_RUNNABLE_CODES
+
+    def test_password_invalid_codes_contains_logon_failure(self):
+        """Test ERROR_LOGON_FAILURE is in PASSWORD_INVALID_CODES."""
+        assert 0x8007052E in PASSWORD_INVALID_CODES
+
+    def test_password_invalid_codes_contains_no_such_user(self):
+        """Test ERROR_NO_SUCH_USER is in PASSWORD_INVALID_CODES."""
+        assert 0x80070525 in PASSWORD_INVALID_CODES
+
+    def test_account_blocked_codes_contains_disabled(self):
+        """Test ERROR_ACCOUNT_DISABLED is in ACCOUNT_BLOCKED_CODES."""
+        assert 0x8007056B in ACCOUNT_BLOCKED_CODES
+
+    def test_account_blocked_codes_contains_locked_out(self):
+        """Test ERROR_ACCOUNT_LOCKED_OUT is in ACCOUNT_BLOCKED_CODES."""
+        assert 0x80070775 in ACCOUNT_BLOCKED_CODES
+
+    def test_no_overlap_invalid_valid(self):
+        """Test no overlap between invalid and valid codes."""
+        overlap = PASSWORD_INVALID_CODES & PASSWORD_VALID_CODES
+        assert len(overlap) == 0
+
+    def test_no_overlap_blocked_valid(self):
+        """Test no overlap between blocked and valid codes."""
+        overlap = ACCOUNT_BLOCKED_CODES & PASSWORD_VALID_CODES
+        assert len(overlap) == 0
+
+
+class TestGetReturnCodeDescription:
+    """Tests for get_return_code_description function."""
+
+    def test_success_code(self):
+        """Test description for SUCCESS code."""
+        desc = get_return_code_description(0x00000000)
+        assert desc == "Task completed successfully"
+
+    def test_file_not_found_code(self):
+        """Test description for FILE_NOT_FOUND code."""
+        desc = get_return_code_description(0x00000002)
+        assert desc == "File not found"
+
+    def test_logon_failure_code(self):
+        """Test description for ERROR_LOGON_FAILURE code."""
+        desc = get_return_code_description(0x8007052E)
+        assert desc == "Logon failure (wrong password)"
+
+    def test_account_disabled_code(self):
+        """Test description for ERROR_ACCOUNT_DISABLED code."""
+        desc = get_return_code_description(0x8007056B)
+        assert desc == "Account disabled"
+
+    def test_unknown_code(self):
+        """Test description for unknown code."""
+        desc = get_return_code_description(0x12345678)
+        assert "Unknown code" in desc
+        assert "12345678" in desc
+
+    def test_all_documented_codes_have_descriptions(self):
+        """Test all documented codes have descriptions."""
+        for code in RETURN_CODE_DESCRIPTIONS:
+            desc = get_return_code_description(code)
+            assert desc != ""
+
+
+class TestTaskSchedulerRPCInit:
+    """Tests for TaskSchedulerRPC initialization."""
+
+    def test_init_with_password(self):
+        """Test initialization with password."""
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="password123",
+        )
+        assert rpc.target == "192.168.1.100"
+        assert rpc.domain == "DOMAIN"
+        assert rpc.username == "admin"
+        assert rpc.password == "password123"
+        assert rpc.lm_hash == ""
+        assert rpc.nt_hash == ""
+        assert rpc._dce is None
+
+    def test_init_with_hashes(self):
+        """Test initialization with NTLM hashes."""
+        rpc = TaskSchedulerRPC(
+            target="dc01.domain.local",
+            domain="DOMAIN",
+            username="admin",
+            password="",
+            lm_hash="aad3b435b51404ee",
+            nt_hash="8846f7eaee8fb117",
+        )
+        assert rpc.lm_hash == "aad3b435b51404ee"
+        assert rpc.nt_hash == "8846f7eaee8fb117"
+
+    def test_init_ip_target(self):
+        """Test initialization with IP address target."""
+        rpc = TaskSchedulerRPC(
+            target="10.0.0.1",
+            domain="CORP",
+            username="user",
+            password="pass",
+        )
+        assert rpc.target == "10.0.0.1"
+
+    def test_init_hostname_target(self):
+        """Test initialization with hostname target."""
+        rpc = TaskSchedulerRPC(
+            target="server.corp.local",
+            domain="CORP",
+            username="user",
+            password="pass",
+        )
+        assert rpc.target == "server.corp.local"
+
+
+class TestTaskSchedulerRPCDisconnect:
+    """Tests for TaskSchedulerRPC disconnect."""
+
+    def test_disconnect_without_connection(self):
+        """Test disconnect when not connected."""
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        # Should not raise
+        rpc.disconnect()
+        assert rpc._dce is None
+
+    def test_disconnect_with_connection(self):
+        """Test disconnect with active connection."""
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        rpc._dce = Mock()
+        rpc.disconnect()
+        assert rpc._dce is None
+
+
+class TestTaskSchedulerRPCContextManager:
+    """Tests for TaskSchedulerRPC context manager."""
+
+    @patch.object(TaskSchedulerRPC, 'connect')
+    @patch.object(TaskSchedulerRPC, 'disconnect')
+    def test_context_manager_enter_exit(self, mock_disconnect, mock_connect):
+        """Test context manager enters and exits correctly."""
+        mock_connect.return_value = True
+        
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        
+        with rpc as client:
+            assert client is rpc
+            mock_connect.assert_called_once()
+        
+        mock_disconnect.assert_called_once()
+
+    @patch.object(TaskSchedulerRPC, 'connect')
+    @patch.object(TaskSchedulerRPC, 'disconnect')
+    def test_context_manager_exit_on_exception(self, mock_disconnect, mock_connect):
+        """Test context manager exits on exception."""
+        mock_connect.return_value = True
+        
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        
+        with pytest.raises(ValueError):
+            with rpc:
+                raise ValueError("Test error")
+        
+        mock_disconnect.assert_called_once()
+
+
+class TestTaskSchedulerRPCInterpretReturnCode:
+    """Tests for TaskSchedulerRPC._interpret_return_code method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+
+    def test_interpret_success_code(self):
+        """Test interpreting SUCCESS code."""
+        last_run = datetime(2024, 1, 1)
+        status, valid, hijackable, detail = self.rpc._interpret_return_code(
+            0x00000000, last_run
+        )
+        assert status == CredentialStatus.VALID
+        assert valid is True
+        assert hijackable is True
+
+    def test_interpret_file_not_found(self):
+        """Test interpreting FILE_NOT_FOUND code."""
+        last_run = datetime(2024, 1, 1)
+        status, valid, hijackable, detail = self.rpc._interpret_return_code(
+            0x00000002, last_run
+        )
+        assert status == CredentialStatus.VALID
+        assert valid is True
+        assert hijackable is True
+
+    def test_interpret_logon_type_not_granted(self):
+        """Test interpreting ERROR_LOGON_TYPE_NOT_GRANTED code."""
+        last_run = datetime(2024, 1, 1)
+        status, valid, hijackable, detail = self.rpc._interpret_return_code(
+            0x80070569, last_run
+        )
+        assert status == CredentialStatus.VALID_RESTRICTED
+        assert valid is True
+        assert hijackable is False
+
+    def test_interpret_logon_failure(self):
+        """Test interpreting ERROR_LOGON_FAILURE code."""
+        last_run = datetime(2024, 1, 1)
+        status, valid, hijackable, detail = self.rpc._interpret_return_code(
+            0x8007052E, last_run
+        )
+        assert status == CredentialStatus.INVALID
+        assert valid is False
+        assert hijackable is False
+
+    def test_interpret_account_disabled(self):
+        """Test interpreting ERROR_ACCOUNT_DISABLED code."""
+        last_run = datetime(2024, 1, 1)
+        status, valid, hijackable, detail = self.rpc._interpret_return_code(
+            0x8007056B, last_run
+        )
+        assert status == CredentialStatus.BLOCKED
+        assert valid is False
+        assert hijackable is False
+
+    def test_interpret_unknown_code(self):
+        """Test interpreting unknown code."""
+        last_run = datetime(2024, 1, 1)
+        status, valid, hijackable, detail = self.rpc._interpret_return_code(
+            0x99999999, last_run
+        )
+        # Unknown code with task run - assumed valid
+        assert status == CredentialStatus.VALID
+        assert valid is True
+
+    def test_interpret_none_last_run(self):
+        """Test interpreting with None last_run."""
+        status, valid, hijackable, detail = self.rpc._interpret_return_code(
+            0x00000000, None
+        )
+        assert status == CredentialStatus.UNKNOWN
+        assert valid is False
+        assert hijackable is False
+        assert "never executed" in detail.lower()
+
+
+class TestTaskSchedulerRPCGetTaskRunInfo:
+    """Tests for TaskSchedulerRPC.get_task_run_info method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+
+    def test_get_task_run_info_not_connected(self):
+        """Test get_task_run_info when not connected."""
+        result = self.rpc.get_task_run_info("\\TestTask")
+        assert result is None
+
+    @patch('taskhound.smb.task_rpc.tsch')
+    def test_get_task_run_info_success(self, mock_tsch):
+        """Test get_task_run_info with successful response."""
+        self.rpc._dce = Mock()
+        
+        mock_tsch.hSchRpcGetLastRunInfo.return_value = {
+            'pLastRuntime': {
+                'wYear': 2024,
+                'wMonth': 1,
+                'wDay': 15,
+                'wHour': 10,
+                'wMinute': 30,
+                'wSecond': 0,
+            },
+            'pLastReturnCode': 0x00000000,
+        }
+        
+        result = self.rpc.get_task_run_info("\\TestTask")
+        
+        assert result is not None
+        assert result.task_path == "\\TestTask"
+        assert result.last_run == datetime(2024, 1, 15, 10, 30, 0)
+        assert result.return_code == 0
+        assert result.password_valid is True
+
+    @patch('taskhound.smb.task_rpc.tsch')
+    def test_get_task_run_info_never_run(self, mock_tsch):
+        """Test get_task_run_info when task never ran."""
+        self.rpc._dce = Mock()
+        
+        mock_tsch.hSchRpcGetLastRunInfo.return_value = {
+            'pLastRuntime': {
+                'wYear': 0,
+                'wMonth': 0,
+                'wDay': 0,
+                'wHour': 0,
+                'wMinute': 0,
+                'wSecond': 0,
+            },
+            'pLastReturnCode': 0,
+        }
+        
+        result = self.rpc.get_task_run_info("\\TestTask")
+        
+        assert result is not None
+        assert result.last_run is None
+        assert result.credential_status == CredentialStatus.UNKNOWN
+
+    @patch('taskhound.smb.task_rpc.tsch')
+    def test_get_task_run_info_exception_not_run(self, mock_tsch):
+        """Test get_task_run_info with SCHED_S_TASK_HAS_NOT_RUN exception."""
+        self.rpc._dce = Mock()
+        
+        mock_tsch.hSchRpcGetLastRunInfo.side_effect = Exception(
+            "SCHED_S_TASK_HAS_NOT_RUN"
+        )
+        
+        result = self.rpc.get_task_run_info("\\TestTask")
+        
+        assert result is not None
+        assert result.last_run is None
+        assert result.return_code == 0x00041303
+        assert result.credential_status == CredentialStatus.UNKNOWN
+
+    @patch('taskhound.smb.task_rpc.tsch')
+    def test_get_task_run_info_exception_other(self, mock_tsch):
+        """Test get_task_run_info with other exception."""
+        self.rpc._dce = Mock()
+        
+        mock_tsch.hSchRpcGetLastRunInfo.side_effect = Exception("Connection failed")
+        
+        result = self.rpc.get_task_run_info("\\TestTask")
+        
+        assert result is None
+
+
+class TestTaskSchedulerRPCValidateSpecificTasks:
+    """Tests for TaskSchedulerRPC.validate_specific_tasks method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        self.rpc._dce = Mock()
+
+    @patch.object(TaskSchedulerRPC, 'get_task_run_info')
+    def test_validate_smb_path_conversion(self, mock_get_info):
+        """Test SMB path to RPC path conversion."""
+        mock_get_info.return_value = TaskRunInfo(
+            task_path="\\TestTask",
+            last_run=datetime(2024, 1, 1),
+            return_code=0,
+            credential_status=CredentialStatus.VALID,
+            status_detail="OK",
+            password_valid=True,
+            task_hijackable=True,
+        )
+        
+        results = self.rpc.validate_specific_tasks([
+            "Windows\\System32\\Tasks\\TestTask"
+        ])
+        
+        # Should have called with converted RPC path
+        mock_get_info.assert_called_once_with("\\TestTask")
+
+    @patch.object(TaskSchedulerRPC, 'get_task_run_info')
+    def test_validate_smb_path_forward_slash(self, mock_get_info):
+        """Test SMB path with forward slashes."""
+        mock_get_info.return_value = TaskRunInfo(
+            task_path="\\TestTask",
+            last_run=datetime(2024, 1, 1),
+            return_code=0,
+            credential_status=CredentialStatus.VALID,
+            status_detail="OK",
+            password_valid=True,
+            task_hijackable=True,
+        )
+        
+        results = self.rpc.validate_specific_tasks([
+            "Windows/System32/Tasks/TestTask"
+        ])
+        
+        mock_get_info.assert_called_once_with("\\TestTask")
+
+    @patch.object(TaskSchedulerRPC, 'get_task_run_info')
+    def test_validate_rpc_path_already_formatted(self, mock_get_info):
+        """Test path already in RPC format."""
+        mock_get_info.return_value = TaskRunInfo(
+            task_path="\\TestTask",
+            last_run=datetime(2024, 1, 1),
+            return_code=0,
+            credential_status=CredentialStatus.VALID,
+            status_detail="OK",
+            password_valid=True,
+            task_hijackable=True,
+        )
+        
+        results = self.rpc.validate_specific_tasks(["\\TestTask"])
+        
+        mock_get_info.assert_called_once_with("\\TestTask")
+
+    @patch.object(TaskSchedulerRPC, 'get_task_run_info')
+    def test_validate_multiple_tasks(self, mock_get_info):
+        """Test validating multiple tasks."""
+        mock_get_info.return_value = TaskRunInfo(
+            task_path="\\Task1",
+            last_run=datetime(2024, 1, 1),
+            return_code=0,
+            credential_status=CredentialStatus.VALID,
+            status_detail="OK",
+            password_valid=True,
+            task_hijackable=True,
+        )
+        
+        results = self.rpc.validate_specific_tasks([
+            "Windows\\System32\\Tasks\\Task1",
+            "Windows\\System32\\Tasks\\Task2",
+        ])
+        
+        assert mock_get_info.call_count == 2
+
+    @patch.object(TaskSchedulerRPC, 'get_task_run_info')
+    def test_validate_task_returns_none(self, mock_get_info):
+        """Test when get_task_run_info returns None."""
+        mock_get_info.return_value = None
+        
+        results = self.rpc.validate_specific_tasks([
+            "Windows\\System32\\Tasks\\NonExistentTask"
+        ])
+        
+        # Should not add to results
+        assert len(results) == 0
+
+    @patch.object(TaskSchedulerRPC, 'get_task_run_info')
+    def test_validate_preserves_original_path(self, mock_get_info):
+        """Test that results contain original SMB paths."""
+        mock_info = TaskRunInfo(
+            task_path="\\TestTask",
+            last_run=datetime(2024, 1, 1),
+            return_code=0,
+            credential_status=CredentialStatus.VALID,
+            status_detail="OK",
+            password_valid=True,
+            task_hijackable=True,
+        )
+        mock_get_info.return_value = mock_info
+        
+        original_path = "Windows\\System32\\Tasks\\TestTask"
+        results = self.rpc.validate_specific_tasks([original_path])
+        
+        # Should have both original SMB path and RPC path
+        assert original_path in results
+        assert "\\TestTask" in results
+
+
+class TestTaskSchedulerRPCConnect:
+    """Tests for TaskSchedulerRPC.connect method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+
+    @patch('taskhound.smb.task_rpc.transport')
+    @patch('taskhound.smb.task_rpc.tsch')
+    def test_connect_success(self, mock_tsch, mock_transport):
+        """Test successful connection."""
+        mock_dce = Mock()
+        mock_rpc_transport = Mock()
+        mock_rpc_transport.get_dce_rpc.return_value = mock_dce
+        mock_transport.DCERPCTransportFactory.return_value = mock_rpc_transport
+        
+        result = self.rpc.connect()
+        
+        assert result is True
+        assert self.rpc._dce is mock_dce
+        mock_dce.connect.assert_called_once()
+        mock_dce.bind.assert_called_once()
+
+    @patch('taskhound.smb.task_rpc.transport')
+    def test_connect_failure(self, mock_transport):
+        """Test connection failure."""
+        mock_transport.DCERPCTransportFactory.side_effect = Exception("Connection refused")
+        
+        result = self.rpc.connect()
+        
+        assert result is False
+        assert self.rpc._dce is None

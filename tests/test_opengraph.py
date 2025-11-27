@@ -250,3 +250,279 @@ class TestPasswordViability:
         node = _create_task_node(task)
         props_dict = node.properties._properties
         assert "BEFORE" in props_dict["passwordanalysis"]
+
+
+class TestTaskObjectIDCollisions:
+    """Tests for _create_task_object_id to ensure no collisions."""
+
+    def test_different_paths_different_ids(self):
+        """Different task paths should produce different IDs."""
+        id1 = _create_task_object_id("DC.LAB", "\\Tasks\\Task1")
+        id2 = _create_task_object_id("DC.LAB", "\\Tasks\\Task2")
+        assert id1 != id2
+
+    def test_similar_paths_different_ids(self):
+        """Similar paths that could collide should produce different IDs."""
+        id1 = _create_task_object_id("DC.LAB", "\\Tasks\\My_Task")
+        id2 = _create_task_object_id("DC.LAB", "\\Tasks_My\\Task")
+        assert id1 != id2
+
+    def test_same_path_same_id(self):
+        """Same hostname and path should produce identical IDs."""
+        id1 = _create_task_object_id("DC.LAB", "\\Tasks\\Task1")
+        id2 = _create_task_object_id("DC.LAB", "\\Tasks\\Task1")
+        assert id1 == id2
+
+    def test_case_insensitive_hash_component(self):
+        """Hash component should be case-insensitive (same hash for different hostname cases)."""
+        id1 = _create_task_object_id("DC.LAB", "\\Tasks\\Task1")
+        id2 = _create_task_object_id("dc.lab", "\\Tasks\\Task1")
+        # Hash portion is identical (case-insensitive), but hostname preserves original case
+        hash1 = id1.split("_")[1]
+        hash2 = id2.split("_")[1]
+        assert hash1 == hash2  # Same hash
+        # Hostname portion preserves original case
+        assert id1.startswith("DC.LAB_")
+        assert id2.startswith("dc.lab_")
+
+    def test_id_contains_task_name(self):
+        """Object ID should contain the task name for readability."""
+        task_id = _create_task_object_id("DC.LAB", "\\Microsoft\\Windows\\Backup")
+        assert "BACKUP" in task_id
+
+    def test_long_task_name_truncated(self):
+        """Long task names should be truncated in the ID."""
+        long_path = "\\Tasks\\ThisIsAVeryLongTaskNameThatExceedsFiftyCharactersInLength"
+        task_id = _create_task_object_id("DC.LAB", long_path)
+        # Should still work and not raise an error
+        assert task_id.startswith("DC.LAB_")
+
+
+class TestTaskNodeValidation:
+    """Tests for _create_task_node validation."""
+
+    def test_missing_host_raises_error(self):
+        """Should raise ValueError when host is missing."""
+        task = {"path": "\\Task"}
+        with pytest.raises(ValueError, match="missing 'host'"):
+            _create_task_node(task)
+
+    def test_missing_path_raises_error(self):
+        """Should raise ValueError when path is missing."""
+        task = {"host": "DC.LAB"}
+        with pytest.raises(ValueError, match="missing 'path'"):
+            _create_task_node(task)
+
+    def test_unknown_host_raises_error(self):
+        """Should raise ValueError when host is UNKNOWN."""
+        task = {"host": "UNKNOWN", "path": "\\Task"}
+        with pytest.raises(ValueError, match="Invalid hostname"):
+            _create_task_node(task)
+
+    def test_empty_host_raises_error(self):
+        """Should raise ValueError when host is empty string."""
+        task = {"host": "", "path": "\\Task"}
+        with pytest.raises(ValueError, match="missing 'host'"):
+            _create_task_node(task)
+
+    def test_whitespace_only_host_raises_error(self):
+        """Should raise ValueError when host is only whitespace."""
+        task = {"host": "   ", "path": "\\Task"}
+        with pytest.raises(ValueError, match="missing 'host'"):
+            _create_task_node(task)
+
+
+class TestTaskNodeProperties:
+    """Tests for task node property handling."""
+
+    def test_node_has_correct_kinds(self):
+        """Node should have ScheduledTask, Base, and TaskHound kinds."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        node = _create_task_node(task)
+        assert "ScheduledTask" in node.kinds
+        assert "Base" in node.kinds
+        assert "TaskHound" in node.kinds
+
+    def test_command_with_arguments(self):
+        """Command should include arguments when present."""
+        task = {
+            "host": "DC.LAB",
+            "path": "\\Task",
+            "command": "cmd.exe",
+            "arguments": "/c echo hello",
+        }
+        node = _create_task_node(task)
+        props = node.properties._properties
+        assert props["command"] == "cmd.exe /c echo hello"
+
+    def test_command_without_arguments(self):
+        """Command should work without arguments."""
+        task = {
+            "host": "DC.LAB",
+            "path": "\\Task",
+            "command": "notepad.exe",
+        }
+        node = _create_task_node(task)
+        props = node.properties._properties
+        assert props["command"] == "notepad.exe"
+
+    def test_enabled_true_string(self):
+        """enabled='true' string should become boolean True."""
+        task = {"host": "DC.LAB", "path": "\\Task", "enabled": "true"}
+        node = _create_task_node(task)
+        props = node.properties._properties
+        assert props["enabled"] is True
+
+    def test_enabled_false_string(self):
+        """enabled='false' string should become boolean False."""
+        task = {"host": "DC.LAB", "path": "\\Task", "enabled": "false"}
+        node = _create_task_node(task)
+        props = node.properties._properties
+        assert props["enabled"] is False
+
+    def test_credentials_stored_true(self):
+        """credentials_hint='stored_credentials' should set credentialsstored=True."""
+        task = {"host": "DC.LAB", "path": "\\Task", "credentials_hint": "stored_credentials"}
+        node = _create_task_node(task)
+        props = node.properties._properties
+        assert props["credentialsstored"] is True
+
+    def test_credentials_stored_false(self):
+        """Other credentials_hint values should set credentialsstored=False."""
+        task = {"host": "DC.LAB", "path": "\\Task", "credentials_hint": "no_saved_credentials"}
+        node = _create_task_node(task)
+        props = node.properties._properties
+        assert props["credentialsstored"] is False
+
+    def test_optional_properties_included(self):
+        """Optional properties should be included when present."""
+        task = {
+            "host": "DC.LAB",
+            "path": "\\Task",
+            "author": "DOMAIN\\admin",
+            "date": "2024-01-15T10:00:00",
+            "trigger_type": "Calendar",
+            "start_boundary": "2024-01-15T02:00:00",
+            "interval": "PT1H",
+            "duration": "P1D",
+            "days_interval": "1",
+            "password_analysis": "Password is valid",
+            "type": "TIER-0",
+            "reason": "AdminSDHolder protected",
+        }
+        node = _create_task_node(task)
+        props = node.properties._properties
+        assert props["author"] == "DOMAIN\\admin"
+        assert props["date"] == "2024-01-15T10:00:00"
+        assert props["triggertype"] == "Calendar"
+        assert props["startboundary"] == "2024-01-15T02:00:00"
+        assert props["interval"] == "PT1H"
+        assert props["duration"] == "P1D"
+        assert props["daysinterval"] == "1"
+        assert props["passwordanalysis"] == "Password is valid"
+        assert props["tasktype"] == "TIER-0"
+        assert props["classification"] == "AdminSDHolder protected"
+
+
+class TestPrincipalIDBuiltinAccounts:
+    """Tests for _create_principal_id built-in account filtering."""
+
+    def test_filter_system_account(self):
+        """Should filter NT AUTHORITY\\SYSTEM."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("NT AUTHORITY\\SYSTEM", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_filter_local_service(self):
+        """Should filter NT AUTHORITY\\LOCAL SERVICE."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("NT AUTHORITY\\LOCAL SERVICE", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_filter_network_service(self):
+        """Should filter NT AUTHORITY\\NETWORK SERVICE."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("NT AUTHORITY\\NETWORK SERVICE", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_filter_system_short(self):
+        """Should filter SYSTEM without prefix."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("SYSTEM", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_filter_builtin_administrators(self):
+        """Should filter BUILTIN\\ADMINISTRATORS."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("BUILTIN\\ADMINISTRATORS", "DOMAIN.LAB", task)
+        assert result is None
+
+
+class TestPrincipalIDSIDHandling:
+    """Tests for _create_principal_id SID handling."""
+
+    def test_filter_local_system_sid(self):
+        """Should filter S-1-5-18 (Local System)."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("S-1-5-18", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_filter_local_service_sid(self):
+        """Should filter S-1-5-19 (Local Service)."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("S-1-5-19", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_filter_network_service_sid(self):
+        """Should filter S-1-5-20 (Network Service)."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("S-1-5-20", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_filter_builtin_sid(self):
+        """Should filter S-1-5-32-* (Builtin domain)."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("S-1-5-32-544", "DOMAIN.LAB", task)  # Administrators
+        assert result is None
+
+    def test_domain_sid_returned_as_is(self):
+        """Domain SIDs should be returned for resolution."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        sid = "S-1-5-21-1234567890-1234567890-1234567890-1000"
+        result = _create_principal_id(sid, "DOMAIN.LAB", task)
+        assert result == sid
+
+
+class TestPrincipalIDFormats:
+    """Tests for _create_principal_id various input formats."""
+
+    def test_empty_runas_returns_none(self):
+        """Empty runas should return None."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_na_runas_returns_none(self):
+        """N/A runas should return None."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("N/A", "DOMAIN.LAB", task)
+        assert result is None
+
+    def test_simple_username_uses_local_domain(self):
+        """Simple username without domain should use local domain."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("admin", "DOMAIN.LAB", task)
+        assert result == "ADMIN@DOMAIN.LAB"
+
+    def test_upn_format_same_domain(self):
+        """UPN format with same domain should work."""
+        task = {"host": "DC.LAB", "path": "\\Task"}
+        result = _create_principal_id("admin@domain.lab", "DOMAIN.LAB", task)
+        assert result == "ADMIN@DOMAIN.LAB"
+
+    def test_netbios_format_same_domain(self):
+        """NETBIOS format with same domain should work."""
+        task = {"host": "DC.DOMAIN.LAB", "path": "\\Task"}
+        result = _create_principal_id("DOMAIN\\admin", "DOMAIN.LAB", task)
+        assert result == "ADMIN@DOMAIN.LAB"
+
