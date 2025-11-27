@@ -1,43 +1,121 @@
 import re
 from typing import Any, Dict, List, Optional
 
+from rich.table import Table
+
 from ..parsers.highvalue import HighValueLoader
 from ..utils import logging as log_utils
 from ..utils.console import console
 from ..utils.date_parser import parse_iso_date
 from ..utils.sid_resolver import format_runas_with_sid_resolution
 
+# Color scheme for task output
+COLORS = {
+    "tier0_header": "bold red",
+    "tier0_border": "red",
+    "priv_header": "bold yellow",
+    "priv_border": "yellow",
+    "task_header": "bold green",
+    "task_border": "green",
+    "label": "dim",
+    "value": "white",
+    "password": "bold green",
+    "warning": "yellow",
+    "error": "red",
+    "success": "green",
+}
+
 
 def print_results(lines: List[str]):
-    """Print task results with colored tags in verbose mode."""
-    if not lines:
+    """
+    Legacy print function - no longer prints to console.
+
+    Tables are now printed directly by format_block() via print_task_table().
+    This function exists for backward compatibility but does nothing since
+    the Rich tables are already printed when format_block is called.
+
+    The text lines are still used for file output (--plain flag).
+    """
+    # Tables are already printed by print_task_table() in format_block()
+    # This function is kept for API compatibility but no longer prints
+    pass
+
+
+def print_task_table(
+    kind: str,
+    rel_path: str,
+    rows: List[tuple],
+) -> None:
+    """
+    Print a task as a Rich table with colored borders.
+
+    Args:
+        kind: Task classification ('TIER-0', 'PRIV', or 'TASK')
+        rel_path: Task path for the header
+        rows: List of (label, value) tuples to display
+    """
+    if not (log_utils._VERBOSE or log_utils._DEBUG):
         return
-    if log_utils._VERBOSE or log_utils._DEBUG:
-        for line in lines:
-            # Colorize task type tags
-            colored_line = line
-            if line.startswith("[TIER-0]") or "\n[TIER-0]" in line:
-                colored_line = re.sub(
-                    r"\[TIER-0\](.*)$",
-                    r"[bold red][TIER-0][/][red]\1[/]",
-                    line,
-                    flags=re.MULTILINE,
-                )
-            elif line.startswith("[PRIV]") or "\n[PRIV]" in line:
-                colored_line = re.sub(
-                    r"\[PRIV\](.*)$",
-                    r"[bold yellow][PRIV][/][yellow]\1[/]",
-                    line,
-                    flags=re.MULTILINE,
-                )
-            elif line.startswith("[TASK]") or "\n[TASK]" in line:
-                colored_line = re.sub(
-                    r"\[TASK\](.*)$",
-                    r"[bold green][TASK][/][green]\1[/]",
-                    line,
-                    flags=re.MULTILINE,
-                )
-            console.print(colored_line)
+
+    # Select colors based on task kind
+    if kind == "TIER-0":
+        header_style = COLORS["tier0_header"]
+        border_style = COLORS["tier0_border"]
+        tag = "[TIER-0]"
+    elif kind == "PRIV":
+        header_style = COLORS["priv_header"]
+        border_style = COLORS["priv_border"]
+        tag = "[PRIV]"
+    else:
+        header_style = COLORS["task_header"]
+        border_style = COLORS["task_border"]
+        tag = "[TASK]"
+
+    # Build the title with tag and path
+    title = f"[{header_style}]{tag}[/] {rel_path}"
+
+    # Create a simple two-column table
+    table = Table(
+        title=title,
+        title_style=header_style,
+        border_style=border_style,
+        show_header=False,
+        expand=False,
+        padding=(0, 1),
+    )
+
+    table.add_column("Field", style=COLORS["label"], width=18)
+    table.add_column("Value", style=COLORS["value"])
+
+    # Add rows with special coloring for certain fields
+    for label, value in rows:
+        value_style = COLORS["value"]
+
+        # Apply special styling to certain values
+        if label == "Decrypted Pwd" and value:
+            value_style = COLORS["password"]
+        elif label == "Cred Validation":
+            if "[+]" in value:
+                value_style = COLORS["success"]
+            elif "[-]" in value:
+                value_style = COLORS["error"]
+            elif "[?]" in value:
+                value_style = COLORS["warning"]
+        elif label == "Pwd Analysis":
+            if "GOOD" in value.upper() or "newer" in value.lower():
+                value_style = COLORS["success"]
+            elif "BAD" in value.upper() or "stale" in value.lower():
+                value_style = COLORS["warning"]
+        elif label == "Enabled":
+            if value.lower() == "true":
+                value_style = COLORS["success"]
+            elif value.lower() == "false":
+                value_style = COLORS["warning"]
+
+        table.add_row(f"[{COLORS['label']}]{label}[/]", f"[{value_style}]{value}[/]")
+
+    console.print()
+    console.print(table)
 
 
 def format_trigger_info(meta: Dict[str, str]) -> Optional[str]:
@@ -191,9 +269,18 @@ def format_block(
     cred_validation: Optional[Dict[str, Any]] = None,
     resolved_runas: Optional[str] = None,
 ) -> List[str]:
-    # Format a small pretty-print block used by the CLI output.
-    #
-    # kind is either 'TIER-0', 'PRIV' (privileged/high-value) or 'TASK' (normal task).
+    """
+    Format a task block for CLI output.
+
+    Returns list of strings for file output, and prints a Rich table to console.
+
+    Args:
+        kind: 'TIER-0', 'PRIV' (privileged/high-value) or 'TASK' (normal task)
+        rel_path: Task path relative to Tasks folder
+        runas: The RunAs user/SID
+        what: Command/action the task executes
+        ... (other args for enrichment)
+    """
     if kind == "TIER-0":
         header = "[TIER-0]"
     elif kind == "PRIV":
@@ -235,10 +322,7 @@ def format_block(
             line += f" | {extra_reason}"
 
         # In concise mode, show decrypted password inline if available for ALL task types
-        # Even [TASK] entries may have useful credentials (lateral movement, password reuse)
         if decrypted_creds:
-            # Normalize the runas for comparison
-            # Handle resolved SID format: "username (S-1-5-21-...)" -> extract just username
             runas_normalized = runas.lower()
             if " (s-1-5-" in runas_normalized:
                 runas_normalized = runas_normalized.split(" (s-1-5-")[0].strip()
@@ -261,35 +345,34 @@ def format_block(
 
         return [line]
 
-    base = [f"\n{header} {rel_path}"]
+    # Build rows for table output: list of (label, value) tuples
+    rows: List[tuple] = []
 
     # Add task state information as first field
     if enabled is not None:
         enabled_display = enabled.capitalize() if enabled.lower() in ["true", "false"] else enabled
-        base.append(f"        Enabled            : {enabled_display}")
+        rows.append(("Enabled", enabled_display))
 
-    # Add other task information with proper alignment
-    base.extend([f"        RunAs              : {display_runas}", f"        What               : {what}"])
+    # Core task information
+    rows.append(("RunAs", display_runas))
+    rows.append(("What", what))
+
     if author:
-        base.append(f"        Author             : {author}")
+        rows.append(("Author", author))
     if date:
-        base.append(f"        Date               : {date}")
+        rows.append(("Date", date))
 
-    # Add trigger information if available
+    # Trigger information
     if meta:
         trigger_info = format_trigger_info(meta)
         if trigger_info:
-            base.append(f"        Trigger            : {trigger_info}")
+            rows.append(("Trigger", trigger_info))
 
-    # Add password analysis if available - show for ALL task types
-    # Even [TASK] entries benefit from knowing if credentials are fresh/stale
+    # Password analysis
     if password_analysis:
-        base.append(f"        Pwd Analysis       : {password_analysis}")
+        rows.append(("Pwd Analysis", password_analysis))
 
-    # Add credential validation results if available (from --validate-creds)
-    # Logic: RPC validation is authoritative when available, but falls back to
-    # password analysis when RPC returns UNKNOWN (task never ran)
-    # Show for ALL task types - credential validity is useful regardless of classification
+    # Credential validation results
     if cred_validation:
         cred_status = cred_validation.get("cred_status")
         cred_valid = cred_validation.get("cred_password_valid")
@@ -298,9 +381,8 @@ def format_block(
         cred_code = cred_validation.get("cred_return_code")
         cred_last_run = cred_validation.get("cred_last_run")
 
-        # Check status enum first, then password_valid boolean
+        # Build status display
         if cred_status == "unknown":
-            # RPC couldn't determine - fall back to password analysis if available
             if password_analysis and "GOOD" in password_analysis.upper():
                 status_display = "[+] LIKELY VALID (task never ran, but password newer than pwdLastSet)"
             elif password_analysis and "BAD" in password_analysis.upper():
@@ -316,108 +398,109 @@ def format_block(
         else:
             status_display = f"[?] {cred_status} ({cred_code})"
 
-        base.append(f"        Cred Validation    : {status_display}")
+        rows.append(("Cred Validation", status_display))
 
-        # Show detailed credential validation info
-        # Last run time (human readable)
         if cred_last_run:
-            base.append(f"        Last Run           : {cred_last_run}")
+            rows.append(("Last Run", cred_last_run))
 
-        # Return code with description
         if cred_code:
             from ..smb.task_rpc import get_return_code_description
-            # Parse hex code back to int for description lookup
             try:
                 code_int = int(cred_code, 16) if cred_code.startswith("0x") else int(cred_code)
                 code_desc = get_return_code_description(code_int)
-                base.append(f"        Return Code        : {cred_code} ({code_desc})")
+                rows.append(("Return Code", f"{cred_code} ({code_desc})"))
             except (ValueError, TypeError):
-                base.append(f"        Return Code        : {cred_code}")
+                rows.append(("Return Code", cred_code))
 
-        # Show detail for restricted accounts or failures
         if cred_detail and not cred_hijackable:
-            base.append(f"        Cred Detail        : {cred_detail}")
+            rows.append(("Cred Detail", cred_detail))
 
-    # Check if we have a decrypted password for this user - show for ALL task types
-    # Even [TASK] entries may have useful credentials (lateral movement, password reuse)
-    decrypted_password = None
-    if decrypted_creds:
-        # Use resolved_username if available (handles SID-only runas fields)
-        # Also try the display_runas which may have "username (SID)" format
-        usernames_to_try = []
+    # Find decrypted password for this user
+    decrypted_password = _find_decrypted_password(
+        decrypted_creds, runas, display_runas, resolved_username
+    )
 
-        # Add resolved username from SID resolution
-        if resolved_username:
-            usernames_to_try.append(resolved_username.lower())
-
-        # Also try extracting from display_runas format "username (S-1-5-21-...)"
-        display_runas_lower = display_runas.lower()
-        if " (s-1-5-" in display_runas_lower:
-            username_part = display_runas_lower.split(" (s-1-5-")[0].strip()
-            if username_part and username_part not in usernames_to_try:
-                usernames_to_try.append(username_part)
-        elif not display_runas_lower.startswith("s-1-5-"):
-            # Not a raw SID, add as-is
-            if display_runas_lower not in usernames_to_try:
-                usernames_to_try.append(display_runas_lower)
-
-        # Try the original runas if it's not a raw SID
-        runas_normalized = runas.lower()
-        if not runas_normalized.startswith("s-1-5-"):
-            if " (s-1-5-" in runas_normalized:
-                username_part = runas_normalized.split(" (s-1-5-")[0].strip()
-                if username_part and username_part not in usernames_to_try:
-                    usernames_to_try.append(username_part)
-            elif runas_normalized not in usernames_to_try:
-                usernames_to_try.append(runas_normalized)
-
-        for cred in decrypted_creds:
-            if cred.username:
-                cred_user_normalized = cred.username.lower()
-
-                for try_username in usernames_to_try:
-                    # Match full domain\user or partial matches
-                    if cred_user_normalized == try_username:
-                        # Exact match
-                        decrypted_password = cred.password
-                        break
-                    elif "\\" in cred_user_normalized and "\\" not in try_username:
-                        # Cred has domain, try_username doesn't - match on username part only
-                        if cred_user_normalized.split("\\")[-1] == try_username:
-                            decrypted_password = cred.password
-                            break
-                    elif "\\" in try_username and "\\" not in cred_user_normalized:
-                        # try_username has domain, cred doesn't - match on username part only
-                        if try_username.split("\\")[-1] == cred_user_normalized:
-                            decrypted_password = cred.password
-                            break
-
-                if decrypted_password:
-                    break
-
-    # Show decrypted password if available
     if decrypted_password:
-        base.append(f"        Decrypted Pwd      : {decrypted_password}")
+        rows.append(("Decrypted Pwd", decrypted_password))
 
-    # Check if this is a gMSA account and add hint about LSA secrets
-    # gMSA accounts end with $ but are not machine accounts (COMPUTERNAME$) or well-known system accounts
+    # gMSA hint
     gmsa_hint = _check_gmsa_account(display_runas, resolved_username)
     if gmsa_hint:
-        base.append(f"        gMSA Hint          : {gmsa_hint}")
+        rows.append(("gMSA Hint", gmsa_hint))
 
+    # Reason for privileged tasks
     if kind in ["TIER-0", "PRIV"]:
         if extra_reason:
-            base.append(f"        Reason             : {extra_reason}")
+            rows.append(("Reason", extra_reason))
         elif kind == "TIER-0":
-            base.append("        Reason             : Tier 0 privileged group membership")
+            rows.append(("Reason", "Tier 0 privileged group membership"))
         else:
-            base.append(
-                "        Reason             : High Value match found (Check BloodHound Outbound Object Control for Details)"
-            )
+            rows.append(("Reason", "High Value match found (Check BloodHound Outbound Object Control for Details)"))
 
-        # Show next step hint only if we didn't find a decrypted password
         if not decrypted_password and (not extra_reason or "no saved credentials" not in extra_reason.lower()):
-            base.append("        Next Step          : Try DPAPI Dump / Task Manipulation")
+            rows.append(("Next Step", "Try DPAPI Dump / Task Manipulation"))
+
+    # Print Rich table to console
+    print_task_table(kind, rel_path, rows)
+
+    # Return text format for file output (backward compatibility)
+    # Label width is 18 chars + 1 space before colon = 19 chars total before ":"
+    base = [f"\n{header} {rel_path}"]
+    for label, value in rows:
+        base.append(f"        {label:<18} : {value}")
 
     return base
+
+
+def _find_decrypted_password(
+    decrypted_creds: Optional[List],
+    runas: str,
+    display_runas: str,
+    resolved_username: Optional[str],
+) -> Optional[str]:
+    """Find decrypted password matching the runas user."""
+    if not decrypted_creds:
+        return None
+
+    usernames_to_try = []
+
+    # Add resolved username from SID resolution
+    if resolved_username:
+        usernames_to_try.append(resolved_username.lower())
+
+    # Extract from display_runas format "username (S-1-5-21-...)"
+    display_runas_lower = display_runas.lower()
+    if " (s-1-5-" in display_runas_lower:
+        username_part = display_runas_lower.split(" (s-1-5-")[0].strip()
+        if username_part and username_part not in usernames_to_try:
+            usernames_to_try.append(username_part)
+    elif not display_runas_lower.startswith("s-1-5-"):
+        if display_runas_lower not in usernames_to_try:
+            usernames_to_try.append(display_runas_lower)
+
+    # Try the original runas if it's not a raw SID
+    runas_normalized = runas.lower()
+    if not runas_normalized.startswith("s-1-5-"):
+        if " (s-1-5-" in runas_normalized:
+            username_part = runas_normalized.split(" (s-1-5-")[0].strip()
+            if username_part and username_part not in usernames_to_try:
+                usernames_to_try.append(username_part)
+        elif runas_normalized not in usernames_to_try:
+            usernames_to_try.append(runas_normalized)
+
+    for cred in decrypted_creds:
+        if cred.username:
+            cred_user_normalized = cred.username.lower()
+
+            for try_username in usernames_to_try:
+                if cred_user_normalized == try_username:
+                    return cred.password
+                elif "\\" in cred_user_normalized and "\\" not in try_username:
+                    if cred_user_normalized.split("\\")[-1] == try_username:
+                        return cred.password
+                elif "\\" in try_username and "\\" not in cred_user_normalized:
+                    if try_username.split("\\")[-1] == cred_user_normalized:
+                        return cred.password
+
+    return None
 

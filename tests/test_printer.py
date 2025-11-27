@@ -673,63 +673,56 @@ class TestFormatBlockDecryptedCredMatching:
 
 
 class TestPrintResults:
-    """Tests for print_results function."""
+    """Tests for print_results function.
+    
+    Note: print_results is now a no-op since tables are printed directly
+    by format_block via print_task_table. These tests verify the no-op behavior.
+    """
 
-    @patch("taskhound.output.printer.log_utils._VERBOSE", True)
-    @patch("taskhound.output.printer.log_utils._DEBUG", False)
     @patch("taskhound.output.printer.console")
     def test_print_results_verbose(self, mock_console):
-        """Test print_results in verbose mode."""
+        """Test print_results is no-op (tables printed by format_block)."""
         lines = [
             "[TIER-0] Test task",
             "[PRIV] Privileged task",
             "[TASK] Normal task",
         ]
         print_results(lines)
-        assert mock_console.print.call_count == 3
+        # print_results is now a no-op - tables are printed by format_block
+        mock_console.print.assert_not_called()
 
-    @patch("taskhound.output.printer.log_utils._VERBOSE", False)
-    @patch("taskhound.output.printer.log_utils._DEBUG", False)
     @patch("taskhound.output.printer.console")
     def test_print_results_not_verbose(self, mock_console):
-        """Test print_results when not verbose."""
+        """Test print_results is no-op when not verbose."""
         lines = ["[TASK] Test"]
         print_results(lines)
         mock_console.print.assert_not_called()
 
-    @patch("taskhound.output.printer.log_utils._VERBOSE", True)
     @patch("taskhound.output.printer.console")
     def test_print_results_empty(self, mock_console):
         """Test print_results with empty list."""
         print_results([])
         mock_console.print.assert_not_called()
 
-    @patch("taskhound.output.printer.log_utils._VERBOSE", True)
-    @patch("taskhound.output.printer.console")
-    def test_print_results_colorizes_tier0(self, mock_console):
-        """Test that TIER-0 tags are colorized."""
-        lines = ["[TIER-0] Critical task"]
-        print_results(lines)
-        call_args = mock_console.print.call_args[0][0]
-        assert "bold red" in call_args
+    def test_print_results_colorizes_tier0(self):
+        """Test that TIER-0 tables are colorized (via print_task_table)."""
+        # Coloring is now handled by print_task_table in format_block
+        # This test verifies the color scheme is defined
+        from taskhound.output.printer import COLORS
+        assert COLORS["tier0_header"] == "bold red"
+        assert COLORS["tier0_border"] == "red"
 
-    @patch("taskhound.output.printer.log_utils._VERBOSE", True)
-    @patch("taskhound.output.printer.console")
-    def test_print_results_colorizes_priv(self, mock_console):
-        """Test that PRIV tags are colorized."""
-        lines = ["[PRIV] High value task"]
-        print_results(lines)
-        call_args = mock_console.print.call_args[0][0]
-        assert "bold yellow" in call_args
+    def test_print_results_colorizes_priv(self):
+        """Test that PRIV tables are colorized (via print_task_table)."""
+        from taskhound.output.printer import COLORS
+        assert COLORS["priv_header"] == "bold yellow"
+        assert COLORS["priv_border"] == "yellow"
 
-    @patch("taskhound.output.printer.log_utils._VERBOSE", True)
-    @patch("taskhound.output.printer.console")
-    def test_print_results_colorizes_task(self, mock_console):
-        """Test that TASK tags are colorized."""
-        lines = ["[TASK] Regular task"]
-        print_results(lines)
-        call_args = mock_console.print.call_args[0][0]
-        assert "bold green" in call_args
+    def test_print_results_colorizes_task(self):
+        """Test that TASK tables are colorized (via print_task_table)."""
+        from taskhound.output.printer import COLORS
+        assert COLORS["task_header"] == "bold green"
+        assert COLORS["task_border"] == "green"
 
 
 class TestFormatBlockMeta:

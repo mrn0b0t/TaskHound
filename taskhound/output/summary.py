@@ -49,6 +49,9 @@ def print_decrypted_credentials(all_rows: List[Any]) -> int:
     Returns:
         Number of decrypted credentials found
     """
+    from rich.table import Table
+    from rich.panel import Panel
+
     # Collect all rows with decrypted passwords
     creds_found = []
     for row in all_rows:
@@ -74,38 +77,40 @@ def print_decrypted_credentials(all_rows: List[Any]) -> int:
     if not creds_found:
         return 0
 
-    # Print header
-    console.print()
-    console.print("[bold cyan]═" * 70 + "[/]")
-    console.print(f"[bold cyan]DECRYPTED CREDENTIALS ({len(creds_found)} found)[/]")
-    console.print("[bold cyan]═" * 70 + "[/]")
-    console.print()
+    # Create a table for decrypted credentials
+    table = Table(
+        title=f"[bold cyan]DECRYPTED CREDENTIALS ({len(creds_found)} found)[/]",
+        title_style="bold cyan",
+        border_style="cyan",
+        show_header=True,
+        header_style="bold white",
+    )
 
-    # Group by host for cleaner output
-    creds_by_host = {}
+    table.add_column("Type", style="dim", width=8)
+    table.add_column("Host", style="white")
+    table.add_column("RunAs", style="white")
+    table.add_column("Password", style="bold green")
+    table.add_column("Task Path", style="dim")
+
     for cred in creds_found:
-        host = cred["host"]
-        if host not in creds_by_host:
-            creds_by_host[host] = []
-        creds_by_host[host].append(cred)
+        task_type = cred["type"]
+        if task_type == "TIER-0":
+            type_style = "bold red"
+        elif task_type == "PRIV":
+            type_style = "bold yellow"
+        else:
+            type_style = "bold green"
 
-    for host, creds in creds_by_host.items():
-        console.print(f"[bold white]{host}[/]")
-        for cred in creds:
-            task_type = cred["type"]
-            if task_type == "TIER-0":
-                type_color = "red"
-            elif task_type == "PRIV":
-                type_color = "yellow"
-            else:
-                type_color = "green"
+        table.add_row(
+            f"[{type_style}]{task_type}[/]",
+            cred["host"],
+            cred["runas"],
+            cred["password"],
+            cred["path"],
+        )
 
-            console.print(f"  [{type_color}][{task_type}][/{type_color}] {cred['runas']}")
-            console.print(f"          Task: {cred['path']}")
-            console.print(f"          [bold green]Password: {cred['password']}[/]")
-            console.print()
-
-    console.print("[bold cyan]═" * 70 + "[/]")
+    console.print()
+    console.print(table)
     console.print()
 
     return len(creds_found)
