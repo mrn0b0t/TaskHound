@@ -7,3 +7,4 @@ bhopengraph>=1.1.0  # BloodHound OpenGraph library
 pyasn1>=0.5.0  # ASN.1 parsing for LAPS encrypted password decryption
 pyasn1-modules>=0.3.0  # PKCS#7/CMS support for LAPS decryption
 rich>=13.0.0  # Terminal UI: colors, progress bars, tables
+rich-argparse>=1.0.0  # Rich formatted CLI help

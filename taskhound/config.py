@@ -5,6 +5,11 @@ import sys
 import traceback
 from typing import Any, Dict
 
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+from rich_argparse import RichHelpFormatter
+
 try:
     import tomllib
 except ImportError:
@@ -15,6 +20,101 @@ except ImportError:
         tomllib = None
 
 from .utils.helpers import is_ipv4
+
+
+class TableRichHelpFormatter(RichHelpFormatter):
+    """
+    Custom help formatter that displays argument groups with Rich styling.
+    Uses uppercase group names and custom color scheme.
+    """
+    
+    # Customize styles for better appearance
+    styles = {
+        **RichHelpFormatter.styles,
+        "argparse.groups": "bold cyan",
+        "argparse.args": "green",
+        "argparse.metavar": "yellow",
+        "argparse.help": "white",
+    }
+    
+    # Format group names in uppercase
+    group_name_formatter = str.upper
+
+
+class TableHelpAction(argparse.Action):
+    """
+    Custom help action that displays arguments in Rich tables.
+    """
+    
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(
+            option_strings=option_strings,
+            dest=dest,
+            default=default,
+            nargs=0,
+            help=help,
+        )
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        console = Console()
+        
+        # Print description
+        if parser.description:
+            console.print(f"\n[bold white]{parser.description}[/]\n")
+        
+        # Print usage
+        console.print(f"[dim]Usage:[/] [bold]{parser.prog}[/] [OPTIONS] [TARGETS]\n")
+        
+        # Group arguments by their group
+        for group in parser._action_groups:
+            # Skip empty groups
+            actions = [a for a in group._group_actions if not isinstance(a, argparse._HelpAction) and not isinstance(a, TableHelpAction)]
+            if not actions:
+                continue
+            
+            # Print title
+            console.print(f"[bold cyan]{group.title.upper()}[/]")
+            
+            # Print description if present
+            if group.description:
+                console.print(f"[dim]{group.description}[/]")
+            
+            # Create table for this group
+            table = Table(
+                border_style="dim",
+                show_header=True,
+                header_style="bold white",
+                padding=(0, 1),
+                expand=False,
+            )
+            
+            table.add_column("Option", style="green", no_wrap=True)
+            table.add_column("Description", style="white")
+            
+            for action in actions:
+                # Build option string
+                opts = ", ".join(action.option_strings) if action.option_strings else action.dest
+                
+                # Add metavar if present
+                if action.metavar:
+                    opts += f" [yellow]{action.metavar}[/]"
+                elif action.type and action.type != bool:
+                    opts += f" [yellow]{action.dest.upper()}[/]"
+                
+                # Get help text - don't add default if already mentioned in help
+                help_text = action.help or ""
+                if action.default and action.default != argparse.SUPPRESS and action.default is not None:
+                    if action.default is not True and action.default is not False:
+                        # Only add default if not already in help text
+                        if "default:" not in help_text.lower():
+                            help_text += f" [dim](default: {action.default})[/]"
+                
+                table.add_row(opts, help_text)
+            
+            console.print(table)
+            console.print()
+        
+        parser.exit()
 
 
 class OnceOnly(argparse.Action):
@@ -226,8 +326,14 @@ def load_config() -> Dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        prog="taskhound", description="TaskHound - Scheduled Task privilege checker with optional High Value enrichment"
+        prog="taskhound",
+        description="Windows Privileged Scheduled Task Discovery Tool for fun and profit.",
+        formatter_class=TableRichHelpFormatter,
+        add_help=False,  # Disable default help
     )
+    # Add custom table-based help
+    ap.add_argument("-h", "--help", action=TableHelpAction, help="Show this help message")
+    
     # Authentication options
     auth = ap.add_argument_group("Authentication options")
     auth.add_argument("-u", "--username", action=OnceOnly, help="Username (required for online mode)")
@@ -248,8 +354,8 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument(
         "--timeout",
         type=int,
-        default=60,
-        help="Connection timeout in seconds (default: 60). Lower this to speed up scans of dead hosts.",
+        default=5,
+        help="Connection timeout in seconds (default: 5). Lower values speed up scans with unreachable hosts.",
     )
     target.add_argument(
         "--threads",
