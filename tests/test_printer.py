@@ -773,3 +773,96 @@ class TestFormatBlockMeta:
 
         text = "\n".join(lines)
         assert "Trigger :" not in text
+
+
+class TestGMSADetection:
+    """Test gMSA account detection and hint display."""
+
+    @patch("taskhound.output.printer.format_runas_with_sid_resolution")
+    def test_gmsa_hint_shown_for_gmsa_account(self, mock_resolve):
+        """Test that gMSA hint is shown for accounts ending with $."""
+        mock_resolve.return_value = ("DOMAIN\\gMSAService$", "gMSAService$")
+
+        lines = format_block(
+            kind="TASK",
+            rel_path="Tasks\\gMSATask",
+            runas="DOMAIN\\gMSAService$",
+            what="service.exe",
+            author="Admin",
+            date="2023-01-01",
+        )
+
+        text = "\n".join(lines)
+        assert "gMSA Hint" in text
+        assert "LSA secrets" in text
+        assert "not DPAPI" in text
+
+    @patch("taskhound.output.printer.format_runas_with_sid_resolution")
+    def test_gmsa_hint_not_shown_for_regular_account(self, mock_resolve):
+        """Test that gMSA hint is NOT shown for regular accounts."""
+        mock_resolve.return_value = ("DOMAIN\\RegularUser", "RegularUser")
+
+        lines = format_block(
+            kind="TASK",
+            rel_path="Tasks\\RegularTask",
+            runas="DOMAIN\\RegularUser",
+            what="cmd.exe",
+            author="Admin",
+            date="2023-01-01",
+        )
+
+        text = "\n".join(lines)
+        assert "gMSA Hint" not in text
+
+    @patch("taskhound.output.printer.format_runas_with_sid_resolution")
+    def test_gmsa_hint_not_shown_for_system_account(self, mock_resolve):
+        """Test that gMSA hint is NOT shown for NT AUTHORITY\\SYSTEM."""
+        mock_resolve.return_value = ("NT AUTHORITY\\SYSTEM", "SYSTEM")
+
+        lines = format_block(
+            kind="TASK",
+            rel_path="Tasks\\SystemTask",
+            runas="NT AUTHORITY\\SYSTEM",
+            what="system.exe",
+            author="Admin",
+            date="2023-01-01",
+        )
+
+        text = "\n".join(lines)
+        assert "gMSA Hint" not in text
+
+    @patch("taskhound.output.printer.format_runas_with_sid_resolution")
+    def test_gmsa_hint_not_shown_for_local_service(self, mock_resolve):
+        """Test that gMSA hint is NOT shown for NT AUTHORITY\\LOCAL SERVICE."""
+        mock_resolve.return_value = ("NT AUTHORITY\\LOCAL SERVICE", "LOCAL SERVICE")
+
+        lines = format_block(
+            kind="TASK",
+            rel_path="Tasks\\LocalServiceTask",
+            runas="NT AUTHORITY\\LOCAL SERVICE",
+            what="service.exe",
+            author="Admin",
+            date="2023-01-01",
+        )
+
+        text = "\n".join(lines)
+        assert "gMSA Hint" not in text
+
+    @patch("taskhound.output.printer.format_runas_with_sid_resolution")
+    def test_gmsa_hint_shown_with_resolved_username(self, mock_resolve):
+        """Test that gMSA hint works when username is resolved from SID."""
+        mock_resolve.return_value = ("DOMAIN\\SQLService$", "SQLService$")
+
+        lines = format_block(
+            kind="TASK",
+            rel_path="Tasks\\SQLTask",
+            runas="S-1-5-21-1234567890-1234567890-1234567890-1234",
+            what="sqlserver.exe",
+            author="Admin",
+            date="2023-01-01",
+            resolved_runas="DOMAIN\\SQLService$",
+        )
+
+        text = "\n".join(lines)
+        assert "gMSA Hint" in text
+        assert "LSA secrets" in text

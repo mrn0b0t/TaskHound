@@ -114,6 +114,54 @@ def format_trigger_info(meta: Dict[str, str]) -> Optional[str]:
     return " ".join(trigger_parts) if len(trigger_parts) > 1 else trigger_type
 
 
+def _check_gmsa_account(display_runas: str, resolved_username: Optional[str] = None) -> Optional[str]:
+    """
+    Check if the runas account is a gMSA (Group Managed Service Account).
+    
+    gMSA accounts:
+    - End with '$' character
+    - Are NOT machine/computer accounts (typically match computer name)
+    - Are NOT well-known system accounts (NT AUTHORITY, etc.)
+    
+    Args:
+        display_runas: The display string for the runas account
+        resolved_username: The resolved username (if SID was resolved)
+    
+    Returns:
+        Hint message if gMSA detected, None otherwise
+    """
+    # Get the username to check - prefer resolved, fall back to display
+    username = resolved_username or display_runas
+    if not username:
+        return None
+    
+    # Extract just the username part (remove domain prefix)
+    if "\\" in username:
+        username = username.split("\\")[-1]
+    elif "@" in username:
+        username = username.split("@")[0]
+    
+    # Check if it ends with $ (service or machine account)
+    if not username.endswith("$"):
+        return None
+    
+    # Skip well-known system accounts
+    well_known_skip = {
+        "system", "local service", "network service", 
+        "nt authority", "nt service", "iis apppool"
+    }
+    username_lower = username.lower()
+    display_lower = display_runas.lower()
+    
+    for skip in well_known_skip:
+        if skip in display_lower:
+            return None
+    
+    # At this point we have an account ending with $
+    # This is likely a gMSA - machine accounts are less common for scheduled tasks
+    return "gMSA credentials are stored in LSA secrets, not DPAPI. Consider LSA dump if you have SYSTEM access."
+
+
 def format_block(
     kind: str,
     rel_path: str,
@@ -357,6 +405,12 @@ def format_block(
     # Show decrypted password if available
     if decrypted_password:
         base.append(f"        Decrypted Password : {decrypted_password}")
+
+    # Check if this is a gMSA account and add hint about LSA secrets
+    # gMSA accounts end with $ but are not machine accounts (COMPUTERNAME$) or well-known system accounts
+    gmsa_hint = _check_gmsa_account(display_runas, resolved_username)
+    if gmsa_hint:
+        base.append(f"        gMSA Hint : {gmsa_hint}")
 
     if kind in ["TIER-0", "PRIV"]:
         if extra_reason:
