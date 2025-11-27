@@ -80,17 +80,17 @@ def smb_connect(
 def smb_negotiate(target: str, timeout: int = 60) -> SMBConnection:
     """
     Create an SMBConnection and perform negotiation only (no authentication).
-    
+
     This is useful for LAPS mode where we need to discover the hostname
     before we know which credentials to use.
-    
+
     Args:
         target: Target IP or hostname
         timeout: Connection timeout in seconds
-        
+
     Returns:
         SMBConnection after negotiate (not yet authenticated)
-        
+
     The caller can then:
     1. Call smb.getServerName() to get the hostname
     2. Look up credentials based on hostname
@@ -109,10 +109,10 @@ def smb_login(
 ) -> None:
     """
     Authenticate an existing SMBConnection.
-    
+
     This is the second half of a two-phase connection, used for LAPS mode
     where we negotiate first, then authenticate with looked-up credentials.
-    
+
     Args:
         smb: Existing SMBConnection (after negotiate)
         domain: Domain name (use "." for local accounts like LAPS)
@@ -155,13 +155,13 @@ def smb_connect_with_laps(
 ) -> Tuple[SMBConnection, str, Optional[str], bool]:
     """
     Connect to target using LAPS credentials if available.
-    
+
     This function implements the optimized LAPS flow:
     1. Create SMB connection (negotiate only)
     2. Extract hostname from negotiate response
     3. Look up LAPS password for that hostname
     4. Authenticate with LAPS credentials (or fallback if not found)
-    
+
     Args:
         target: Target IP or hostname
         laps_cache: LAPSCache with LAPS passwords
@@ -172,7 +172,7 @@ def smb_connect_with_laps(
         fallback_kerberos: Use Kerberos for fallback auth
         dc_ip: Domain controller IP
         timeout: Connection timeout
-        
+
     Returns:
         Tuple of (smb_connection, hostname, laps_type_used, used_laps)
         - smb_connection: Authenticated SMBConnection

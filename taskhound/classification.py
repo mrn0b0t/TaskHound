@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from .utils.logging import warn
 from .utils.sid_resolver import looks_like_domain_user
@@ -29,6 +29,9 @@ class ClassificationResult:
 
 # Type alias for pre-fetched password data: username -> pwdLastSet datetime
 PwdLastSetCache = Dict[str, datetime]
+
+# Type alias for pre-fetched Tier-0 membership data: username -> (is_tier0, group_list)
+Tier0Cache = Dict[str, Tuple[bool, List[str]]]
 
 
 def _get_task_date_for_analysis(meta: Dict) -> Tuple[Optional[str], bool]:
@@ -96,12 +99,12 @@ def _analyze_password_age(
     if pwd_cache and task_date:
         try:
             from .parsers.highvalue import _analyze_password_freshness
-            
+
             # Normalize username for lookup
             norm_user = runas.split("\\")[-1].lower() if "\\" in runas else runas.lower()
-            
+
             pwd_last_set = pwd_cache.get(norm_user)
-            
+
             if pwd_last_set:
                 risk_level, pwd_analysis = _analyze_password_freshness(task_date, pwd_last_set)
                 if risk_level != "UNKNOWN":
@@ -122,6 +125,7 @@ def classify_task(
     show_unsaved_creds: bool,
     include_local: bool,
     pwd_cache: Optional[PwdLastSetCache] = None,
+    tier0_cache: Optional[Tier0Cache] = None,
 ) -> ClassificationResult:
     """
     Classify a task as TIER-0, PRIV, or TASK based on the runas account.
@@ -138,6 +142,7 @@ def classify_task(
         show_unsaved_creds: Whether to include tasks without saved credentials
         include_local: Whether to include local system accounts
         pwd_cache: Pre-fetched dict of username -> pwdLastSet datetime
+        tier0_cache: Pre-fetched dict of username -> (is_tier0, group_list) from LDAP
 
     Returns:
         ClassificationResult with task_type, reason, password_analysis, should_include
@@ -153,8 +158,9 @@ def classify_task(
         )
 
     # Check for Tier 0 first, then high-value
+    # Priority: BloodHound data > LDAP tier0_cache
     if hv and hv.loaded:
-        # Check Tier 0 classification
+        # Check Tier 0 classification via BloodHound
         is_tier0, tier0_reasons = hv.check_tier0(runas)
         if is_tier0:
             reason = "; ".join(tier0_reasons)
@@ -198,6 +204,35 @@ def classify_task(
                 password_analysis=password_analysis,
                 should_include=True,
             )
+
+    # Check LDAP-based Tier-0 detection (when BloodHound not available)
+    elif tier0_cache:
+        # Normalize username for lookup
+        norm_user = runas.split("\\")[-1].lower() if "\\" in runas else runas.lower()
+        tier0_result = tier0_cache.get(norm_user)
+
+        if tier0_result:
+            is_tier0, groups = tier0_result
+            if is_tier0:
+                reason = f"Tier-0 via LDAP: member of {', '.join(groups)}"
+                password_analysis = None
+
+                if has_no_saved_creds:
+                    reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
+                else:
+                    password_analysis = _analyze_password_age(hv, runas, meta, rel_path, pwd_cache)
+
+                # Update row in place
+                row.type = TaskType.TIER0.value
+                row.reason = reason
+                row.password_analysis = password_analysis
+
+                return ClassificationResult(
+                    task_type="TIER-0",
+                    reason=reason,
+                    password_analysis=password_analysis,
+                    should_include=True,
+                )
 
     # Regular task - still analyze password age if credentials are stored
     password_analysis = None

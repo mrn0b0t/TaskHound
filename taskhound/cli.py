@@ -209,24 +209,25 @@ def main():
         )
 
         # Common kwargs for process_target
-        process_kwargs = dict(
-            auth=auth,
-            include_ms=args.include_ms,
-            include_local=args.include_local,
-            hv=hv,
-            debug=args.debug,
-            show_unsaved_creds=args.unsaved_creds,
-            backup_dir=args.backup,
-            credguard_detect=args.credguard_detect,
-            no_ldap=args.no_ldap,
-            loot=args.loot,
-            dpapi_key=args.dpapi_key,
-            bh_connector=bh_connector,
-            concise=not args.verbose,
-            opsec=args.opsec,
-            laps_cache=laps_cache,
-            validate_creds=args.validate_creds,
-        )
+        process_kwargs = {
+            "auth": auth,
+            "include_ms": args.include_ms,
+            "include_local": args.include_local,
+            "hv": hv,
+            "debug": args.debug,
+            "show_unsaved_creds": args.unsaved_creds,
+            "backup_dir": args.backup,
+            "credguard_detect": args.credguard_detect,
+            "no_ldap": args.no_ldap,
+            "loot": args.loot,
+            "dpapi_key": args.dpapi_key,
+            "bh_connector": bh_connector,
+            "concise": not args.verbose,
+            "opsec": args.opsec,
+            "laps_cache": laps_cache,
+            "validate_creds": args.validate_creds,
+            "ldap_tier0": args.ldap_tier0,
+        }
 
         # Parallel mode (--threads > 1)
         if args.threads > 1:
@@ -240,7 +241,7 @@ def main():
 
             start_time = time.perf_counter()
             results = async_engine.run(targets, process_target, **process_kwargs)
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            _ = (time.perf_counter() - start_time) * 1000  # elapsed_ms for future use
 
             # Aggregate results
             all_rows, laps_failures, laps_successes = aggregate_results(results)
@@ -307,7 +308,9 @@ def main():
     # Print summary by default (unless disabled)
     if not args.no_summary:
         backup_dir = args.backup if hasattr(args, "backup") and args.backup else None
-        print_summary_table(all_rows, backup_dir, hv_loaded)
+        # Tier-0 detection is available if we have BloodHound data OR --ldap-tier0
+        has_tier0_detection = hv_loaded or args.ldap_tier0
+        print_summary_table(all_rows, backup_dir, has_tier0_detection)
 
         # Print LAPS summary if LAPS was used
         if laps_cache is not None:

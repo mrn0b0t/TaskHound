@@ -91,6 +91,10 @@ def load_config() -> Dict[str, Any]:
         defaults["target"] = target["target"]
     if "targets_file" in target:
         defaults["targets_file"] = target["targets_file"]
+    if "threads" in target:
+        defaults["threads"] = target["threads"]
+    if "rate_limit" in target:
+        defaults["rate_limit"] = target["rate_limit"]
 
     # Scanning
     scan = config_data.get("scanning", {})
@@ -133,6 +137,11 @@ def load_config() -> Dict[str, Any]:
     cred_validation = config_data.get("credential_validation", {})
     if "enabled" in cred_validation:
         defaults["validate_creds"] = cred_validation["enabled"]
+
+    # DPAPI
+    dpapi = config_data.get("dpapi", {})
+    if "key" in dpapi:
+        defaults["dpapi_key"] = dpapi["key"]
 
     # BloodHound
     bh = config_data.get("bloodhound", {})
@@ -190,6 +199,8 @@ def load_config() -> Dict[str, Any]:
         defaults["ldap_hashes"] = ldap["hashes"]
     if "domain" in ldap:
         defaults["ldap_domain"] = ldap["domain"]
+    if "tier0" in ldap:
+        defaults["ldap_tier0"] = ldap["tier0"]
 
     # Output
     output = config_data.get("output", {})
@@ -420,6 +431,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ldap.add_argument(
         "--ldap-domain", help="Alternative domain for SID lookup (can be different from main auth domain)"
+    )
+    ldap.add_argument(
+        "--ldap-tier0",
+        action="store_true",
+        help="Enable LDAP-based Tier-0 detection via group membership queries. Checks if runas accounts are members of privileged groups (Domain Admins, Enterprise Admins, etc.) without requiring BloodHound data.",
     )
 
     # LAPS (Local Administrator Password Solution) options

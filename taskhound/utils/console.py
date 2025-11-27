@@ -135,17 +135,17 @@ def _is_debug() -> bool:
 def scan_progress(total: int, description: str = "Scanning"):
     """
     Context manager for showing a progress bar during async scanning.
-    
+
     Usage:
         with scan_progress(len(targets), "Scanning targets") as update:
             for target in targets:
                 process(target)
                 update(target)  # Updates progress and shows current target
-    
+
     Args:
         total: Total number of items to process
         description: Description shown in progress bar
-        
+
     Yields:
         update function that takes (current_item, success=True, error_msg=None)
     """
@@ -175,10 +175,7 @@ def scan_progress(total: int, description: str = "Scanning"):
             status_text = f"[green]✓[/] {item}"
         else:
             stats["failed"] += 1
-            if error_msg:
-                status_text = f"[red]✗[/] {item}: {error_msg[:30]}"
-            else:
-                status_text = f"[red]✗[/] {item}"
+            status_text = f"[red]✗[/] {item}: {error_msg[:30]}" if error_msg else f"[red]✗[/] {item}"
 
         progress.update(task_id, advance=1, status=status_text)
 
@@ -212,15 +209,15 @@ def update_progress_status(status_text: str):
 def spinner(description: str = "Processing"):
     """
     Context manager for showing an indeterminate spinner during long operations.
-    
+
     Use for operations where we don't know the total progress (e.g., API calls,
     waiting for remote processing).
-    
+
     Example:
         with spinner("Uploading to BloodHound"):
             upload_data()
             wait_for_processing()
-    
+
     Args:
         description: Text to show next to the spinner
     """
@@ -232,7 +229,7 @@ def spinner(description: str = "Processing"):
         transient=True,  # Remove when done
     )
 
-    task_id = progress.add_task(description, total=None)  # None = indeterminate
+    progress.add_task(description, total=None)  # None = indeterminate
 
     try:
         with progress:
@@ -282,7 +279,7 @@ def print_summary_table(
 ):
     """
     Print a rich summary table with host statistics.
-    
+
     Args:
         host_stats: Dict of {hostname: {tier0, privileged, normal, status, failure_reason}}
         has_hv_data: Whether high-value data was loaded
@@ -353,7 +350,7 @@ def print_summary_table(
     # Additional hints
     if not has_hv_data:
         console.print(
-            "[dim]Note: Tier-0/Privileged detection requires --bh-data or --bh-live[/]"
+            "[dim]Note: Tier-0/Privileged detection requires --bh-data, --bh-live, or --ldap-tier0[/]"
         )
 
     if backup_dir:

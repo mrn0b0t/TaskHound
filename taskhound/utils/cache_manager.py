@@ -346,15 +346,15 @@ class CacheManager:
     def try_mark_host_processed(self, fqdn: str, target: str) -> tuple[bool, Optional[str]]:
         """
         Atomically check if host is processed and mark it if not.
-        
+
         This is the thread-safe way to handle dual-homed host deduplication.
         Combines check + mark in a single atomic operation to prevent TOCTOU
         race conditions where two threads both pass the check before either marks.
-        
+
         Args:
             fqdn: Fully qualified domain name (e.g., "DC.domain.lab")
             target: The target (IP or hostname) trying to claim this host
-            
+
         Returns:
             (True, None) if this thread successfully marked the host (proceed with scan)
             (False, original_target) if already marked (skip, return who marked it first)

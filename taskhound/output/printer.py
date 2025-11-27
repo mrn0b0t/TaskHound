@@ -117,16 +117,16 @@ def format_trigger_info(meta: Dict[str, str]) -> Optional[str]:
 def _check_gmsa_account(display_runas: str, resolved_username: Optional[str] = None) -> Optional[str]:
     """
     Check if the runas account is a gMSA (Group Managed Service Account).
-    
+
     gMSA accounts:
     - End with '$' character
     - Are NOT machine/computer accounts (typically match computer name)
     - Are NOT well-known system accounts (NT AUTHORITY, etc.)
-    
+
     Args:
         display_runas: The display string for the runas account
         resolved_username: The resolved username (if SID was resolved)
-    
+
     Returns:
         Hint message if gMSA detected, None otherwise
     """
@@ -134,29 +134,28 @@ def _check_gmsa_account(display_runas: str, resolved_username: Optional[str] = N
     username = resolved_username or display_runas
     if not username:
         return None
-    
+
     # Extract just the username part (remove domain prefix)
     if "\\" in username:
         username = username.split("\\")[-1]
     elif "@" in username:
         username = username.split("@")[0]
-    
+
     # Check if it ends with $ (service or machine account)
     if not username.endswith("$"):
         return None
-    
+
     # Skip well-known system accounts
     well_known_skip = {
-        "system", "local service", "network service", 
+        "system", "local service", "network service",
         "nt authority", "nt service", "iis apppool"
     }
-    username_lower = username.lower()
     display_lower = display_runas.lower()
-    
+
     for skip in well_known_skip:
         if skip in display_lower:
             return None
-    
+
     # At this point we have an account ending with $
     # This is likely a gMSA - machine accounts are less common for scheduled tasks
     return "gMSA credentials are stored in LSA secrets, not DPAPI. Consider LSA dump if you have SYSTEM access."
@@ -206,10 +205,7 @@ def format_block(
     if resolved_runas:
         # Already resolved - format display string
         from ..utils.sid_resolver import is_sid
-        if is_sid(runas):
-            display_runas = f"{resolved_runas} ({runas})"
-        else:
-            display_runas = runas
+        display_runas = f"{resolved_runas} ({runas})" if is_sid(runas) else runas
         resolved_username = resolved_runas
     else:
         # Resolve SID in RunAs field for better display (uses 4-tier fallback: offline BH → API → SMB → LDAP)
@@ -270,25 +266,25 @@ def format_block(
     # Add task state information as first field
     if enabled is not None:
         enabled_display = enabled.capitalize() if enabled.lower() in ["true", "false"] else enabled
-        base.append(f"        Enabled : {enabled_display}")
+        base.append(f"        Enabled            : {enabled_display}")
 
     # Add other task information with proper alignment
-    base.extend([f"        RunAs   : {display_runas}", f"        What    : {what}"])
+    base.extend([f"        RunAs              : {display_runas}", f"        What               : {what}"])
     if author:
-        base.append(f"        Author  : {author}")
+        base.append(f"        Author             : {author}")
     if date:
-        base.append(f"        Date    : {date}")
+        base.append(f"        Date               : {date}")
 
     # Add trigger information if available
     if meta:
         trigger_info = format_trigger_info(meta)
         if trigger_info:
-            base.append(f"        Trigger : {trigger_info}")
+            base.append(f"        Trigger            : {trigger_info}")
 
     # Add password analysis if available - show for ALL task types
     # Even [TASK] entries benefit from knowing if credentials are fresh/stale
     if password_analysis:
-        base.append(f"        Password Analysis : {password_analysis}")
+        base.append(f"        Pwd Analysis       : {password_analysis}")
 
     # Add credential validation results if available (from --validate-creds)
     # Logic: RPC validation is authoritative when available, but falls back to
@@ -312,10 +308,7 @@ def format_block(
             else:
                 status_display = f"[?] UNKNOWN - task never ran ({cred_code})"
         elif cred_valid is True:
-            if cred_hijackable:
-                status_display = "[+] VALID (hijackable)"
-            else:
-                status_display = f"[+] VALID (restricted: {cred_status})"
+            status_display = "[+] VALID (hijackable)" if cred_hijackable else f"[+] VALID (restricted: {cred_status})"
         elif cred_status == "invalid":
             status_display = "[-] INVALID (wrong password)"
         elif cred_status == "blocked":
@@ -323,13 +316,13 @@ def format_block(
         else:
             status_display = f"[?] {cred_status} ({cred_code})"
 
-        base.append(f"        Cred Validation : {status_display}")
-        
+        base.append(f"        Cred Validation    : {status_display}")
+
         # Show detailed credential validation info
         # Last run time (human readable)
         if cred_last_run:
-            base.append(f"        Last Run        : {cred_last_run}")
-        
+            base.append(f"        Last Run           : {cred_last_run}")
+
         # Return code with description
         if cred_code:
             from ..smb.task_rpc import get_return_code_description
@@ -337,13 +330,13 @@ def format_block(
             try:
                 code_int = int(cred_code, 16) if cred_code.startswith("0x") else int(cred_code)
                 code_desc = get_return_code_description(code_int)
-                base.append(f"        Return Code     : {cred_code} ({code_desc})")
+                base.append(f"        Return Code        : {cred_code} ({code_desc})")
             except (ValueError, TypeError):
-                base.append(f"        Return Code     : {cred_code}")
-        
+                base.append(f"        Return Code        : {cred_code}")
+
         # Show detail for restricted accounts or failures
         if cred_detail and not cred_hijackable:
-            base.append(f"        Cred Detail     : {cred_detail}")
+            base.append(f"        Cred Detail        : {cred_detail}")
 
     # Check if we have a decrypted password for this user - show for ALL task types
     # Even [TASK] entries may have useful credentials (lateral movement, password reuse)
@@ -352,11 +345,11 @@ def format_block(
         # Use resolved_username if available (handles SID-only runas fields)
         # Also try the display_runas which may have "username (SID)" format
         usernames_to_try = []
-        
+
         # Add resolved username from SID resolution
         if resolved_username:
             usernames_to_try.append(resolved_username.lower())
-        
+
         # Also try extracting from display_runas format "username (S-1-5-21-...)"
         display_runas_lower = display_runas.lower()
         if " (s-1-5-" in display_runas_lower:
@@ -367,7 +360,7 @@ def format_block(
             # Not a raw SID, add as-is
             if display_runas_lower not in usernames_to_try:
                 usernames_to_try.append(display_runas_lower)
-        
+
         # Try the original runas if it's not a raw SID
         runas_normalized = runas.lower()
         if not runas_normalized.startswith("s-1-5-"):
@@ -377,11 +370,11 @@ def format_block(
                     usernames_to_try.append(username_part)
             elif runas_normalized not in usernames_to_try:
                 usernames_to_try.append(runas_normalized)
-        
+
         for cred in decrypted_creds:
             if cred.username:
                 cred_user_normalized = cred.username.lower()
-                
+
                 for try_username in usernames_to_try:
                     # Match full domain\user or partial matches
                     if cred_user_normalized == try_username:
@@ -398,33 +391,33 @@ def format_block(
                         if try_username.split("\\")[-1] == cred_user_normalized:
                             decrypted_password = cred.password
                             break
-                
+
                 if decrypted_password:
                     break
 
     # Show decrypted password if available
     if decrypted_password:
-        base.append(f"        Decrypted Password : {decrypted_password}")
+        base.append(f"        Decrypted Pwd      : {decrypted_password}")
 
     # Check if this is a gMSA account and add hint about LSA secrets
     # gMSA accounts end with $ but are not machine accounts (COMPUTERNAME$) or well-known system accounts
     gmsa_hint = _check_gmsa_account(display_runas, resolved_username)
     if gmsa_hint:
-        base.append(f"        gMSA Hint : {gmsa_hint}")
+        base.append(f"        gMSA Hint          : {gmsa_hint}")
 
     if kind in ["TIER-0", "PRIV"]:
         if extra_reason:
-            base.append(f"        Reason  : {extra_reason}")
+            base.append(f"        Reason             : {extra_reason}")
         elif kind == "TIER-0":
-            base.append("        Reason  : Tier 0 privileged group membership")
+            base.append("        Reason             : Tier 0 privileged group membership")
         else:
             base.append(
-                "        Reason  : High Value match found (Check BloodHound Outbound Object Control for Details)"
+                "        Reason             : High Value match found (Check BloodHound Outbound Object Control for Details)"
             )
 
         # Show next step hint only if we didn't find a decrypted password
         if not decrypted_password and (not extra_reason or "no saved credentials" not in extra_reason.lower()):
-            base.append("        Next Step: Try DPAPI Dump / Task Manipulation")
+            base.append("        Next Step          : Try DPAPI Dump / Task Manipulation")
 
     return base
 

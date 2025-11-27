@@ -52,11 +52,11 @@ class TestPrinter:
 
         text = "\n".join(lines)
         assert "[TASK] Tasks\\MyTask" in text
-        assert "Enabled : True" in text
-        assert "RunAs   : DOMAIN\\User" in text
-        assert "What    : cmd.exe" in text
-        assert "Author  : Admin" in text
-        assert "Date    : 2023-01-01" in text
+        assert "Enabled            : True" in text
+        assert "RunAs              : DOMAIN\\User" in text
+        assert "What               : cmd.exe" in text
+        assert "Author             : Admin" in text
+        assert "Date               : 2023-01-01" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_format_block_tier0(self, mock_resolve):
@@ -75,7 +75,7 @@ class TestPrinter:
 
         text = "\n".join(lines)
         assert "[TIER-0] Tasks\\AdminTask" in text
-        assert "Reason  : Tier 0 privileged group membership" in text
+        assert "Reason             : Tier 0 privileged group membership" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_format_block_with_decrypted_creds(self, mock_resolve):
@@ -101,7 +101,7 @@ class TestPrinter:
 
         text = "\n".join(lines)
         assert "[PRIV] Tasks\\UserTask" in text
-        assert "Decrypted Password : SecretPassword123!" in text
+        assert "Decrypted Pwd      : SecretPassword123!" in text
 
 
 class TestFormatTriggerInfoExtended:
@@ -354,7 +354,7 @@ class TestFormatBlockWithResolvedRunas:
         )
 
         text = "\n".join(lines)
-        assert "RunAs   : DOMAIN\\User" in text
+        assert "RunAs              : DOMAIN\\User" in text
         # Should not show SID format
         assert "(S-1-5-" not in text
 
@@ -406,7 +406,7 @@ class TestFormatBlockCredValidation:
 
         text = "\n".join(lines)
         assert "[+] VALID (restricted: logon_as_batch)" in text
-        assert "Cred Detail     : User has SeLogonAsBatchJob right" in text
+        assert "Cred Detail        : User has SeLogonAsBatchJob right" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_invalid(self, mock_resolve):
@@ -555,7 +555,7 @@ class TestFormatBlockTaskKind:
         )
 
         text = "\n".join(lines)
-        assert "Password Analysis : GOOD - password valid" in text
+        assert "Pwd Analysis       : GOOD - password valid" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_task_with_cred_validation(self, mock_resolve):
@@ -604,7 +604,7 @@ class TestFormatBlockTaskKind:
 
         text = "\n".join(lines)
         assert "[TASK] Tasks\\LowPrivTask" in text
-        assert "Decrypted Password : LowPrivPassword123!" in text
+        assert "Decrypted Pwd      : LowPrivPassword123!" in text
         # TASK kind should NOT show "Reason" or "Next Step" like TIER-0/PRIV
         assert "Reason" not in text
         assert "Next Step" not in text
@@ -634,7 +634,7 @@ class TestFormatBlockDecryptedCredMatching:
         )
 
         text = "\n".join(lines)
-        assert "Decrypted Password : FoundPassword!" in text
+        assert "Decrypted Pwd      : FoundPassword!" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_no_creds_shows_next_step(self, mock_resolve):
@@ -651,7 +651,7 @@ class TestFormatBlockDecryptedCredMatching:
         )
 
         text = "\n".join(lines)
-        assert "Next Step: Try DPAPI Dump / Task Manipulation" in text
+        assert "Next Step          : Try DPAPI Dump / Task Manipulation" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_no_saved_creds_reason_hides_next_step(self, mock_resolve):
@@ -754,7 +754,7 @@ class TestFormatBlockMeta:
         )
 
         text = "\n".join(lines)
-        assert "Trigger : Calendar (starts 2023-06-01 08:00)" in text
+        assert "Trigger            : Calendar (starts 2023-06-01 08:00)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_format_block_no_trigger(self, mock_resolve):
@@ -772,7 +772,7 @@ class TestFormatBlockMeta:
         )
 
         text = "\n".join(lines)
-        assert "Trigger :" not in text
+        assert "Trigger            :" not in text
 
 
 class TestGMSADetection:

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from impacket.smbconnection import SessionError
 
 from ..auth import AuthContext
-from ..classification import classify_task, PwdLastSetCache
+from ..classification import PwdLastSetCache, classify_task
 from ..laps import (
     LAPS_ERRORS,
     LAPSCache,
@@ -38,7 +38,10 @@ from ..smb.task_rpc import CredentialStatus, TaskRunInfo, TaskSchedulerRPC
 from ..smb.tasks import crawl_tasks, smb_listdir
 from ..utils.logging import debug as log_debug
 from ..utils.logging import good, info, status, warn
-from ..utils.sid_resolver import format_runas_with_sid_resolution, is_sid
+from ..utils.sid_resolver import (
+    format_runas_with_sid_resolution,
+    is_sid,
+)
 from .helpers import sort_tasks_by_priority
 
 
@@ -68,12 +71,11 @@ def _match_decrypted_password(runas: str, decrypted_creds: List, resolved_runas:
     # If we have a pre-resolved username, use it
     if resolved_runas:
         usernames_to_try.append(resolved_runas.lower())
-    
+
     # Also try the original runas if it's not a raw SID
     runas_normalized = runas.lower()
-    if not is_sid(runas):
-        if runas_normalized not in usernames_to_try:
-            usernames_to_try.append(runas_normalized)
+    if not is_sid(runas) and runas_normalized not in usernames_to_try:
+        usernames_to_try.append(runas_normalized)
 
     # If no valid usernames to try (unresolved SID), can't match
     if not usernames_to_try:
@@ -122,6 +124,7 @@ def process_target(
     opsec: bool = False,
     laps_cache: Optional[LAPSCache] = None,
     validate_creds: bool = False,
+    ldap_tier0: bool = False,
 ) -> Tuple[List[str], Optional[Union[bool, LAPSFailure]]]:
     """
     Connect to `target`, enumerate scheduled tasks, and return printable lines.
@@ -145,6 +148,7 @@ def process_target(
         opsec: Enable OPSEC mode
         laps_cache: LAPS credential cache (if LAPS mode enabled)
         validate_creds: Query Task Scheduler RPC to validate stored credentials
+        ldap_tier0: Check Tier-0 group membership via LDAP (when no BloodHound data)
 
     Returns:
         Tuple of (lines, laps_result) where:
@@ -552,7 +556,7 @@ def process_target(
     if not no_ldap and not opsec and (not hv or not hv.loaded):
         # Collect unique runas users from all tasks with stored credentials
         unique_users = set()
-        for rel_path, xml_bytes in items:
+        for _rel_path, xml_bytes in items:
             meta = parse_task_xml(xml_bytes)
             runas = meta.get("runas")
             if not runas:
@@ -563,17 +567,17 @@ def process_target(
                 # Skip SIDs - we can't look them up by SID in LDAP easily
                 if not is_sid(runas):
                     unique_users.add(runas)
-        
+
         if unique_users:
             info(f"{target}: Querying LDAP for password age data ({len(unique_users)} users)...")
             try:
                 from ..utils.sid_resolver import batch_get_user_attributes
-                
+
                 ldap_auth_domain = ldap_domain or domain
                 ldap_auth_user = ldap_user or username
                 ldap_auth_pass = ldap_password or password
                 ldap_auth_hashes = ldap_hashes or hashes
-                
+
                 results = batch_get_user_attributes(
                     usernames=list(unique_users),
                     domain=ldap_auth_domain,
@@ -584,22 +588,55 @@ def process_target(
                     kerberos=kerberos,
                     attributes=["pwdLastSet", "sAMAccountName"],
                 )
-                
+
                 # Build cache: normalized_username -> pwdLastSet datetime
                 for norm_user, attrs in results.items():
                     pwd_last_set = attrs.get("pwdLastSet")
                     if pwd_last_set:
                         pwd_cache[norm_user] = pwd_last_set
-                
+
                 if pwd_cache:
                     good(f"{target}: Retrieved password age data for {len(pwd_cache)} users")
                 else:
                     info(f"{target}: No password age data available from LDAP")
-                    
+
             except Exception as e:
                 warn(f"{target}: LDAP batch query failed: {e}")
                 if debug:
                     traceback.print_exc()
+
+    # Pre-fetch Tier-0 group members via LDAP (pre-flight approach)
+    # This queries each Tier-0 group once and builds a lookup cache
+    # Only enabled with --ldap-tier0 flag (OPSEC: group membership queries may be logged)
+    tier0_cache: Dict[str, Tuple[bool, list]] = {}  # username -> (is_tier0, group_list)
+    if ldap_tier0 and not no_ldap and (not hv or not hv.loaded):
+        info(f"{target}: Fetching Tier-0 group members via LDAP (pre-flight)...")
+        try:
+            from ..utils.sid_resolver import fetch_tier0_members
+
+            ldap_auth_domain = ldap_domain or domain
+            ldap_auth_user = ldap_user or username
+            ldap_auth_pass = ldap_password or password
+            ldap_auth_hashes = ldap_hashes or hashes
+
+            tier0_cache = fetch_tier0_members(
+                domain=ldap_auth_domain,
+                dc_ip=dc_ip,
+                auth_username=ldap_auth_user,
+                auth_password=ldap_auth_pass,
+                hashes=ldap_auth_hashes,
+                kerberos=kerberos,
+            )
+
+            if tier0_cache:
+                good(f"{target}: Loaded {len(tier0_cache)} Tier-0 users from LDAP")
+            else:
+                info(f"{target}: No Tier-0 users found in domain")
+
+        except Exception as e:
+            warn(f"{target}: LDAP Tier-0 pre-flight failed: {e}")
+            if debug:
+                traceback.print_exc()
 
     for rel_path, xml_bytes in items:
         meta = parse_task_xml(xml_bytes)
@@ -697,6 +734,7 @@ def process_target(
 
         # Use shared classification logic
         # pwd_cache was pre-fetched before the loop for password freshness analysis
+        # tier0_cache was pre-fetched for LDAP-based Tier-0 detection (when --ldap-tier0)
         result = classify_task(
             row=row,
             meta=meta,
@@ -706,6 +744,7 @@ def process_target(
             show_unsaved_creds=show_unsaved_creds,
             include_local=include_local,
             pwd_cache=pwd_cache,
+            tier0_cache=tier0_cache,
         )
 
         if not result.should_include:

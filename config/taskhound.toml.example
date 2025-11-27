@@ -6,7 +6,7 @@
 # Priority: CLI Args > Env Vars > Local Config > User Config > Defaults
 
 [authentication]
-# Default credentials (use with caution!)
+# Default credentials
 # username = "svc_taskhound"
 # domain = "CORP.LOCAL"
 # password = "Password123!"
@@ -19,6 +19,8 @@
 # target = "10.0.0.1"
 # targets_file = "targets.txt"
 # timeout = 60
+# threads = 10  # Parallel workers for multi-target scans (default: 1)
+# rate_limit = 5.0  # Max targets per second (default: unlimited)
 
 [scanning]
 # Default scan options
@@ -75,6 +77,11 @@ color = "#8B5CF6"
 # password = "password"
 # hashes = "LM:NT"
 # domain = "domain.local"
+# tier0 = false  # Enable LDAP-based Tier-0 detection via group membership queries
+
+[dpapi]
+# DPAPI credential decryption settings
+# key = "0x51e43225e5b43b25d3768a2ae7f99934cb35d3ea"  # DPAPI_SYSTEM userkey from LSA secrets
 
 [output]
 # plain = "./output/plain"

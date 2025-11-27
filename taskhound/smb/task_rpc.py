@@ -7,6 +7,7 @@ if stored credentials are valid based on return codes.
 Requires RPC_C_AUTHN_LEVEL_PKT_PRIVACY authentication level.
 """
 
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -198,10 +199,8 @@ class TaskSchedulerRPC:
     def disconnect(self) -> None:
         """Close RPC connection."""
         if self._dce:
-            try:
+            with contextlib.suppress(Exception):
                 self._dce.disconnect()
-            except Exception:
-                pass
             self._dce = None
 
     def __enter__(self):
@@ -327,12 +326,12 @@ class TaskSchedulerRPC:
     ) -> dict[str, TaskRunInfo]:
         """
         Validate credentials for specific task paths.
-        
+
         Use this when you already have the list of password-authenticated
         tasks from SMB crawling - avoids redundant RPC enumeration.
 
         Args:
-            task_paths: List of task paths to validate. 
+            task_paths: List of task paths to validate.
                         Accepts SMB paths like "Windows\\System32\\Tasks\\MyTask"
                         or RPC paths like "\\MyTask"
 

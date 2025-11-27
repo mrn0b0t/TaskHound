@@ -1,6 +1,7 @@
 from typing import Any, List
 
-from ..utils.console import console, print_summary_table as rich_summary_table
+from ..utils.console import console
+from ..utils.console import print_summary_table as rich_summary_table
 
 
 def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data: bool = False):
@@ -41,10 +42,10 @@ def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data
 def print_decrypted_credentials(all_rows: List[Any]) -> int:
     """
     Print a summary of all decrypted credentials found during the scan.
-    
+
     This is always shown (not just in verbose mode) because decrypted
     credentials are high-value findings that users should not miss.
-    
+
     Returns:
         Number of decrypted credentials found
     """
@@ -52,19 +53,16 @@ def print_decrypted_credentials(all_rows: List[Any]) -> int:
     creds_found = []
     for row in all_rows:
         row_dict = row.to_dict() if hasattr(row, "to_dict") else row
-        
+
         decrypted_password = row_dict.get("decrypted_password")
         if decrypted_password:
             # Use resolved_runas if available, otherwise fall back to runas
             runas = row_dict.get("runas", "Unknown")
             resolved_runas = row_dict.get("resolved_runas")
-            
+
             # Format display: if we have resolved username for a SID, show "username (SID)"
-            if resolved_runas and runas.startswith("S-1-5-"):
-                display_runas = f"{resolved_runas} ({runas})"
-            else:
-                display_runas = runas
-            
+            display_runas = f"{resolved_runas} ({runas})" if resolved_runas and runas.startswith("S-1-5-") else runas
+
             creds_found.append({
                 "host": row_dict.get("host", "Unknown"),
                 "path": row_dict.get("path", "Unknown"),
@@ -72,17 +70,17 @@ def print_decrypted_credentials(all_rows: List[Any]) -> int:
                 "password": decrypted_password,
                 "type": row_dict.get("type", "TASK"),
             })
-    
+
     if not creds_found:
         return 0
-    
+
     # Print header
     console.print()
     console.print("[bold cyan]═" * 70 + "[/]")
     console.print(f"[bold cyan]DECRYPTED CREDENTIALS ({len(creds_found)} found)[/]")
     console.print("[bold cyan]═" * 70 + "[/]")
     console.print()
-    
+
     # Group by host for cleaner output
     creds_by_host = {}
     for cred in creds_found:
@@ -90,7 +88,7 @@ def print_decrypted_credentials(all_rows: List[Any]) -> int:
         if host not in creds_by_host:
             creds_by_host[host] = []
         creds_by_host[host].append(cred)
-    
+
     for host, creds in creds_by_host.items():
         console.print(f"[bold white]{host}[/]")
         for cred in creds:
@@ -101,13 +99,13 @@ def print_decrypted_credentials(all_rows: List[Any]) -> int:
                 type_color = "yellow"
             else:
                 type_color = "green"
-            
+
             console.print(f"  [{type_color}][{task_type}][/{type_color}] {cred['runas']}")
             console.print(f"          Task: {cred['path']}")
             console.print(f"          [bold green]Password: {cred['password']}[/]")
             console.print()
-    
+
     console.print("[bold cyan]═" * 70 + "[/]")
     console.print()
-    
+
     return len(creds_found)
