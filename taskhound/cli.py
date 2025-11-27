@@ -22,7 +22,7 @@ from .laps import (
 from .opengraph import generate_opengraph_files
 from .output.bloodhound import upload_opengraph_to_bloodhound
 from .output.printer import print_results
-from .output.summary import print_summary_table
+from .output.summary import print_decrypted_credentials, print_summary_table
 from .output.writer import write_csv, write_json, write_plain
 from .parsers.highvalue import HighValueLoader
 from .utils.cache_manager import init_cache
@@ -299,6 +299,10 @@ def main():
         write_csv(args.csv, all_rows)
     if args.opengraph:
         generate_opengraph_files(args.opengraph, all_rows)
+
+    # Print decrypted credentials summary (always shown when credentials found)
+    # This is printed BEFORE the summary table so high-value findings are visible
+    print_decrypted_credentials(all_rows)
 
     # Print summary by default (unless disabled)
     if not args.no_summary:

@@ -56,6 +56,7 @@ class TaskRow:
         cred_last_run: ISO timestamp of last task run
         cred_return_code: Hex return code from last execution
         cred_detail: Human-readable credential validation detail
+        resolved_runas: Resolved username if runas was a SID (for credential matching)
     """
 
     # Required fields (set during construction)
@@ -73,6 +74,7 @@ class TaskRow:
 
     # Task identity
     runas: Optional[str] = None
+    resolved_runas: Optional[str] = None  # Resolved username if runas was a SID
     command: Optional[str] = None
     arguments: Optional[str] = None
     author: Optional[str] = None
@@ -98,6 +100,9 @@ class TaskRow:
     cred_last_run: Optional[str] = None
     cred_return_code: Optional[str] = None
     cred_detail: Optional[str] = None
+
+    # DPAPI looted credentials
+    decrypted_password: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON/CSV export."""

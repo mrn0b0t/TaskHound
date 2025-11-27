@@ -38,7 +38,68 @@ from ..smb.task_rpc import CredentialStatus, TaskRunInfo, TaskSchedulerRPC
 from ..smb.tasks import crawl_tasks, smb_listdir
 from ..utils.logging import debug as log_debug
 from ..utils.logging import good, info, status, warn
+from ..utils.sid_resolver import format_runas_with_sid_resolution, is_sid
 from .helpers import sort_tasks_by_priority
+
+
+def _match_decrypted_password(runas: str, decrypted_creds: List, resolved_runas: Optional[str] = None) -> Optional[str]:
+    """
+    Match a task's runas field to decrypted credentials and return the password.
+
+    Handles various runas formats:
+    - Simple username: "highpriv"
+    - Domain\\user: "DOMAIN\\highpriv"
+    - Raw SID: "S-1-5-21-..." (uses resolved_runas if provided)
+
+    Args:
+        runas: The RunAs field from the task (may be raw SID)
+        decrypted_creds: List of ScheduledTaskCredential objects
+        resolved_runas: Pre-resolved username if runas was a SID (from earlier resolution)
+
+    Returns:
+        Decrypted password if found, None otherwise
+    """
+    if not decrypted_creds or not runas:
+        return None
+
+    # Build list of usernames to try matching
+    usernames_to_try = []
+
+    # If we have a pre-resolved username, use it
+    if resolved_runas:
+        usernames_to_try.append(resolved_runas.lower())
+    
+    # Also try the original runas if it's not a raw SID
+    runas_normalized = runas.lower()
+    if not is_sid(runas):
+        if runas_normalized not in usernames_to_try:
+            usernames_to_try.append(runas_normalized)
+
+    # If no valid usernames to try (unresolved SID), can't match
+    if not usernames_to_try:
+        return None
+
+    for cred in decrypted_creds:
+        if not cred.username:
+            continue
+
+        cred_user_normalized = cred.username.lower()
+
+        for try_username in usernames_to_try:
+            # Match full domain\user or partial matches
+            if cred_user_normalized == try_username:
+                # Exact match
+                return cred.password
+            elif "\\" in cred_user_normalized and "\\" not in try_username:
+                # Cred has domain, try_username doesn't - match on username part only
+                if cred_user_normalized.split("\\")[-1] == try_username:
+                    return cred.password
+            elif "\\" in try_username and "\\" not in cred_user_normalized:
+                # try_username has domain, cred doesn't - match on username part only
+                if try_username.split("\\")[-1] == cred_user_normalized:
+                    return cred.password
+
+    return None
 
 
 def process_target(
@@ -538,6 +599,31 @@ def process_target(
                 else:
                     row.cred_detail = f"Unknown status (code: {row.cred_return_code})"
 
+        # Resolve SID early if runas is a SID - store result for credential matching and output
+        # This ensures we only resolve once per task, and the result is available for all uses
+        if is_sid(runas):
+            _, row.resolved_runas = format_runas_with_sid_resolution(
+                runas,
+                hv_loader=hv,
+                bh_connector=bh_connector,
+                smb_connection=smb,
+                no_ldap=no_ldap,
+                domain=domain,
+                dc_ip=dc_ip,
+                username=username,
+                password=password,
+                hashes=hashes,
+                kerberos=kerberos,
+                ldap_domain=ldap_domain,
+                ldap_user=ldap_user,
+                ldap_password=ldap_password,
+                ldap_hashes=ldap_hashes,
+            )
+
+        # Enrich row with decrypted password if available from DPAPI loot
+        if decrypted_creds:
+            row.decrypted_password = _match_decrypted_password(runas, decrypted_creds, row.resolved_runas)
+
         # Add Credential Guard status to each row
         row.credential_guard = credguard_status
         # Determine if the task stores credentials or runs with token/S4U (no saved credentials)
@@ -597,6 +683,7 @@ def process_target(
                     decrypted_creds=decrypted_creds,
                     concise=concise,
                     cred_validation=row.to_dict() if row.cred_status else None,
+                    resolved_runas=row.resolved_runas,
                 )
             )
             priv_count += 1
@@ -630,6 +717,7 @@ def process_target(
                     decrypted_creds=decrypted_creds,
                     concise=concise,
                     cred_validation=row.to_dict() if row.cred_status else None,
+                    resolved_runas=row.resolved_runas,
                 )
             )
 

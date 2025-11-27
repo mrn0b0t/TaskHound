@@ -142,6 +142,7 @@ def format_block(
     decrypted_creds: Optional[List] = None,
     concise: bool = False,
     cred_validation: Optional[Dict[str, Any]] = None,
+    resolved_runas: Optional[str] = None,
 ) -> List[str]:
     # Format a small pretty-print block used by the CLI output.
     #
@@ -153,31 +154,66 @@ def format_block(
     else:
         header = "[TASK]"
 
-    # Resolve SID in RunAs field for better display (uses 4-tier fallback: offline BH → API → SMB → LDAP)
-    display_runas, resolved_username = format_runas_with_sid_resolution(
-        runas,
-        hv,
-        bh_connector,
-        smb_connection,
-        no_ldap,
-        domain,
-        dc_ip,
-        username,
-        password,
-        hashes,
-        kerberos,
-        ldap_domain,
-        ldap_user,
-        ldap_password,
-        ldap_hashes,
-    )
+    # Use pre-resolved username if available, otherwise resolve now
+    if resolved_runas:
+        # Already resolved - format display string
+        from ..utils.sid_resolver import is_sid
+        if is_sid(runas):
+            display_runas = f"{resolved_runas} ({runas})"
+        else:
+            display_runas = runas
+        resolved_username = resolved_runas
+    else:
+        # Resolve SID in RunAs field for better display (uses 4-tier fallback: offline BH → API → SMB → LDAP)
+        display_runas, resolved_username = format_runas_with_sid_resolution(
+            runas,
+            hv,
+            bh_connector,
+            smb_connection,
+            no_ldap,
+            domain,
+            dc_ip,
+            username,
+            password,
+            hashes,
+            kerberos,
+            ldap_domain,
+            ldap_user,
+            ldap_password,
+            ldap_hashes,
+        )
 
     if concise:
         # Concise output: One line per task
-        # Format: [KIND] RunAs | Path | What
+        # Format: [KIND] RunAs | Path | What | (optional reason) | (optional password)
         line = f"{header} {display_runas} | {rel_path} | {what}"
         if extra_reason:
             line += f" | {extra_reason}"
+
+        # In concise mode, show decrypted password inline if available
+        if decrypted_creds and kind in ["TIER-0", "PRIV"]:
+            # Normalize the runas for comparison
+            # Handle resolved SID format: "username (S-1-5-21-...)" -> extract just username
+            runas_normalized = runas.lower()
+            if " (s-1-5-" in runas_normalized:
+                runas_normalized = runas_normalized.split(" (s-1-5-")[0].strip()
+
+            for cred in decrypted_creds:
+                if cred.username:
+                    cred_user_normalized = cred.username.lower()
+                    matched = False
+                    if cred_user_normalized == runas_normalized:
+                        matched = True
+                    elif "\\" in cred_user_normalized and "\\" not in runas_normalized:
+                        if cred_user_normalized.split("\\")[-1] == runas_normalized:
+                            matched = True
+                    elif "\\" in runas_normalized and "\\" not in cred_user_normalized:
+                        if runas_normalized.split("\\")[-1] == cred_user_normalized:
+                            matched = True
+                    if matched:
+                        line += f" | PWD: {cred.password}"
+                        break
+
         return [line]
 
     base = [f"\n{header} {rel_path}"]
@@ -252,23 +288,58 @@ def format_block(
         # Check if we have a decrypted password for this user
         decrypted_password = None
         if decrypted_creds:
-            # Normalize the runas for comparison
+            # Use resolved_username if available (handles SID-only runas fields)
+            # Also try the display_runas which may have "username (SID)" format
+            usernames_to_try = []
+            
+            # Add resolved username from SID resolution
+            if resolved_username:
+                usernames_to_try.append(resolved_username.lower())
+            
+            # Also try extracting from display_runas format "username (S-1-5-21-...)"
+            display_runas_lower = display_runas.lower()
+            if " (s-1-5-" in display_runas_lower:
+                username_part = display_runas_lower.split(" (s-1-5-")[0].strip()
+                if username_part and username_part not in usernames_to_try:
+                    usernames_to_try.append(username_part)
+            elif not display_runas_lower.startswith("s-1-5-"):
+                # Not a raw SID, add as-is
+                if display_runas_lower not in usernames_to_try:
+                    usernames_to_try.append(display_runas_lower)
+            
+            # Try the original runas if it's not a raw SID
             runas_normalized = runas.lower()
+            if not runas_normalized.startswith("s-1-5-"):
+                if " (s-1-5-" in runas_normalized:
+                    username_part = runas_normalized.split(" (s-1-5-")[0].strip()
+                    if username_part and username_part not in usernames_to_try:
+                        usernames_to_try.append(username_part)
+                elif runas_normalized not in usernames_to_try:
+                    usernames_to_try.append(runas_normalized)
+            
             for cred in decrypted_creds:
                 if cred.username:
                     cred_user_normalized = cred.username.lower()
-                    # Match full domain\user or partial matches
-                    if cred_user_normalized == runas_normalized:
-                        # Exact match
-                        decrypted_password = cred.password
-                        break
-                    elif "\\" in cred_user_normalized and "\\" not in runas_normalized:
-                        # Cred has domain, runas doesn't - match on username part only
-                        if cred_user_normalized.split("\\")[-1] == runas_normalized:
+                    
+                    for try_username in usernames_to_try:
+                        # Match full domain\user or partial matches
+                        if cred_user_normalized == try_username:
+                            # Exact match
                             decrypted_password = cred.password
                             break
-                    # Note: We DON'T match when runas has domain but cred doesn't
-                    # A credential without domain is likely a local account, not domain account
+                        elif "\\" in cred_user_normalized and "\\" not in try_username:
+                            # Cred has domain, try_username doesn't - match on username part only
+                            if cred_user_normalized.split("\\")[-1] == try_username:
+                                decrypted_password = cred.password
+                                break
+                        elif "\\" in try_username and "\\" not in cred_user_normalized:
+                            # try_username has domain, cred doesn't - match on username part only
+                            if try_username.split("\\")[-1] == cred_user_normalized:
+                                decrypted_password = cred.password
+                                break
+                    
+                    if decrypted_password:
+                        break
 
         # Show decrypted password if available, otherwise show next step
         if decrypted_password:
