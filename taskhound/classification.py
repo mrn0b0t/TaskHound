@@ -5,6 +5,7 @@
 # PRIV (high-value), or TASK (normal) based on the runas account.
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from .utils.logging import warn
@@ -24,6 +25,10 @@ class ClassificationResult:
     reason: Optional[str] = None
     password_analysis: Optional[str] = None
     should_include: bool = True  # Whether to include in output
+
+
+# Type alias for pre-fetched password data: username -> pwdLastSet datetime
+PwdLastSetCache = Dict[str, datetime]
 
 
 def _get_task_date_for_analysis(meta: Dict) -> Tuple[Optional[str], bool]:
@@ -56,22 +61,24 @@ def _analyze_password_age(
     runas: str,
     meta: Dict,
     rel_path: str,
+    pwd_cache: Optional[PwdLastSetCache] = None,
 ) -> Optional[str]:
     """
     Analyze password age for DPAPI dump viability.
 
+    Uses BloodHound data if available, otherwise uses pre-fetched LDAP data
+    from pwd_cache (if provided).
+
     Args:
-        hv: HighValueLoader instance
+        hv: HighValueLoader instance (can be None)
         runas: The account the task runs as
         meta: Task metadata dict
         rel_path: Task path for warning messages
+        pwd_cache: Pre-fetched dict of username -> pwdLastSet datetime (optional)
 
     Returns:
         Password analysis string or None if not applicable
     """
-    if not hv or not hv.loaded:
-        return None
-
     task_date, is_fallback = _get_task_date_for_analysis(meta)
     if is_fallback and task_date:
         warn(
@@ -79,9 +86,29 @@ def _analyze_password_age(
             "using trigger StartBoundary for password analysis (may be inaccurate)"
         )
 
-    risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
-    if risk_level != "UNKNOWN":
-        return pwd_analysis
+    # Try BloodHound data first
+    if hv and hv.loaded:
+        risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
+        if risk_level != "UNKNOWN":
+            return pwd_analysis
+
+    # Fall back to pre-fetched LDAP data if BloodHound not available
+    if pwd_cache and task_date:
+        try:
+            from .parsers.highvalue import _analyze_password_freshness
+            
+            # Normalize username for lookup
+            norm_user = runas.split("\\")[-1].lower() if "\\" in runas else runas.lower()
+            
+            pwd_last_set = pwd_cache.get(norm_user)
+            
+            if pwd_last_set:
+                risk_level, pwd_analysis = _analyze_password_freshness(task_date, pwd_last_set)
+                if risk_level != "UNKNOWN":
+                    return pwd_analysis
+        except Exception as e:
+            from .utils.logging import debug
+            debug(f"Password analysis failed for {runas}: {e}")
 
     return None
 
@@ -94,6 +121,7 @@ def classify_task(
     hv: Optional[Any],
     show_unsaved_creds: bool,
     include_local: bool,
+    pwd_cache: Optional[PwdLastSetCache] = None,
 ) -> ClassificationResult:
     """
     Classify a task as TIER-0, PRIV, or TASK based on the runas account.
@@ -109,6 +137,7 @@ def classify_task(
         hv: HighValueLoader instance (can be None)
         show_unsaved_creds: Whether to include tasks without saved credentials
         include_local: Whether to include local system accounts
+        pwd_cache: Pre-fetched dict of username -> pwdLastSet datetime
 
     Returns:
         ClassificationResult with task_type, reason, password_analysis, should_include
@@ -134,7 +163,7 @@ def classify_task(
             if has_no_saved_creds:
                 reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
             else:
-                password_analysis = _analyze_password_age(hv, runas, meta, rel_path)
+                password_analysis = _analyze_password_age(hv, runas, meta, rel_path, pwd_cache)
 
             # Update row in place
             row.type = TaskType.TIER0.value
@@ -156,7 +185,7 @@ def classify_task(
             if has_no_saved_creds:
                 reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
             else:
-                password_analysis = _analyze_password_age(hv, runas, meta, rel_path)
+                password_analysis = _analyze_password_age(hv, runas, meta, rel_path, pwd_cache)
 
             # Update row in place
             row.type = TaskType.PRIV.value
@@ -172,8 +201,9 @@ def classify_task(
 
     # Regular task - still analyze password age if credentials are stored
     password_analysis = None
-    if hv and hv.loaded and has_stored_creds:
-        password_analysis = _analyze_password_age(hv, runas, meta, rel_path)
+    if has_stored_creds:
+        # Try BloodHound first, then pre-fetched LDAP data
+        password_analysis = _analyze_password_age(hv, runas, meta, rel_path, pwd_cache)
 
     # Determine if we should include this regular task
     should_include = (

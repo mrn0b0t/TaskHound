@@ -48,6 +48,20 @@ class TestDateParser:
         assert parse_timestamp(0) is None
         assert parse_timestamp("invalid") is None
 
+    def test_parse_timestamp_zero_float_string(self):
+        """Test parsing '0.0' string triggers numeric zero check."""
+        # This is truthy string but converts to 0.0
+        assert parse_timestamp("0.0") is None
+        # Also test other zero variants
+        assert parse_timestamp("0.00") is None
+        assert parse_timestamp(" 0.0 ") is None
+
+    def test_parse_timestamp_overflow(self):
+        """Test that overflow errors are handled."""
+        # Very large timestamp that would cause overflow
+        huge = 10 ** 30
+        assert parse_timestamp(huge) is None
+
     def test_parse_iso_date_basic(self):
         """Test parsing basic ISO dates."""
         dt = parse_iso_date("2023-01-01T12:00:00")

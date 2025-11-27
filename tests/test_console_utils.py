@@ -233,3 +233,119 @@ class TestVerbosityControl:
         set_verbosity(False, True)
         
         assert _is_verbose() is True
+
+
+# ============================================================================
+# Test: format_task_line  
+# ============================================================================
+
+class TestFormatTaskLine:
+    """Tests for format_task_line function."""
+    
+    def test_tier0_task(self):
+        """Should format TIER-0 task with red prefix."""
+        from taskhound.utils.console import format_task_line
+        
+        result = format_task_line("MyTask", "SYSTEM", is_tier0=True)
+        assert "[TIER-0]" in result
+        assert "MyTask" in result
+        assert "SYSTEM" in result
+    
+    def test_priv_task(self):
+        """Should format PRIV task with yellow prefix."""
+        from taskhound.utils.console import format_task_line
+        
+        result = format_task_line("MyTask", "admin", is_privileged=True)
+        assert "[PRIV]" in result
+        assert "MyTask" in result
+        assert "admin" in result
+    
+    def test_normal_task(self):
+        """Should format normal TASK with dim prefix."""
+        from taskhound.utils.console import format_task_line
+        
+        result = format_task_line("MyTask", "user")
+        assert "[TASK]" in result
+        assert "MyTask" in result
+        assert "user" in result
+    
+    def test_with_command(self):
+        """Should include command in output."""
+        from taskhound.utils.console import format_task_line
+        
+        result = format_task_line("MyTask", "user", command="cmd.exe /c dir")
+        assert "cmd.exe /c dir" in result
+    
+    def test_with_long_command_truncates(self):
+        """Should truncate commands over 60 characters."""
+        from taskhound.utils.console import format_task_line
+        
+        long_cmd = "C:\\Windows\\System32\\cmd.exe /c echo very long command line that exceeds limit"
+        result = format_task_line("MyTask", "user", command=long_cmd)
+        assert "..." in result
+        # Original command should be truncated
+        assert long_cmd not in result
+    
+    def test_tier0_takes_precedence_over_priv(self):
+        """TIER-0 should take precedence when both flags set."""
+        from taskhound.utils.console import format_task_line
+        
+        result = format_task_line("MyTask", "user", is_tier0=True, is_privileged=True)
+        assert "[TIER-0]" in result
+        assert "[PRIV]" not in result
+
+
+# ============================================================================
+# Test: collecting_* functions
+# ============================================================================
+
+class TestCollectingFunctions:
+    """Tests for collecting status functions."""
+    
+    @patch.object(console, 'console')
+    def test_collecting_done(self, mock_console):
+        """Should print success message with counts."""
+        from taskhound.utils.console import collecting_done
+        
+        collecting_done("DC01", task_count=10, priv_count=3)
+        mock_console.print.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "DC01" in call_arg
+        assert "10 tasks" in call_arg
+        assert "3 privileged" in call_arg
+    
+    @patch.object(console, 'console')
+    def test_collecting_skip(self, mock_console):
+        """Should print skip message with reason."""
+        from taskhound.utils.console import collecting_skip
+        
+        collecting_skip("DC02", "Access denied")
+        mock_console.print.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "DC02" in call_arg
+        assert "SKIP" in call_arg
+        assert "Access denied" in call_arg
+    
+    @patch.object(console, 'console')
+    def test_collecting_fail(self, mock_console):
+        """Should print failure message."""
+        from taskhound.utils.console import collecting_fail
+        
+        collecting_fail("DC03", "Connection timeout")
+        mock_console.print.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "DC03" in call_arg
+        assert "Connection timeout" in call_arg
+    
+    @patch.object(console, 'console')
+    def test_collecting_fail_truncates_long_error(self, mock_console):
+        """Should truncate error messages over 60 characters."""
+        from taskhound.utils.console import collecting_fail
+        
+        long_error = "This is a very long error message that exceeds the sixty character limit significantly"
+        collecting_fail("DC04", long_error)
+        mock_console.print.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "..." in call_arg
+        assert long_error not in call_arg
+

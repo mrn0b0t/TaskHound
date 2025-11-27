@@ -282,3 +282,31 @@ class TestCrawlTasks:
         assert len(results) == 1
         # Path should not start with backslash
         assert not results[0][0].startswith("\\")
+
+    @patch('taskhound.smb.tasks.warn')
+    def test_catches_and_logs_crawl_exception(self, mock_warn):
+        """Should catch exceptions during crawl and log warning."""
+        mock_smb = MagicMock()
+        
+        # First listPath call for initial access check should succeed
+        # Second call (in recurse) should raise an exception
+        call_count = [0]
+        def side_effect(*args):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # Initial root access check succeeds
+                return []
+            else:
+                # Subsequent call in recurse raises exception
+                raise Exception("Network connection lost")
+        
+        mock_smb.listPath.side_effect = side_effect
+        
+        # Should not raise, but should log warning
+        results = crawl_tasks(mock_smb)
+        
+        # Verify warning was logged about the crawl error
+        mock_warn.assert_called()
+        warn_call = mock_warn.call_args[0][0]
+        assert "Crawl error" in warn_call
+

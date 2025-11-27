@@ -306,6 +306,48 @@ class TestTaskSchedulerRPCContextManager:
         
         mock_disconnect.assert_called_once()
 
+    @patch.object(TaskSchedulerRPC, 'connect')
+    def test_enter_returns_self(self, mock_connect):
+        """Test __enter__ method returns self."""
+        mock_connect.return_value = True
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        
+        # Call __enter__ directly - this exercises lines 207-210
+        result = rpc.__enter__()
+        assert result is rpc
+        mock_connect.assert_called_once()
+
+    def test_exit_returns_false(self):
+        """Test __exit__ returns False (doesn't suppress exceptions)."""
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        
+        # Call __exit__ directly - this exercises lines 212-215
+        result = rpc.__exit__(None, None, None)
+        assert result is False
+        
+    def test_exit_with_exception_returns_false(self):
+        """Test __exit__ returns False even with exception."""
+        rpc = TaskSchedulerRPC(
+            target="192.168.1.100",
+            domain="DOMAIN",
+            username="admin",
+            password="pass",
+        )
+        
+        # Call __exit__ with exception info - ensures False is returned not None
+        result = rpc.__exit__(ValueError, ValueError("test"), None)
+        assert result is False
+
 
 class TestTaskSchedulerRPCInterpretReturnCode:
     """Tests for TaskSchedulerRPC._interpret_return_code method."""

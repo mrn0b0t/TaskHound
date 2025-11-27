@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from impacket.smbconnection import SessionError
 
 from ..auth import AuthContext
-from ..classification import classify_task
+from ..classification import classify_task, PwdLastSetCache
 from ..laps import (
     LAPS_ERRORS,
     LAPSCache,
@@ -545,6 +545,62 @@ def process_target(
     priv_lines: List[str] = []
     task_lines: List[str] = []
 
+    # Pre-fetch pwdLastSet for all unique users via single LDAP batch query
+    # This provides password freshness analysis when BloodHound is not available
+    # Skipped in OPSEC mode to avoid LDAP queries that may be audited
+    pwd_cache: PwdLastSetCache = {}
+    if not no_ldap and not opsec and (not hv or not hv.loaded):
+        # Collect unique runas users from all tasks with stored credentials
+        unique_users = set()
+        for rel_path, xml_bytes in items:
+            meta = parse_task_xml(xml_bytes)
+            runas = meta.get("runas")
+            if not runas:
+                continue
+            logon_type = (meta.get("logon_type") or "").strip().lower()
+            # Only query users from tasks with stored credentials
+            if logon_type == "password":
+                # Skip SIDs - we can't look them up by SID in LDAP easily
+                if not is_sid(runas):
+                    unique_users.add(runas)
+        
+        if unique_users:
+            info(f"{target}: Querying LDAP for password age data ({len(unique_users)} users)...")
+            try:
+                from ..utils.sid_resolver import batch_get_user_attributes
+                
+                ldap_auth_domain = ldap_domain or domain
+                ldap_auth_user = ldap_user or username
+                ldap_auth_pass = ldap_password or password
+                ldap_auth_hashes = ldap_hashes or hashes
+                
+                results = batch_get_user_attributes(
+                    usernames=list(unique_users),
+                    domain=ldap_auth_domain,
+                    dc_ip=dc_ip,
+                    username=ldap_auth_user,
+                    password=ldap_auth_pass,
+                    hashes=ldap_auth_hashes,
+                    kerberos=kerberos,
+                    attributes=["pwdLastSet", "sAMAccountName"],
+                )
+                
+                # Build cache: normalized_username -> pwdLastSet datetime
+                for norm_user, attrs in results.items():
+                    pwd_last_set = attrs.get("pwdLastSet")
+                    if pwd_last_set:
+                        pwd_cache[norm_user] = pwd_last_set
+                
+                if pwd_cache:
+                    good(f"{target}: Retrieved password age data for {len(pwd_cache)} users")
+                else:
+                    info(f"{target}: No password age data available from LDAP")
+                    
+            except Exception as e:
+                warn(f"{target}: LDAP batch query failed: {e}")
+                if debug:
+                    traceback.print_exc()
+
     for rel_path, xml_bytes in items:
         meta = parse_task_xml(xml_bytes)
         # Save raw XML to backup directory if requested
@@ -601,7 +657,8 @@ def process_target(
 
         # Resolve SID early if runas is a SID - store result for credential matching and output
         # This ensures we only resolve once per task, and the result is available for all uses
-        if is_sid(runas):
+        # Skipped in OPSEC mode to avoid SMB/LSARPC and LDAP queries
+        if is_sid(runas) and not opsec:
             _, row.resolved_runas = format_runas_with_sid_resolution(
                 runas,
                 hv_loader=hv,
@@ -639,6 +696,7 @@ def process_target(
             row.credentials_hint = "stored_credentials"
 
         # Use shared classification logic
+        # pwd_cache was pre-fetched before the loop for password freshness analysis
         result = classify_task(
             row=row,
             meta=meta,
@@ -647,6 +705,7 @@ def process_target(
             hv=hv,
             show_unsaved_creds=show_unsaved_creds,
             include_local=include_local,
+            pwd_cache=pwd_cache,
         )
 
         if not result.should_include:

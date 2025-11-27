@@ -481,10 +481,16 @@ def validate_args(args):
             print("[!] OPSEC mode enabled: Disabling Credential Guard detection")
             args.credguard_detect = False
 
-        # Note: SID lookups are handled dynamically in engine.py, but we can warn here
-        if not args.no_ldap:
-            # We don't force no_ldap=True because engine handles it, but good to know
-            pass
+        # --validate-creds requires RPC queries that are noisy
+        if getattr(args, 'validate_creds', False):
+            print("[!] ERROR: --validate-creds is incompatible with --opsec mode")
+            print("[!] Credential validation requires Task Scheduler RPC queries (\\pipe\\atsvc)")
+            print("[!] These queries may trigger security monitoring and are not OPSEC-safe.")
+            print("[!]")
+            print("[!] Options:")
+            print("[!]   1. Remove --opsec flag to validate credentials")
+            print("[!]   2. Remove --validate-creds flag to maintain OPSEC")
+            sys.exit(1)
 
     # Handle LAPS + OPSEC compatibility
     if getattr(args, "laps", False):

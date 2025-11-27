@@ -107,5 +107,18 @@ class TestLoggingOutput(unittest.TestCase):
         self.assertIn("Good message", output)
         self.assertIn("Debug message", output)
 
+    def test_error_function(self):
+        """Test error function always prints regardless of verbosity."""
+        from taskhound.utils.logging import error
+
+        # Error should print even in quiet mode
+        set_verbosity(False, False)
+        self.capturedOutput.truncate(0)
+        self.capturedOutput.seek(0)
+        error("Error message")
+        output = self.capturedOutput.getvalue()
+        self.assertIn("Error message", output)
+
+
 if __name__ == "__main__":
     unittest.main()

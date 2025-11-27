@@ -294,6 +294,33 @@ class TestFormatBlockConcise:
 
         assert "PWD: Secret456" in lines[0]
 
+    @patch("taskhound.output.printer.format_runas_with_sid_resolution")
+    def test_concise_task_with_decrypted_creds(self, mock_resolve):
+        """Test concise output shows password for TASK kind too (not just TIER-0/PRIV).
+        
+        Even regular tasks may have useful credentials for lateral movement.
+        """
+        mock_resolve.return_value = ("DOMAIN\\lowpriv", "lowpriv")
+
+        mock_cred = MagicMock()
+        mock_cred.username = "DOMAIN\\lowpriv"
+        mock_cred.password = "LowPrivPwd!"
+
+        lines = format_block(
+            kind="TASK",
+            rel_path="Tasks\\LowPrivTask",
+            runas="DOMAIN\\lowpriv",
+            what="notepad.exe",
+            author="Admin",
+            date="2023-01-01",
+            decrypted_creds=[mock_cred],
+            concise=True,
+        )
+
+        assert len(lines) == 1
+        assert "[TASK]" in lines[0]
+        assert "PWD: LowPrivPwd!" in lines[0]
+
 
 class TestFormatBlockWithResolvedRunas:
     """Tests for pre-resolved runas handling."""
@@ -551,6 +578,36 @@ class TestFormatBlockTaskKind:
 
         text = "\n".join(lines)
         assert "[+] VALID (hijackable)" in text
+
+    @patch("taskhound.output.printer.format_runas_with_sid_resolution")
+    def test_task_with_decrypted_credentials(self, mock_resolve):
+        """Test TASK kind shows decrypted credentials (not just TIER-0/PRIV).
+        
+        Even regular tasks may have useful credentials for lateral movement
+        or password reuse attacks.
+        """
+        mock_resolve.return_value = ("DOMAIN\\lowpriv", "lowpriv")
+
+        mock_cred = MagicMock()
+        mock_cred.username = "DOMAIN\\lowpriv"
+        mock_cred.password = "LowPrivPassword123!"
+
+        lines = format_block(
+            kind="TASK",
+            rel_path="Tasks\\LowPrivTask",
+            runas="DOMAIN\\lowpriv",
+            what="notepad.exe",
+            author="Admin",
+            date="2023-01-01",
+            decrypted_creds=[mock_cred],
+        )
+
+        text = "\n".join(lines)
+        assert "[TASK] Tasks\\LowPrivTask" in text
+        assert "Decrypted Password : LowPrivPassword123!" in text
+        # TASK kind should NOT show "Reason" or "Next Step" like TIER-0/PRIV
+        assert "Reason" not in text
+        assert "Next Step" not in text
 
 
 class TestFormatBlockDecryptedCredMatching:

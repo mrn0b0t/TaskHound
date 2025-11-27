@@ -753,6 +753,246 @@ def resolve_sid(
         return f"{sid} (SID - could not resolve: deleted user, cross-domain, or access denied)", None
 
 
+def batch_get_user_attributes(
+    usernames: list[str],
+    domain: str,
+    dc_ip: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+    attributes: list[str] = None,
+) -> dict[str, dict]:
+    """
+    Batch query LDAP for user attributes (pwdLastSet, etc.).
+    
+    Results are cached in both session memory and persistent SQLite cache.
+    Uses a single LDAP connection for all queries (efficient batching).
+    
+    Args:
+        usernames: List of usernames to query (DOMAIN\\user or just user format)
+        domain: Domain name (FQDN format, e.g., "domain.local")
+        dc_ip: Domain controller IP address
+        username: LDAP authentication username  
+        password: LDAP authentication password
+        hashes: NTLM hashes for pass-the-hash
+        kerberos: Use Kerberos authentication
+        attributes: List of attributes to fetch (default: pwdLastSet, lastLogon)
+    
+    Returns:
+        Dictionary mapping normalized username (lowercase, no domain) to attribute dict
+        e.g., {"jsmith": {"pwdLastSet": datetime(...), "lastLogon": datetime(...)}}
+    """
+    if not usernames:
+        return {}
+    
+    if attributes is None:
+        attributes = ["pwdLastSet", "lastLogon", "sAMAccountName", "objectSid"]
+    
+    # Normalize usernames - extract just the username part
+    users_to_query = set()
+    username_mapping = {}  # original -> normalized
+    for user in usernames:
+        if not user:
+            continue
+        # Strip domain prefix if present (DOMAIN\user -> user)
+        normalized = user.split("\\")[-1].lower() if "\\" in user else user.lower()
+        users_to_query.add(normalized)
+        username_mapping[user] = normalized
+    
+    if not users_to_query:
+        return {}
+    
+    # Check cache first
+    cache = get_cache()
+    results = {}
+    users_needing_query = []
+    
+    for norm_user in users_to_query:
+        cached = cache.get("user_attrs", norm_user) if cache else None
+        if cached:
+            results[norm_user] = cached
+            debug(f"Cache hit for user attributes: {norm_user}")
+        else:
+            users_needing_query.append(norm_user)
+    
+    if not users_needing_query:
+        debug(f"All {len(results)} user attribute lookups satisfied from cache")
+        return results
+    
+    debug(f"Querying LDAP for {len(users_needing_query)} users (cached: {len(results)})")
+    
+    # Query LDAP for remaining users
+    if not dc_ip:
+        try:
+            dc_ip = socket.gethostbyname(domain)
+        except socket.gaierror:
+            warn(f"Could not resolve domain {domain} for user attribute lookup")
+            return results
+    
+    try:
+        conn = get_ldap_connection(
+            dc_ip=dc_ip,
+            domain=domain,
+            username=username,
+            password=password,
+            hashes=hashes,
+            kerberos=kerberos,
+        )
+    except LDAPConnectionError as e:
+        warn(f"LDAP connection failed for user attribute lookup: {e}")
+        return results
+    
+    # Build base DN
+    base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
+    
+    # Query users in batches using OR filter
+    # LDAP has limits on filter size, so batch in groups of 20
+    BATCH_SIZE = 20
+    for i in range(0, len(users_needing_query), BATCH_SIZE):
+        batch = users_needing_query[i:i + BATCH_SIZE]
+        
+        # Build OR filter for batch
+        if len(batch) == 1:
+            search_filter = f"(&(objectClass=user)(sAMAccountName={batch[0]}))"
+        else:
+            user_filters = "".join([f"(sAMAccountName={u})" for u in batch])
+            search_filter = f"(&(objectClass=user)(|{user_filters}))"
+        
+        debug(f"LDAP batch query for {len(batch)} users")
+        
+        try:
+            search_results = conn.search(
+                searchBase=base_dn,
+                searchFilter=search_filter,
+                attributes=attributes,
+                searchControls=None,
+            )
+            
+            if search_results:
+                for entry in search_results:
+                    if isinstance(entry, ldapasn1_impacket.SearchResultEntry):
+                        entry_attrs = {}
+                        sam_name = None
+                        
+                        for attribute in entry["attributes"]:
+                            attr_name = str(attribute["type"])
+                            attr_vals = [str(val) for val in attribute["vals"]]
+                            
+                            if attr_name.lower() == "samaccountname":
+                                sam_name = attr_vals[0].lower() if attr_vals else None
+                            elif attr_name.lower() == "pwdlastset":
+                                # Convert Windows FILETIME to Unix timestamp then datetime
+                                try:
+                                    filetime = int(attr_vals[0]) if attr_vals else 0
+                                    if filetime > 0:
+                                        # Windows FILETIME is 100-nanosecond intervals since 1601
+                                        unix_ts = (filetime - 116444736000000000) / 10000000
+                                        from datetime import datetime
+                                        entry_attrs["pwdLastSet"] = datetime.fromtimestamp(unix_ts)
+                                except (ValueError, OSError):
+                                    pass
+                            elif attr_name.lower() == "lastlogon":
+                                try:
+                                    filetime = int(attr_vals[0]) if attr_vals else 0
+                                    if filetime > 0:
+                                        unix_ts = (filetime - 116444736000000000) / 10000000
+                                        from datetime import datetime
+                                        entry_attrs["lastLogon"] = datetime.fromtimestamp(unix_ts)
+                                except (ValueError, OSError):
+                                    pass
+                            elif attr_name.lower() == "objectsid":
+                                # Binary SID - convert to string
+                                if attr_vals:
+                                    try:
+                                        binary_sid = attribute["vals"][0].asOctets()
+                                        sid_str = binary_to_sid(binary_sid)
+                                        if sid_str:
+                                            entry_attrs["sid"] = sid_str
+                                    except Exception:
+                                        pass
+                        
+                        if sam_name and entry_attrs:
+                            results[sam_name] = entry_attrs
+                            # Cache the result
+                            if cache:
+                                # Convert datetime to timestamp for JSON serialization
+                                cache_entry = {}
+                                for k, v in entry_attrs.items():
+                                    if hasattr(v, 'timestamp'):
+                                        cache_entry[k] = v.timestamp()
+                                    else:
+                                        cache_entry[k] = v
+                                cache.set("user_attrs", sam_name, cache_entry)
+                            debug(f"Got attributes for {sam_name}: pwdLastSet={entry_attrs.get('pwdLastSet')}")
+        
+        except Exception as e:
+            warn(f"LDAP batch query error: {e}")
+            continue
+    
+    info(f"Retrieved attributes for {len(results)} users via LDAP")
+    return results
+
+
+def get_user_pwd_last_set(
+    username: str,
+    domain: str,
+    dc_ip: Optional[str] = None,
+    auth_username: Optional[str] = None,
+    auth_password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+) -> Optional["datetime"]:
+    """
+    Get pwdLastSet for a single user (with caching).
+    
+    Convenience wrapper around batch_get_user_attributes for single user lookup.
+    
+    Args:
+        username: Username to look up (DOMAIN\\user or just user)
+        domain: Domain name
+        dc_ip: Domain controller IP
+        auth_username: LDAP auth username
+        auth_password: LDAP auth password  
+        hashes: NTLM hashes
+        kerberos: Use Kerberos
+    
+    Returns:
+        datetime of password last set, or None if not found
+    """
+    # Normalize username
+    norm_user = username.split("\\")[-1].lower() if "\\" in username else username.lower()
+    
+    # Check cache first
+    cache = get_cache()
+    if cache:
+        cached = cache.get("user_attrs", norm_user)
+        if cached:
+            pwd_ts = cached.get("pwdLastSet")
+            if pwd_ts:
+                from datetime import datetime
+                if isinstance(pwd_ts, (int, float)):
+                    return datetime.fromtimestamp(pwd_ts)
+                return pwd_ts
+    
+    # Query LDAP
+    results = batch_get_user_attributes(
+        usernames=[username],
+        domain=domain,
+        dc_ip=dc_ip,
+        username=auth_username,
+        password=auth_password,
+        hashes=hashes,
+        kerberos=kerberos,
+        attributes=["pwdLastSet", "sAMAccountName"],
+    )
+    
+    if norm_user in results:
+        return results[norm_user].get("pwdLastSet")
+    
+    return None
+
+
 def format_runas_with_sid_resolution(
     runas: str,
     hv_loader: Optional[HighValueLoader] = None,

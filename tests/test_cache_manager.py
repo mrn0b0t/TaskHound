@@ -268,6 +268,117 @@ class TestCacheManagerStatistics:
         assert cache.stats["session_hits"] >= 1
         assert cache.stats["session_misses"] >= 1
 
+
+class TestCacheManagerGetAll:
+    """Tests for get_all functionality."""
+
+    def test_get_all_disabled_returns_empty(self):
+        """Should return empty dict when persistent is disabled."""
+        cache = CacheManager(enabled=False)
+        cache.set("cat", "key1", "value1")
+        cache.set("cat", "key2", "value2")
+        
+        # get_all only works on persistent cache, not session
+        result = cache.get_all("cat")
+        assert result == {}
+
+    def test_get_all_with_persistent_cache(self):
+        """Should return all entries for category from persistent cache."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_file = Path(tmpdir) / "test_cache.db"
+            cache = CacheManager(cache_file=cache_file, enabled=True)
+            
+            cache.set("cat", "key1", "value1")
+            cache.set("cat", "key2", "value2")
+            cache.set("other", "key3", "value3")  # Different category
+            
+            result = cache.get_all("cat")
+            
+            assert len(result) == 2
+            assert result.get("key1") == "value1"
+            assert result.get("key2") == "value2"
+            
+            cache.close()
+
+    def test_get_all_skips_expired(self):
+        """Should skip expired entries in get_all."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_file = Path(tmpdir) / "test_cache.db"
+            cache = CacheManager(cache_file=cache_file, enabled=True, ttl_hours=0)  # 0 TTL = already expired
+            
+            # Manually insert an expired entry
+            import time
+            import json
+            past_time = time.time() - 1000  # Expired
+            cache.conn.execute(
+                "INSERT OR REPLACE INTO cache (category, key, value, expires_at) VALUES (?, ?, ?, ?)",
+                ("cat", "expired_key", json.dumps("expired_value"), past_time)
+            )
+            cache.conn.commit()
+            
+            result = cache.get_all("cat")
+            
+            # Expired entry should not be returned
+            assert "expired_key" not in result
+            
+            cache.close()
+
+
+class TestCacheManagerInvalidate:
+    """Tests for cache invalidation."""
+
+    def test_invalidate_specific_key(self):
+        """Should invalidate specific key in category."""
+        cache = CacheManager(enabled=False)
+        cache.set("cat", "key1", "value1")
+        cache.set("cat", "key2", "value2")
+        
+        cache.invalidate(category="cat", key="key1")
+        
+        assert cache.get("cat", "key1") is None
+        assert cache.get("cat", "key2") == "value2"
+
+    def test_invalidate_category(self):
+        """Should invalidate entire category."""
+        cache = CacheManager(enabled=False)
+        cache.set("cat", "key1", "value1")
+        cache.set("cat", "key2", "value2")
+        cache.set("other", "key3", "value3")
+        
+        cache.invalidate(category="cat")
+        
+        assert cache.get("cat", "key1") is None
+        assert cache.get("cat", "key2") is None
+        assert cache.get("other", "key3") == "value3"
+
+    def test_invalidate_all(self):
+        """Should invalidate all entries."""
+        cache = CacheManager(enabled=False)
+        cache.set("cat1", "key1", "value1")
+        cache.set("cat2", "key2", "value2")
+        
+        cache.invalidate()
+        
+        assert cache.get("cat1", "key1") is None
+        assert cache.get("cat2", "key2") is None
+
+    def test_invalidate_with_persistent(self):
+        """Should invalidate persistent cache entries."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_file = Path(tmpdir) / "test_cache.db"
+            cache = CacheManager(cache_file=cache_file, enabled=True)
+            
+            cache.set("cat", "key1", "value1")
+            cache.invalidate(category="cat", key="key1")
+            
+            # Clear session to test persistent
+            cache.session.clear()
+            
+            # Entry should be gone from persistent too
+            assert cache.get("cat", "key1") is None
+            
+            cache.close()
+
     def test_print_stats_exists(self):
         """Should have print_stats method"""
         cache = CacheManager(enabled=False)

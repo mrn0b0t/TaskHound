@@ -281,6 +281,7 @@ def _process_offline_host(
             row.credentials_hint = "no_saved_credentials"
 
         # Use shared classification logic
+        # Note: pwd_cache is None for offline mode since we can't query LDAP
         result = classify_task(
             row=row,
             meta=meta,
@@ -289,6 +290,7 @@ def _process_offline_host(
             hv=hv,
             show_unsaved_creds=show_unsaved_creds,
             include_local=include_local,
+            pwd_cache=None,  # No LDAP in offline mode
         )
 
         if not result.should_include:

@@ -164,6 +164,22 @@ class TestSortTasksByPriority:
         result = sort_tasks_by_priority([])
         assert result == []
 
+    def test_block_with_no_recognized_type(self):
+        """Should handle blocks that have no recognized type (TIER-0/PRIV/TASK)."""
+        # Lines that form a block but don't match any known type
+        lines = [
+            "\n[UNKNOWN] Some Task",
+            "  - Task details",
+            "\n[TIER-0] Priority Task",
+            "  - Priority details",
+        ]
+        result = sort_tasks_by_priority(lines)
+        
+        # TIER-0 should come first, unknown type should come last
+        tier0_pos = next(i for i, l in enumerate(result) if "[TIER-0]" in l)
+        unknown_pos = next(i for i, l in enumerate(result) if "[UNKNOWN]" in l)
+        assert tier0_pos < unknown_pos
+
     def test_complex_multi_block(self):
         """Should handle complex multi-block input"""
         lines = [

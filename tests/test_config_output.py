@@ -310,3 +310,59 @@ class TestValidateArgs:
         validate_args(args)
         # Should have called sys.exit because LAPS needs --dc-ip
         mock_exit.assert_called()
+
+    @patch("taskhound.config.sys.exit")
+    def test_validate_creds_with_opsec_exits(self, mock_exit):
+        """Test that --validate-creds with --opsec exits with error."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--validate-creds",
+            "--opsec",
+        ])
+        validate_args(args)
+        # Should have called sys.exit because validate-creds is incompatible with opsec
+        mock_exit.assert_called_with(1)
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    @patch("taskhound.config.sys.exit")
+    def test_opsec_disables_credguard_detect(self, mock_exit, mock_exists, mock_isdir):
+        """Test that --opsec disables --credguard-detect."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--opsec",
+            "--credguard-detect",
+        ])
+        validate_args(args)
+        # credguard_detect should be set to False
+        assert args.credguard_detect is False
+        # Should not exit (no incompatible flags)
+        mock_exit.assert_not_called()
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_opsec_without_validate_creds_passes(self, mock_exists, mock_isdir):
+        """Test that --opsec without --validate-creds passes validation."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--opsec",
+        ])
+        # Should not raise or exit
+        validate_args(args)
+        assert args.opsec is True
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_validate_creds_without_opsec_passes(self, mock_exists, mock_isdir):
+        """Test that --validate-creds without --opsec passes validation."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--validate-creds",
+        ])
+        # Should not raise or exit
+        validate_args(args)
+        assert args.validate_creds is True
