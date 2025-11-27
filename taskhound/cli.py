@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from .auth import AuthContext
 from .config import build_parser, validate_args
 from .engine import process_offline_directory, process_target
-from .engine_async import (
+from .engine.async_runner import (
     AsyncConfig,
     AsyncTaskHound,
     aggregate_results,

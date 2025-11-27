@@ -7,6 +7,7 @@
 # these at the engine module level (e.g., @patch("taskhound.engine.smb_connect"))
 from ..smb.connection import smb_connect
 from ..smb.tasks import crawl_tasks
+from .async_runner import AsyncConfig, AsyncTaskHound, TargetResult, aggregate_results
 from .helpers import sort_tasks_by_priority
 from .offline import process_offline_directory
 from .online import process_target
@@ -17,4 +18,9 @@ __all__ = [
     "sort_tasks_by_priority",
     "smb_connect",
     "crawl_tasks",
+    # Async/parallel processing
+    "AsyncConfig",
+    "AsyncTaskHound",
+    "TargetResult",
+    "aggregate_results",
 ]

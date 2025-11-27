@@ -4,7 +4,7 @@ import threading
 import time
 from typing import List, Optional, Tuple
 
-from taskhound.engine_async import (
+from taskhound.engine.async_runner import (
     AsyncConfig,
     AsyncTaskHound,
     TargetResult,

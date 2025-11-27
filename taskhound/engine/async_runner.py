@@ -28,9 +28,9 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from .laps import LAPSFailure
-from .models.task import TaskRow
-from .utils.console import (
+from ..laps import LAPSFailure
+from ..models.task import TaskRow
+from ..utils.console import (
     console,
     good,
     info,
