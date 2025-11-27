@@ -628,7 +628,7 @@ class TestTaskSchedulerRPCValidateSpecificTasks:
 
     @patch.object(TaskSchedulerRPC, 'get_task_run_info')
     def test_validate_preserves_original_path(self, mock_get_info):
-        """Test that results contain original SMB paths."""
+        """Test that results contain original SMB paths only (not duplicated with RPC path)."""
         mock_info = TaskRunInfo(
             task_path="\\TestTask",
             last_run=datetime(2024, 1, 1),
@@ -643,9 +643,9 @@ class TestTaskSchedulerRPCValidateSpecificTasks:
         original_path = "Windows\\System32\\Tasks\\TestTask"
         results = self.rpc.validate_specific_tasks([original_path])
         
-        # Should have both original SMB path and RPC path
+        # Should have only the original SMB path (no duplication with RPC path)
         assert original_path in results
-        assert "\\TestTask" in results
+        assert len(results) == 1  # Only one entry, not duplicated
 
 
 class TestTaskSchedulerRPCConnect:

@@ -888,8 +888,9 @@ def batch_get_user_attributes(
                                     if filetime > 0:
                                         # Windows FILETIME is 100-nanosecond intervals since 1601
                                         unix_ts = (filetime - 116444736000000000) / 10000000
-                                        from datetime import datetime
-                                        entry_attrs["pwdLastSet"] = datetime.fromtimestamp(unix_ts)
+                                        from datetime import datetime, timezone
+                                        # Use UTC timezone for consistency with task date parsing
+                                        entry_attrs["pwdLastSet"] = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
                                 except (ValueError, OSError):
                                     pass
                             elif attr_name.lower() == "lastlogon":
@@ -897,8 +898,9 @@ def batch_get_user_attributes(
                                     filetime = int(attr_vals[0]) if attr_vals else 0
                                     if filetime > 0:
                                         unix_ts = (filetime - 116444736000000000) / 10000000
-                                        from datetime import datetime
-                                        entry_attrs["lastLogon"] = datetime.fromtimestamp(unix_ts)
+                                        from datetime import datetime, timezone
+                                        # Use UTC timezone for consistency
+                                        entry_attrs["lastLogon"] = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
                                 except (ValueError, OSError):
                                     pass
                             elif attr_name.lower() == "objectsid":

@@ -368,9 +368,8 @@ class TaskSchedulerRPC:
             log_debug(f"Validating credentials for task: {rpc_path} (SMB: {original_path})")
             run_info = self.get_task_run_info(rpc_path)
             if run_info:
-                # Store with BOTH paths for correlation
+                # Store with original SMB path for correlation with crawled tasks
                 results[original_path] = run_info
-                results[rpc_path] = run_info
             else:
                 log_debug(f"Could not get run info for {rpc_path}")
 
