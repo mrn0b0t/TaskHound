@@ -164,6 +164,7 @@ def process_target(
     kerberos = auth.kerberos
     dc_ip = auth.dc_ip
     timeout = auth.timeout
+    dns_tcp = auth.dns_tcp
     ldap_domain = auth.ldap_domain
     ldap_user = auth.ldap_user
     ldap_password = auth.ldap_password
@@ -197,9 +198,9 @@ def process_target(
                 if _is_ip_address(target):
                     # Try DC first, then system DNS
                     if dc_ip:
-                        discovered_hostname = _dns_ptr_lookup(target, nameserver=dc_ip)
+                        discovered_hostname = _dns_ptr_lookup(target, nameserver=dc_ip, use_tcp=dns_tcp)
                     if not discovered_hostname:
-                        discovered_hostname = _dns_ptr_lookup(target, nameserver=None)
+                        discovered_hostname = _dns_ptr_lookup(target, nameserver=None, use_tcp=dns_tcp)
 
                     if discovered_hostname:
                         # Extract just the hostname part (before first dot) for LAPS lookup
@@ -275,7 +276,7 @@ def process_target(
         # This is critical when target is an IP address - BloodHound needs FQDNs
         # Tries: 1) SMB hostname, 2) DNS via DC, 3) System DNS
 
-        server_fqdn = get_server_fqdn(smb, target_ip=target, dc_ip=dc_ip)
+        server_fqdn = get_server_fqdn(smb, target_ip=target, dc_ip=dc_ip, dns_tcp=dns_tcp)
         if server_fqdn and server_fqdn != "UNKNOWN_HOST":
             if server_fqdn.upper() != target.upper():
                 info(f"{target}: Resolved FQDN: {server_fqdn}")

@@ -31,7 +31,7 @@ def parse_ntlm_hashes(hashes: Optional[str]) -> Tuple[str, str]:
         return "", hashes
 
 
-def resolve_dc_hostname(dc_ip: str, domain: str) -> Optional[str]:
+def resolve_dc_hostname(dc_ip: str, domain: str, use_tcp: bool = False) -> Optional[str]:
     """
     Resolve DC IP to hostname for Kerberos SPN construction.
 
@@ -43,6 +43,7 @@ def resolve_dc_hostname(dc_ip: str, domain: str) -> Optional[str]:
     Args:
         dc_ip: Domain controller IP address
         domain: Domain name (for constructing FQDN)
+        use_tcp: Force DNS queries over TCP (required for SOCKS proxies)
 
     Returns:
         DC hostname (FQDN) or None if resolution fails
@@ -59,7 +60,8 @@ def resolve_dc_hostname(dc_ip: str, domain: str) -> Optional[str]:
         resolver.lifetime = 3
 
         rev_name = dns.reversename.from_address(dc_ip)
-        answers = resolver.resolve(rev_name, "PTR")
+        # Force TCP if requested (required for SOCKS/proxychains)
+        answers = resolver.resolve(rev_name, "PTR", tcp=use_tcp)
         if answers:
             hostname = str(answers[0]).rstrip(".")
             # If we got a short name, append the domain
@@ -101,6 +103,7 @@ def get_ldap_connection(
     hashes: Optional[str] = None,
     kerberos: bool = False,
     dc_host: Optional[str] = None,
+    use_tcp: bool = False,
 ) -> ldap_impacket.LDAPConnection:
     """
     Establish LDAP connection to domain controller.
@@ -117,6 +120,7 @@ def get_ldap_connection(
         hashes: NTLM hashes in LM:NT or NT format
         kerberos: Use Kerberos authentication
         dc_host: DC hostname for Kerberos SPN (optional, will try to resolve)
+        use_tcp: Force DNS queries over TCP (required for SOCKS proxies)
 
     Returns:
         LDAPConnection object
@@ -134,7 +138,7 @@ def get_ldap_connection(
     # If not provided, try to resolve
     kerberos_target = dc_host
     if kerberos and not kerberos_target:
-        kerberos_target = resolve_dc_hostname(dc_ip, domain)
+        kerberos_target = resolve_dc_hostname(dc_ip, domain, use_tcp=use_tcp)
         if kerberos_target:
             debug(f"LDAP: Resolved DC hostname for Kerberos SPN: {kerberos_target}")
         else:

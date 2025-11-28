@@ -195,6 +195,8 @@ def load_config() -> Dict[str, Any]:
         defaults["threads"] = target["threads"]
     if "rate_limit" in target:
         defaults["rate_limit"] = target["rate_limit"]
+    if "dns_tcp" in target:
+        defaults["dns_tcp"] = target["dns_tcp"]
 
     # Scanning
     scan = config_data.get("scanning", {})
@@ -371,6 +373,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum targets per second (default: unlimited). Use to avoid triggering security alerts "
         "or hitting Windows SMB connection limits. Example: --rate-limit 5 limits to 5 targets/second.",
+    )
+    target.add_argument(
+        "--dns-tcp",
+        action="store_true",
+        help="Force DNS queries over TCP instead of UDP. Required when using SOCKS proxies or proxychains "
+        "(UDP doesn't traverse SOCKS). Combine with --dc-ip for reliable DNS resolution through tunnels.",
     )
 
     # High value / scanning options

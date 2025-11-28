@@ -66,7 +66,7 @@ def verify_ldap_connection(
             info("Using domain SID derived from BloodHound data for realistic testing")
 
         info(f"Testing SID resolution with: {test_sid}")
-        result = resolve_sid_via_ldap(test_sid, test_domain, dc_ip, test_username, test_password, None, kerberos)
+        result = resolve_sid_via_ldap(test_sid, test_domain, dc_ip, test_username, test_password, test_hashes, kerberos)
 
         if result:
             good(f"LDAP test successful: {test_sid} -> {result}")

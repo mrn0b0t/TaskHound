@@ -352,7 +352,7 @@ def get_server_sid(
         return None
 
 
-def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: Optional[str] = None) -> str:
+def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: Optional[str] = None, dns_tcp: bool = False) -> str:
     """
     Extract the server's FQDN from an established SMB connection.
 
@@ -366,6 +366,7 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
         smb: Established SMBConnection
         target_ip: Original target IP address (used for DNS fallback)
         dc_ip: Domain Controller IP to use as DNS server
+        dns_tcp: Force DNS queries over TCP (required for SOCKS proxies)
 
     Returns:
         FQDN string (e.g., "DC.badsuccessor.lab") or "UNKNOWN_HOST"
@@ -395,12 +396,12 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
     if target_ip and _is_ip_address(target_ip):
         # Method 3: Try using DC as DNS server (if provided)
         if dc_ip:
-            fqdn = _dns_ptr_lookup(target_ip, nameserver=dc_ip)
+            fqdn = _dns_ptr_lookup(target_ip, nameserver=dc_ip, use_tcp=dns_tcp)
             if fqdn:
                 return fqdn
 
         # Method 4: Try system DNS
-        fqdn = _dns_ptr_lookup(target_ip, nameserver=None)
+        fqdn = _dns_ptr_lookup(target_ip, nameserver=None, use_tcp=dns_tcp)
         if fqdn:
             return fqdn
 
@@ -422,33 +423,38 @@ def _is_ip_address(hostname: str) -> bool:
     return False
 
 
-def _dns_ptr_lookup(ip: str, nameserver: Optional[str] = None) -> Optional[str]:
+def _dns_ptr_lookup(ip: str, nameserver: Optional[str] = None, use_tcp: bool = False) -> Optional[str]:
     """
     Perform DNS PTR lookup to resolve IP to hostname.
 
     Args:
         ip: IP address to resolve
         nameserver: Optional DNS server to query (e.g., DC IP)
+        use_tcp: Force DNS queries over TCP (required for SOCKS proxies)
 
     Returns:
         FQDN if successful, None otherwise
     """
     try:
-        # Try using dnspython if available (supports custom nameserver)
-        if nameserver:
+        # Try using dnspython if available (supports custom nameserver and TCP)
+        if nameserver or use_tcp:
             try:
                 import dns.resolver
                 import dns.reversename
 
                 # Create resolver with custom nameserver
                 resolver = dns.resolver.Resolver(configure=False)
-                resolver.nameservers = [nameserver]
+                if nameserver:
+                    resolver.nameservers = [nameserver]
                 resolver.timeout = 3
                 resolver.lifetime = 3
 
+                # Force TCP if requested (required for SOCKS/proxychains)
+                tcp_flag = use_tcp
+
                 # Perform PTR lookup
                 rev_name = dns.reversename.from_address(ip)
-                answers = resolver.resolve(rev_name, "PTR")
+                answers = resolver.resolve(rev_name, "PTR", tcp=tcp_flag)
 
                 if answers:
                     # Return first answer, strip trailing dot

@@ -132,6 +132,34 @@ class TestResolveDcHostname:
         
         assert result is None
 
+    def test_use_tcp_parameter_accepted(self):
+        """Should accept use_tcp parameter without error"""
+        # Just verify the function accepts the parameter (actual DNS lookup will fail/be mocked)
+        with patch('taskhound.utils.ldap.socket.gethostbyaddr') as mock_gethostbyaddr:
+            mock_gethostbyaddr.return_value = ("dc01.example.com", [], [])
+            result = resolve_dc_hostname("192.168.1.1", "example.com", use_tcp=True)
+            assert result == "dc01.example.com"
+
+    @patch('dns.reversename.from_address')
+    @patch('dns.resolver.Resolver')
+    def test_use_tcp_passes_to_resolver(self, mock_resolver_class, mock_from_address):
+        """Should pass tcp=True to resolver.resolve() when use_tcp=True"""
+        mock_resolver = MagicMock()
+        mock_resolver_class.return_value = mock_resolver
+        mock_from_address.return_value = "1.1.168.192.in-addr.arpa"
+        
+        mock_answer = MagicMock()
+        mock_answer.__str__ = MagicMock(return_value="dc01.example.com.")
+        mock_resolver.resolve.return_value = [mock_answer]
+        
+        result = resolve_dc_hostname("192.168.1.1", "example.com", use_tcp=True)
+        
+        # Verify resolve was called with tcp=True
+        mock_resolver.resolve.assert_called_once()
+        call_args = mock_resolver.resolve.call_args
+        assert call_args[1].get('tcp') is True
+        assert result == "dc01.example.com"
+
 
 # ============================================================================
 # Test: get_ldap_connection

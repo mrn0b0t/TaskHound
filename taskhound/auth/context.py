@@ -51,6 +51,7 @@ class AuthContext:
     kerberos: bool = False
     dc_ip: Optional[str] = None
     timeout: int = 60
+    dns_tcp: bool = False  # Force DNS queries over TCP (for SOCKS proxies)
 
     # LDAP-specific credentials (optional override)
     ldap_domain: Optional[str] = None
