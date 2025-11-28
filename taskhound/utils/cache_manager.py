@@ -8,7 +8,8 @@ This module provides a three-tier caching system:
 
 Thread-safety:
 - Session cache protected by RLock for concurrent access
-- SQLite uses WAL mode for concurrent reads/writes
+- SQLite uses per-thread connections via threading.local() for thread safety
+- SQLite uses WAL mode for concurrent reads/writes across threads
 """
 
 import contextlib
@@ -28,7 +29,8 @@ class CacheManager:
 
     Thread-safe:
     - Session cache (in-memory dict) protected by RLock
-    - SQLite uses WAL mode for concurrent access
+    - SQLite uses per-thread connections (threading.local) for thread affinity
+    - SQLite uses WAL mode for concurrent access across threads
     """
 
     def __init__(self, cache_file: Optional[Path] = None, ttl_hours: int = 24, enabled: bool = True):
@@ -42,7 +44,9 @@ class CacheManager:
         """
         self.ttl_hours = ttl_hours
         self.persistent_enabled = enabled
-        self.conn = None
+
+        # Thread-local storage for per-thread SQLite connections
+        self._local = threading.local()
 
         # Thread-safety: RLock for session cache access
         self._session_lock = threading.RLock()
@@ -68,20 +72,61 @@ class CacheManager:
             "expired": 0,
         }
 
-        # Initialize persistent cache if enabled
+        # Track all connections for cleanup (protected by _session_lock)
+        self._connections: list[sqlite3.Connection] = []
+
+        # Initialize persistent cache if enabled (creates schema)
         if self.persistent_enabled:
             self._init_db()
 
-    def _init_db(self):
-        """Initialize SQLite database and schema."""
+    def _get_conn(self) -> Optional[sqlite3.Connection]:
+        """
+        Get thread-local SQLite connection, creating one if needed.
+
+        SQLite connections have thread affinity - they can only be used in the
+        thread that created them. This method ensures each thread gets its own
+        connection to the shared database file.
+
+        Returns:
+            SQLite connection for current thread, or None if disabled/failed
+        """
+        if not self.persistent_enabled:
+            return None
+
+        # Check for existing connection in this thread
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            return conn
+
+        # Create new connection for this thread
         try:
-            self.conn = sqlite3.connect(self.cache_file, timeout=10.0)
-            # Enable WAL mode for better concurrency
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
+            conn = sqlite3.connect(self.cache_file, timeout=10.0)
+            # WAL mode allows concurrent reads while writing
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn = conn
+
+            # Track for cleanup
+            with self._session_lock:
+                self._connections.append(conn)
+
+            debug(f"Created new cache connection for thread {threading.current_thread().name}")
+            return conn
+        except Exception as e:
+            debug(f"Failed to create cache connection: {e}")
+            return None
+
+    def _init_db(self):
+        """Initialize SQLite database schema (called once at startup)."""
+        try:
+            # Get connection for main thread (also creates schema)
+            conn = self._get_conn()
+            if not conn:
+                self.persistent_enabled = False
+                return
 
             # Create table if not exists
-            self.conn.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS cache (
                     category TEXT,
                     key TEXT,
@@ -92,14 +137,13 @@ class CacheManager:
             """)
 
             # Create index for expiration cleanup
-            self.conn.execute("""
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_expires_at ON cache(expires_at)
             """)
 
-            self.conn.commit()
+            conn.commit()
 
-            # Opportunistic cleanup of expired entries (1% chance on init to avoid thundering herd)
-            # Or just do it always since it's fast with an index
+            # Opportunistic cleanup of expired entries
             self._prune_expired()
 
         except Exception as e:
@@ -108,16 +152,18 @@ class CacheManager:
 
     def _prune_expired(self):
         """Remove expired entries from database."""
-        if not self.conn:
+        conn = self._get_conn()
+        if not conn:
             return
 
         try:
             now = time.time()
-            cursor = self.conn.execute("DELETE FROM cache WHERE expires_at < ?", (now,))
+            cursor = conn.execute("DELETE FROM cache WHERE expires_at < ?", (now,))
             if cursor.rowcount > 0:
                 debug(f"Pruned {cursor.rowcount} expired cache entries")
-                self.stats["expired"] += cursor.rowcount
-            self.conn.commit()
+                with self._session_lock:
+                    self.stats["expired"] += cursor.rowcount
+            conn.commit()
         except Exception as e:
             debug(f"Error pruning cache: {e}")
 
@@ -144,11 +190,12 @@ class CacheManager:
                 return self.session[session_key]
             self.stats["session_misses"] += 1
 
-        # Tier 2: Check persistent cache (SQLite handles concurrency via WAL)
-        if self.persistent_enabled and self.conn:
+        # Tier 2: Check persistent cache (thread-local connection)
+        conn = self._get_conn()
+        if conn:
             try:
                 now = time.time()
-                cursor = self.conn.execute(
+                cursor = conn.execute(
                     "SELECT value, expires_at FROM cache WHERE category=? AND key=?", (category, key)
                 )
                 row = cursor.fetchone()
@@ -162,8 +209,8 @@ class CacheManager:
                         with self._session_lock:
                             self.stats["expired"] += 1
                         # Lazy delete
-                        self.conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))
-                        self.conn.commit()
+                        conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))
+                        conn.commit()
                         return None
 
                     # Valid hit
@@ -189,7 +236,7 @@ class CacheManager:
         """
         Store value in both session and persistent caches.
 
-        Thread-safe: Uses RLock for session cache, SQLite handles persistence.
+        Thread-safe: Uses RLock for session cache, per-thread SQLite connection.
 
         Args:
             category: Cache category ("computers", "users", "sids")
@@ -203,18 +250,19 @@ class CacheManager:
         with self._session_lock:
             self.session[session_key] = value
 
-        # Store in persistent cache if enabled (SQLite handles concurrency)
-        if self.persistent_enabled and self.conn:
+        # Store in persistent cache (thread-local connection)
+        conn = self._get_conn()
+        if conn:
             try:
                 ttl = ttl_hours if ttl_hours is not None else self.ttl_hours
                 expires_at = time.time() + (ttl * 3600)
                 value_json = json.dumps(value)
 
-                self.conn.execute(
+                conn.execute(
                     "INSERT OR REPLACE INTO cache (category, key, value, expires_at) VALUES (?, ?, ?, ?)",
                     (category, key, value_json, expires_at),
                 )
-                self.conn.commit()
+                conn.commit()
                 debug(f"Cache store: {category}:{key}")
             except Exception as e:
                 debug(f"Cache write error: {e}")
@@ -223,7 +271,7 @@ class CacheManager:
         """
         Remove value from both session and persistent caches.
 
-        Thread-safe: Uses RLock for session cache.
+        Thread-safe: Uses RLock for session cache, per-thread SQLite connection.
 
         Args:
             category: Cache category
@@ -236,11 +284,12 @@ class CacheManager:
             if session_key in self.session:
                 del self.session[session_key]
 
-        # Remove from persistent cache (SQLite handles concurrency)
-        if self.persistent_enabled and self.conn:
+        # Remove from persistent cache (thread-local connection)
+        conn = self._get_conn()
+        if conn:
             try:
-                self.conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))
-                self.conn.commit()
+                conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))
+                conn.commit()
             except Exception as e:
                 debug(f"Cache delete error: {e}")
 
@@ -256,12 +305,13 @@ class CacheManager:
         """
         result: Dict[str, Any] = {}
 
-        if not self.persistent_enabled or not self.conn:
+        conn = self._get_conn()
+        if not conn:
             return result
 
         try:
             now = time.time()
-            cursor = self.conn.execute(
+            cursor = conn.execute(
                 "SELECT key, value, expires_at FROM cache WHERE category=?", (category,)
             )
 
@@ -284,10 +334,10 @@ class CacheManager:
             # Clean up expired entries
             if expired_keys:
                 for key in expired_keys:
-                    self.conn.execute(
+                    conn.execute(
                         "DELETE FROM cache WHERE category=? AND key=?", (category, key)
                     )
-                self.conn.commit()
+                conn.commit()
                 debug(f"Cleaned up {len(expired_keys)} expired {category} cache entries")
 
         except Exception as e:
@@ -313,29 +363,33 @@ class CacheManager:
             session_key = f"{category}:{key}"
             self.session.pop(session_key, None)
 
-        # Clear persistent cache
-        if self.persistent_enabled and self.conn:
+        # Clear persistent cache (thread-local connection)
+        conn = self._get_conn()
+        if conn:
             try:
                 if category is None and key is None:
-                    self.conn.execute("DELETE FROM cache")
+                    conn.execute("DELETE FROM cache")
                     info("Cache cleared (all entries)")
                 elif category is not None and key is None:
-                    self.conn.execute("DELETE FROM cache WHERE category=?", (category,))
+                    conn.execute("DELETE FROM cache WHERE category=?", (category,))
                     info(f"Cache cleared (category: {category})")
                 elif category is not None and key is not None:
-                    self.conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))
+                    conn.execute("DELETE FROM cache WHERE category=? AND key=?", (category, key))
                     debug(f"Cache invalidated: {category}:{key}")
 
-                self.conn.commit()
+                conn.commit()
             except Exception as e:
                 warn(f"Cache invalidation error: {e}")
 
     def close(self):
-        """Close database connection."""
-        if self.conn:
-            with contextlib.suppress(Exception):
-                self.conn.close()
-            self.conn = None
+        """Close all database connections (one per thread)."""
+        with self._session_lock:
+            for conn in self._connections:
+                with contextlib.suppress(Exception):
+                    conn.close()
+            self._connections.clear()
+        # Clear thread-local connection reference
+        self._local.conn = None
 
     # ==========================================
     # Host Deduplication (Session-only)
@@ -385,9 +439,10 @@ class CacheManager:
         info(f"  Misses: {self.stats['persistent_misses']}")
         info(f"  Expired: {self.stats['expired']}")
 
-        if self.persistent_enabled and self.conn:
+        conn = self._get_conn()
+        if conn:
             try:
-                cursor = self.conn.execute("SELECT COUNT(*) FROM cache")
+                cursor = conn.execute("SELECT COUNT(*) FROM cache")
                 total_cached = cursor.fetchone()[0]
                 info(f"  Persistent cache size: {total_cached} entries")
             except Exception:

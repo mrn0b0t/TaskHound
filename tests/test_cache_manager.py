@@ -137,8 +137,9 @@ class TestCacheManagerPersistentCache:
             cache_file = Path(tmpdir) / "test.db"
             cache = CacheManager(cache_file=cache_file, enabled=True)
             
-            # Verify table exists by querying
-            cursor = cache.conn.execute(
+            # Verify table exists by querying via the thread-local connection
+            conn = cache._get_conn()
+            cursor = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='cache'"
             )
             result = cursor.fetchone()
@@ -228,6 +229,55 @@ class TestCacheManagerThreadSafety:
         # No exceptions should have occurred
         assert True
 
+    def test_concurrent_persistent_access(self):
+        """Should handle concurrent SQLite access from multiple threads without errors.
+        
+        This is the key test for the thread-safety fix (B5). Previously, a single
+        SQLite connection was shared across threads, causing:
+        'SQLite objects created in a thread can only be used in that same thread'
+        
+        The fix uses threading.local() to give each thread its own connection.
+        """
+        import threading
+        import tempfile
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_file = Path(tmpdir) / "test_concurrent.db"
+            cache = CacheManager(cache_file=cache_file, enabled=True)
+            errors = []
+            
+            def worker(thread_id):
+                """Simulate worker thread doing cache operations."""
+                try:
+                    for i in range(20):
+                        key = f"thread_{thread_id}_key_{i}"
+                        # Write
+                        cache.set("sids", key, {"resolved": f"value_{i}"})
+                        # Read back
+                        result = cache.get("sids", key)
+                        if result is None:
+                            errors.append(f"Thread {thread_id}: Got None for {key}")
+                    return thread_id
+                except Exception as e:
+                    errors.append(f"Thread {thread_id}: {type(e).__name__}: {e}")
+                    return None
+            
+            # Run with 5 concurrent threads (like --threads 5 in production)
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(worker, i) for i in range(5)]
+                for future in as_completed(futures):
+                    future.result()  # Raises if worker raised
+            
+            # No SQLite thread errors should have occurred
+            assert len(errors) == 0, f"Thread safety errors: {errors}"
+            
+            # Verify each thread created its own connection
+            # (We can check the _connections list length)
+            assert len(cache._connections) >= 1  # At least main thread connection
+            
+            cache.close()
+
 
 class TestCacheManagerClose:
     """Tests for cache cleanup"""
@@ -242,7 +292,8 @@ class TestCacheManagerClose:
             # Should not raise
             cache.close()
             
-            assert cache.conn is None or True  # Connection closed or handled
+            # Verify connections list is cleared after close
+            assert len(cache._connections) == 0
 
     def test_close_handles_no_connection(self):
         """Should handle close when no connection"""
@@ -306,15 +357,16 @@ class TestCacheManagerGetAll:
             cache_file = Path(tmpdir) / "test_cache.db"
             cache = CacheManager(cache_file=cache_file, enabled=True, ttl_hours=0)  # 0 TTL = already expired
             
-            # Manually insert an expired entry
+            # Manually insert an expired entry via thread-local connection
             import time
             import json
+            conn = cache._get_conn()
             past_time = time.time() - 1000  # Expired
-            cache.conn.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO cache (category, key, value, expires_at) VALUES (?, ?, ?, ?)",
                 ("cat", "expired_key", json.dumps("expired_value"), past_time)
             )
-            cache.conn.commit()
+            conn.commit()
             
             result = cache.get_all("cat")
             
