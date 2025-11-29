@@ -295,6 +295,12 @@ def process_target(
             if not was_first:
                 warn(f"{target}: Skipping - already processed as {previous_target} (dual-homed host: {server_fqdn})")
                 status(f"[Collecting] {target} [SKIP] (duplicate of {previous_target})")
+                # Add SKIPPED row so async_runner can detect this was a dual-homed skip
+                all_rows.append(TaskRow.skipped(
+                    host=server_fqdn,
+                    reason=f"duplicate of {previous_target}",
+                    target_ip=target,
+                ))
                 # Close SMB connection before returning
                 if smb:
                     with contextlib.suppress(Exception):

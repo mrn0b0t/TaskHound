@@ -194,14 +194,21 @@ class AsyncTaskHound:
                 for row in target_rows
             )
 
-            result.success = not has_failure
+            # Check if target was skipped (dual-homed duplicate)
+            # process_target adds TaskRow.skipped() rows for dual-homed hosts
+            has_skipped = any(
+                row.type == "SKIPPED"
+                for row in target_rows
+            )
+
+            result.success = not has_failure and not has_skipped
             result.lines = lines
             result.rows = target_rows
             result.laps_result = laps_result
 
-            # Detect skipped targets (dual-homed duplicates)
-            # These return empty lines and no rows, but are not failures
-            if not has_failure and not lines and not target_rows:
+            # Mark as skipped only if explicitly flagged via SKIPPED row
+            # (not just because results are empty after filtering)
+            if has_skipped:
                 result.skipped = True
 
             if has_failure:
@@ -399,13 +406,19 @@ class AsyncTaskHound:
                         for row in target_rows
                     )
 
-                    result.success = not has_failure
+                    # Check if target was skipped (dual-homed duplicate)
+                    has_skipped = any(
+                        row.type == "SKIPPED"
+                        for row in target_rows
+                    )
+
+                    result.success = not has_failure and not has_skipped
                     result.lines = lines
                     result.rows = target_rows
                     result.laps_result = laps_result
 
-                    # Detect skipped targets (dual-homed duplicates)
-                    if not has_failure and not lines and not target_rows:
+                    # Mark as skipped only if explicitly flagged via SKIPPED row
+                    if has_skipped:
                         result.skipped = True
 
                     if has_failure:

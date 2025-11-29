@@ -383,7 +383,7 @@ def resolve_name_to_sid_via_ldap(
 ) -> Optional[str]:
     """
     Resolve a computer name or username to its SID using LDAP.
-    This is the reverse operation of resolve_sid_via_ldap.
+    Results are cached persistently to avoid redundant LDAP queries.
     NOW SUPPORTS NTLM HASH AUTHENTICATION via Impacket LDAP!
 
     Args:
@@ -399,6 +399,26 @@ def resolve_name_to_sid_via_ldap(
     Returns:
         SID string (e.g., "S-1-5-21-..."), None if resolution fails
     """
+    # Check cache first (before any processing)
+    from ..utils.cache_manager import get_cache
+    cache = get_cache()
+    
+    if cache and is_computer:
+        # Normalize for cache key: strip $ and domain suffix
+        cache_name = name.upper()
+        if cache_name.endswith("$"):
+            cache_name = cache_name[:-1]
+        if "." in cache_name:
+            cache_name = cache_name.split(".")[0]
+        cache_key = f"name:{cache_name}:{domain.upper()}"
+        
+        cached_sid = cache.get("computers", cache_key)
+        if cached_sid:
+            debug(f"Cache hit for computer {name}: {cached_sid}")
+            return cached_sid
+    else:
+        cache_key = None  # Only cache computers for now
+    
     try:
         # Extract just the name part if it's in USER@DOMAIN format
         search_name = name
@@ -489,6 +509,9 @@ def resolve_name_to_sid_via_ldap(
                             if sid_string:
                                 account_name = attributes.get("sAMAccountName") or attributes.get("cn") or name
                                 info(f"Resolved {account_name} to SID {sid_string} via LDAP")
+                                # Cache for future lookups (computers only)
+                                if cache and cache_key:
+                                    cache.set("computers", cache_key, sid_string)
                                 return sid_string
                             else:
                                 debug(f"Failed to convert binary SID to string for {name}")

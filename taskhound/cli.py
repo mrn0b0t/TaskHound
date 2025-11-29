@@ -261,25 +261,19 @@ def main():
                         laps_failures.append(laps_result)
 
     # Exports
-    # Auto-generate JSON if OpenGraph is enabled and no explicit JSON output was specified
+    # Track if we need to auto-generate JSON for OpenGraph (defer messages until OpenGraph section)
+    opengraph_json_path = None
+    opengraph_json_overwrites = False
     if args.bh_opengraph and not args.json:
         # Create output directory if it doesn't exist
         import os
 
         os.makedirs(args.bh_output, exist_ok=True)
 
-        # Generate JSON path
-        json_path = f"{args.bh_output}/taskhound_data.json"
-
-        # Warn if file already exists (will be overwritten)
-        if os.path.exists(json_path):
-            warn(f"OpenGraph will overwrite existing file: {json_path}")
-
-        # Inform user about auto-generation and how to customize
-        info(f"Auto-generating JSON for OpenGraph: {json_path}")
-        info("To use a different path, specify --json <path>")
-
-        args.json = json_path
+        # Generate JSON path (messages will be shown in OpenGraph section)
+        opengraph_json_path = f"{args.bh_output}/taskhound_data.json"
+        opengraph_json_overwrites = os.path.exists(opengraph_json_path)
+        args.json = opengraph_json_path
 
     if args.json:
         write_json(args.json, all_rows)
@@ -315,11 +309,24 @@ def main():
 
     # BloodHound OpenGraph Integration
     if args.bh_opengraph:
+        from rich.console import Console
+        from rich.panel import Panel
+
         from .config_model import BloodHoundConfig
 
+        console = Console()
         print()
-        info("BloodHound OpenGraph Integration")
-        print("-" * 50)
+        console.print(Panel.fit(
+            "[bold]BloodHound OpenGraph Integration[/bold]",
+            border_style="blue",
+        ))
+
+        # Show JSON auto-generation messages (deferred from earlier)
+        if opengraph_json_path:
+            if opengraph_json_overwrites:
+                warn(f"OpenGraph will overwrite existing file: {opengraph_json_path}")
+            info(f"Auto-generating JSON for OpenGraph: {opengraph_json_path}")
+            info("To use a different path, specify --json <path>")
 
         # Create consolidated config from args
         bh_config = BloodHoundConfig.from_args_and_config(args)

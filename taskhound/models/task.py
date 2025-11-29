@@ -15,6 +15,7 @@ class TaskType(str, Enum):
     PRIV = "PRIV"
     TASK = "TASK"
     FAILURE = "FAILURE"
+    SKIPPED = "SKIPPED"  # Dual-homed duplicate, not processed
 
 
 @dataclass
@@ -184,5 +185,31 @@ class TaskRow:
             path="",
             target_ip=target_ip,
             type=TaskType.FAILURE.value,
+            reason=reason,
+        )
+
+    @classmethod
+    def skipped(
+        cls,
+        host: str,
+        reason: str,
+        target_ip: Optional[str] = None,
+    ) -> "TaskRow":
+        """
+        Create a SKIPPED row for dual-homed hosts already processed.
+
+        Args:
+            host: Hostname or IP of the skipped target
+            reason: Skip reason message (e.g., "duplicate of 192.168.1.1")
+            target_ip: Original target IP/hostname
+
+        Returns:
+            TaskRow with type=SKIPPED
+        """
+        return cls(
+            host=host,
+            path="",
+            target_ip=target_ip,
+            type=TaskType.SKIPPED.value,
             reason=reason,
         )

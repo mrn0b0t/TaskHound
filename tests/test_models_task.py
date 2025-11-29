@@ -24,9 +24,13 @@ class TestTaskType:
         """FAILURE has correct value."""
         assert TaskType.FAILURE.value == "FAILURE"
 
+    def test_skipped_value(self):
+        """SKIPPED has correct value."""
+        assert TaskType.SKIPPED.value == "SKIPPED"
+
     def test_all_types_exist(self):
         """All expected types exist."""
-        expected = {"TIER0", "PRIV", "TASK", "FAILURE"}
+        expected = {"TIER0", "PRIV", "TASK", "FAILURE", "SKIPPED"}
         actual = {t.name for t in TaskType}
         assert expected == actual
 
@@ -146,3 +150,38 @@ class TestTaskRowRepr:
         row = TaskRow(host="SERVER", path="\\Windows\\System32\\Tasks\\MyTask")
         repr_str = repr(row)
         assert "MyTask" in repr_str or "path" in repr_str
+
+
+class TestTaskRowFactoryMethods:
+    """Tests for TaskRow factory methods."""
+
+    def test_skipped_factory_basic(self):
+        """skipped() creates correct TaskRow."""
+        row = TaskRow.skipped("SERVER", "Duplicate of OTHER")
+        assert row.host == "SERVER"
+        assert row.type == TaskType.SKIPPED
+        assert row.reason == "Duplicate of OTHER"
+        assert row.path == ""
+
+    def test_skipped_factory_with_target_ip(self):
+        """skipped() can include target_ip."""
+        row = TaskRow.skipped("SERVER", "Dual-homed duplicate", target_ip="192.168.1.100")
+        assert row.host == "SERVER"
+        assert row.type == TaskType.SKIPPED
+        assert row.target_ip == "192.168.1.100"
+        assert row.reason == "Dual-homed duplicate"
+
+    def test_failure_factory_basic(self):
+        """failure() creates correct TaskRow."""
+        row = TaskRow.failure("SERVER", "Connection refused")
+        assert row.host == "SERVER"
+        assert row.type == TaskType.FAILURE
+        assert row.reason == "Connection refused"
+        assert row.path == ""
+
+    def test_failure_factory_with_target_ip(self):
+        """failure() can include target_ip."""
+        row = TaskRow.failure("SERVER", "Access denied", target_ip="10.0.0.1")
+        assert row.host == "SERVER"
+        assert row.type == TaskType.FAILURE
+        assert row.target_ip == "10.0.0.1"
