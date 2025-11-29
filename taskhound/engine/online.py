@@ -552,6 +552,7 @@ def process_target(
                     traceback.print_exc()
 
     total = len(items)
+    filtered_count = 0  # Count of tasks that pass should_include filter
     priv_count = 0
     priv_lines: List[str] = []
     task_lines: List[str] = []
@@ -702,29 +703,38 @@ def process_target(
         # Resolve SID early if runas is a SID - store result for credential matching and output
         # This ensures we only resolve once per task, and the result is available for all uses
         # Skipped in OPSEC mode to avoid SMB/LSARPC and LDAP queries
+        # Also skip well-known local SIDs (S-1-5-18 SYSTEM, S-1-5-19, S-1-5-20) - they'll be filtered anyway
         if is_sid(runas) and not opsec:
-            # Derive local domain SID prefix from computer SID for foreign domain detection
-            from ..utils.sid_resolver import get_domain_sid_prefix
-            local_domain_prefix = get_domain_sid_prefix(server_sid) if server_sid else None
-            
-            _, row.resolved_runas = format_runas_with_sid_resolution(
-                runas,
-                hv_loader=hv,
-                bh_connector=bh_connector,
-                smb_connection=smb,
-                no_ldap=no_ldap,
-                domain=domain,
-                dc_ip=dc_ip,
-                username=username,
-                password=password,
-                hashes=hashes,
-                kerberos=kerberos,
-                ldap_domain=ldap_domain,
-                ldap_user=ldap_user,
-                ldap_password=ldap_password,
-                ldap_hashes=ldap_hashes,
-                local_domain_sid_prefix=local_domain_prefix,
-            )
+            # Skip SID resolution for well-known local SIDs that will be filtered out
+            # This avoids unnecessary cache lookups for SYSTEM (S-1-5-18), etc.
+            from ..utils.sid_resolver import looks_like_domain_user
+            if not looks_like_domain_user(runas) and not include_local:
+                # This SID is a local/system account and we're not including locals
+                # Skip resolution - the task will be filtered out in classify_task()
+                pass
+            else:
+                # Derive local domain SID prefix from computer SID for foreign domain detection
+                from ..utils.sid_resolver import get_domain_sid_prefix
+                local_domain_prefix = get_domain_sid_prefix(server_sid) if server_sid else None
+                
+                _, row.resolved_runas = format_runas_with_sid_resolution(
+                    runas,
+                    hv_loader=hv,
+                    bh_connector=bh_connector,
+                    smb_connection=smb,
+                    no_ldap=no_ldap,
+                    domain=domain,
+                    dc_ip=dc_ip,
+                    username=username,
+                    password=password,
+                    hashes=hashes,
+                    kerberos=kerberos,
+                    ldap_domain=ldap_domain,
+                    ldap_user=ldap_user,
+                    ldap_password=ldap_password,
+                    ldap_hashes=ldap_hashes,
+                    local_domain_sid_prefix=local_domain_prefix,
+                )
 
         # Enrich row with decrypted password if available from DPAPI loot
         if decrypted_creds:
@@ -761,6 +771,8 @@ def process_target(
 
         if not result.should_include:
             continue
+
+        filtered_count += 1  # Task passed the filter
 
         # Format output block based on classification
         if result.task_type in ("TIER-0", "PRIV"):
@@ -841,8 +853,12 @@ def process_target(
 
     priv_display = priv_count if (hv and hv.loaded) else 'N/A'
     status(f"[Collecting] {target} [+]")
-    status(f"[TaskCount] {total} Tasks, {priv_display} Privileged")
-    good(f"{target}: Found {total} tasks, privileged {priv_display}{backup_msg}{laps_msg}")
+    # Show filtered count (domain tasks) vs total (all tasks including SYSTEM)
+    if filtered_count < total:
+        status(f"[TaskCount] {filtered_count} domain tasks ({total} total), {priv_display} Privileged")
+    else:
+        status(f"[TaskCount] {total} Tasks, {priv_display} Privileged")
+    good(f"{target}: Found {filtered_count} tasks (of {total} total), privileged {priv_display}{backup_msg}{laps_msg}")
 
     # Combine credential loot output with task listing output
     # Put credentials first since they're the most valuable

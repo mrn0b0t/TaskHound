@@ -344,3 +344,86 @@ class TestIsForeignDomainSid:
         foreign_sid = "S-1-5-21-999888777-666555444-333222111-1001"
         
         assert is_foreign_domain_sid(foreign_sid, None) is False
+
+
+class TestLDAPDomainValidation:
+    """Tests for LDAP domain validation (B7 bug fix)"""
+
+    def test_resolve_name_to_sid_via_ldap_rejects_empty_domain(self):
+        """Should return None for empty domain (prevents invalidDNSyntax error)"""
+        from taskhound.utils.sid_resolver import resolve_name_to_sid_via_ldap
+        
+        # Empty domain should return None immediately without attempting LDAP
+        result = resolve_name_to_sid_via_ldap(
+            name="testcomputer",
+            domain="",
+            is_computer=True,
+        )
+        
+        assert result is None
+
+    def test_resolve_name_to_sid_via_ldap_rejects_domain_without_dots(self):
+        """Should return None for domain without dots (not FQDN)"""
+        from taskhound.utils.sid_resolver import resolve_name_to_sid_via_ldap
+        
+        # Single-label domain (no dots) should return None
+        result = resolve_name_to_sid_via_ldap(
+            name="testcomputer",
+            domain="TESTDOMAIN",
+            is_computer=True,
+        )
+        
+        assert result is None
+
+    def test_resolve_sid_via_ldap_rejects_empty_domain(self):
+        """Should return None for empty domain in SID resolution"""
+        from taskhound.utils.sid_resolver import resolve_sid_via_ldap
+        
+        result = resolve_sid_via_ldap(
+            sid="S-1-5-21-123456789-987654321-111111111-1001",
+            domain="",
+            username="testuser",
+            password="testpass",
+        )
+        
+        assert result is None
+
+    def test_resolve_sid_via_ldap_rejects_domain_without_dots(self):
+        """Should return None for domain without dots in SID resolution"""
+        from taskhound.utils.sid_resolver import resolve_sid_via_ldap
+        
+        result = resolve_sid_via_ldap(
+            sid="S-1-5-21-123456789-987654321-111111111-1001",
+            domain="NODOTS",
+            username="testuser",
+            password="testpass",
+        )
+        
+        assert result is None
+
+    def test_batch_get_user_attributes_rejects_empty_domain(self):
+        """Should return empty dict for empty domain in batch query"""
+        from taskhound.utils.sid_resolver import batch_get_user_attributes
+        
+        result = batch_get_user_attributes(
+            usernames=["testuser"],
+            domain="",
+        )
+        
+        assert result == {}
+
+    def test_fetch_tier0_members_rejects_empty_domain(self):
+        """Should return empty dict for empty domain in Tier-0 preflight"""
+        from taskhound.utils.sid_resolver import fetch_tier0_members
+        
+        result = fetch_tier0_members(domain="")
+        
+        assert result == {}
+
+    def test_fetch_tier0_members_rejects_domain_without_dots(self):
+        """Should return empty dict for domain without dots"""
+        from taskhound.utils.sid_resolver import fetch_tier0_members
+        
+        result = fetch_tier0_members(domain="SINGLELABEL")
+        
+        assert result == {}

@@ -333,6 +333,11 @@ def resolve_sid_via_ldap(
             debug("No valid credentials provided for LDAP SID resolution")
             return None
 
+        # Validate domain - must be non-empty and contain at least one dot for LDAP DN construction
+        if not domain or "." not in domain:
+            debug(f"Invalid domain '{domain}' for LDAP SID resolution - must be FQDN")
+            return None
+
         # If no DC IP provided, try to resolve it
         if not dc_ip:
             try:
@@ -464,6 +469,11 @@ def resolve_name_to_sid_via_ldap(
             return cached_sid
     else:
         cache_key = None  # Only cache computers for now
+    
+    # Validate domain - must be non-empty and contain at least one dot for LDAP DN construction
+    if not domain or "." not in domain:
+        debug(f"Invalid domain '{domain}' for LDAP resolution - must be FQDN (e.g., 'corp.local')")
+        return None
     
     try:
         # Extract just the name part if it's in USER@DOMAIN format
@@ -885,6 +895,11 @@ def batch_get_user_attributes(
     if not users_to_query:
         return {}
 
+    # Validate domain - must be non-empty and contain at least one dot for LDAP DN construction
+    if not domain or "." not in domain:
+        debug(f"Invalid domain '{domain}' for batch user attribute lookup - must be FQDN")
+        return {}
+
     # Check cache first
     cache = get_cache()
     results = {}
@@ -1211,7 +1226,9 @@ def fetch_tier0_members(
     """
     tier0_cache: Tier0Cache = {}
 
-    if not domain:
+    # Validate domain - must be non-empty and contain at least one dot for LDAP DN construction
+    if not domain or "." not in domain:
+        debug(f"Invalid domain '{domain}' for Tier-0 pre-flight - must be FQDN")
         return tier0_cache
 
     # Check persistent cache first
