@@ -703,6 +703,10 @@ def process_target(
         # This ensures we only resolve once per task, and the result is available for all uses
         # Skipped in OPSEC mode to avoid SMB/LSARPC and LDAP queries
         if is_sid(runas) and not opsec:
+            # Derive local domain SID prefix from computer SID for foreign domain detection
+            from ..utils.sid_resolver import get_domain_sid_prefix
+            local_domain_prefix = get_domain_sid_prefix(server_sid) if server_sid else None
+            
             _, row.resolved_runas = format_runas_with_sid_resolution(
                 runas,
                 hv_loader=hv,
@@ -719,6 +723,7 @@ def process_target(
                 ldap_user=ldap_user,
                 ldap_password=ldap_password,
                 ldap_hashes=ldap_hashes,
+                local_domain_sid_prefix=local_domain_prefix,
             )
 
         # Enrich row with decrypted password if available from DPAPI loot

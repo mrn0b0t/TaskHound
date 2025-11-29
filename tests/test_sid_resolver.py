@@ -260,3 +260,87 @@ class TestSidToBinaryEdgeCases:
         
         assert result is not None
         assert binary_to_sid(result) == sid
+
+
+class TestGetDomainSidPrefix:
+    """Tests for get_domain_sid_prefix function"""
+
+    def test_extracts_domain_prefix_from_user_sid(self):
+        """Should extract domain prefix from user SID (remove RID)"""
+        from taskhound.utils.sid_resolver import get_domain_sid_prefix
+        
+        sid = "S-1-5-21-123456789-987654321-111222333-1001"
+        
+        result = get_domain_sid_prefix(sid)
+        
+        assert result == "S-1-5-21-123456789-987654321-111222333"
+
+    def test_extracts_domain_prefix_from_computer_sid(self):
+        """Should extract domain prefix from computer account SID"""
+        from taskhound.utils.sid_resolver import get_domain_sid_prefix
+        
+        sid = "S-1-5-21-3570960105-1792075822-554663251-1002"
+        
+        result = get_domain_sid_prefix(sid)
+        
+        assert result == "S-1-5-21-3570960105-1792075822-554663251"
+
+    def test_returns_none_for_builtin_sid(self):
+        """Should return None for builtin SIDs (not domain SIDs)"""
+        from taskhound.utils.sid_resolver import get_domain_sid_prefix
+        
+        # Local System
+        assert get_domain_sid_prefix("S-1-5-18") is None
+        # Builtin Administrators
+        assert get_domain_sid_prefix("S-1-5-32-544") is None
+
+    def test_returns_none_for_empty_string(self):
+        """Should return None for empty string"""
+        from taskhound.utils.sid_resolver import get_domain_sid_prefix
+        
+        assert get_domain_sid_prefix("") is None
+
+    def test_returns_none_for_none(self):
+        """Should return None for None"""
+        from taskhound.utils.sid_resolver import get_domain_sid_prefix
+        
+        assert get_domain_sid_prefix(None) is None
+
+
+class TestIsForeignDomainSid:
+    """Tests for is_foreign_domain_sid function"""
+
+    def test_detects_foreign_domain_sid(self):
+        """Should detect SID from different domain"""
+        from taskhound.utils.sid_resolver import is_foreign_domain_sid
+        
+        local_prefix = "S-1-5-21-123456789-987654321-111222333"
+        foreign_sid = "S-1-5-21-999888777-666555444-333222111-1001"
+        
+        assert is_foreign_domain_sid(foreign_sid, local_prefix) is True
+
+    def test_detects_same_domain_sid(self):
+        """Should return False for SID from same domain"""
+        from taskhound.utils.sid_resolver import is_foreign_domain_sid
+        
+        local_prefix = "S-1-5-21-123456789-987654321-111222333"
+        same_domain_sid = "S-1-5-21-123456789-987654321-111222333-500"
+        
+        assert is_foreign_domain_sid(same_domain_sid, local_prefix) is False
+
+    def test_returns_false_for_builtin_sid(self):
+        """Should return False for builtin SIDs (not domain SIDs)"""
+        from taskhound.utils.sid_resolver import is_foreign_domain_sid
+        
+        local_prefix = "S-1-5-21-123456789-987654321-111222333"
+        
+        # Local System - not a domain SID
+        assert is_foreign_domain_sid("S-1-5-18", local_prefix) is False
+
+    def test_returns_false_when_no_local_prefix(self):
+        """Should return False when local domain prefix is unknown"""
+        from taskhound.utils.sid_resolver import is_foreign_domain_sid
+        
+        foreign_sid = "S-1-5-21-999888777-666555444-333222111-1001"
+        
+        assert is_foreign_domain_sid(foreign_sid, None) is False

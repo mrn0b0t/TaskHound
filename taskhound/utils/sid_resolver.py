@@ -103,6 +103,52 @@ def is_sid(value: str) -> bool:
     return bool(re.match(pattern, value.strip()))
 
 
+def get_domain_sid_prefix(sid: str) -> Optional[str]:
+    """
+    Extract domain SID prefix from a full SID.
+    
+    Domain SIDs have the format: S-1-5-21-{domain1}-{domain2}-{domain3}-{RID}
+    The domain prefix is S-1-5-21-{domain1}-{domain2}-{domain3} (without RID).
+    
+    Args:
+        sid: Full SID string (e.g., "S-1-5-21-123-456-789-1001")
+    
+    Returns:
+        Domain prefix (e.g., "S-1-5-21-123-456-789") or None if not a domain SID
+    """
+    if not sid or not sid.startswith("S-1-5-21-"):
+        return None
+    
+    parts = sid.split("-")
+    # Domain SID: S-1-5-21-{d1}-{d2}-{d3}-{RID} = 8 parts minimum
+    if len(parts) < 8:
+        return None
+    
+    # Return everything except the RID (last part)
+    return "-".join(parts[:-1])
+
+
+def is_foreign_domain_sid(sid: str, local_domain_sid_prefix: Optional[str]) -> bool:
+    """
+    Check if a SID belongs to a foreign (trusted) domain.
+    
+    Args:
+        sid: SID to check
+        local_domain_sid_prefix: Known local domain prefix (e.g., "S-1-5-21-123-456-789")
+    
+    Returns:
+        True if SID is from a different domain than local_domain_sid_prefix
+    """
+    if not local_domain_sid_prefix:
+        return False  # Can't determine without local domain info
+    
+    sid_prefix = get_domain_sid_prefix(sid)
+    if not sid_prefix:
+        return False  # Not a domain SID (built-in, well-known, etc.)
+    
+    return sid_prefix != local_domain_sid_prefix
+
+
 def sid_to_binary(sid_string: str) -> Optional[bytes]:
     """
     Convert a SID string (S-1-5-21-...) to binary format for LDAP queries.
@@ -651,6 +697,7 @@ def resolve_sid(
     ldap_user: Optional[str] = None,
     ldap_password: Optional[str] = None,
     ldap_hashes: Optional[str] = None,
+    local_domain_sid_prefix: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Comprehensive SID resolution with 4-tier fallback chain.
@@ -659,6 +706,7 @@ def resolve_sid(
     1. BloodHound offline data (JSON file from --bloodhound flag)
     2. BloodHound live API (if bh_connector provided and has active connection)
     3. SMB/LSARPC via existing connection (uses target's LSA to resolve SIDs)
+       - SKIPPED for foreign domain SIDs (different domain prefix)
     4. LDAP queries to domain controller (if credentials provided and not disabled)
 
     Args:
@@ -677,6 +725,7 @@ def resolve_sid(
         ldap_user: Separate LDAP username (for local admin case)
         ldap_password: Separate LDAP password (for local admin case - plaintext only)
         ldap_hashes: Separate LDAP NTLM hashes (for local admin case - use instead of ldap_password)
+        local_domain_sid_prefix: Known local domain SID prefix for foreign domain detection
 
     Returns:
         Tuple of (display_name, resolved_username)
@@ -725,9 +774,15 @@ def resolve_sid(
             _cache_success(resolved)
             return f"{resolved} ({sid})", resolved
 
-    # Tier 3: Try SMB/LSARPC if connection available
+    # Check for foreign domain SID before attempting LSARPC
+    # Foreign SIDs cannot be resolved via local domain's LSARPC (returns STATUS_NONE_MAPPED)
+    is_foreign = is_foreign_domain_sid(sid, local_domain_sid_prefix)
+    if is_foreign:
+        debug(f"SID {sid} is from foreign domain (prefix mismatch with {local_domain_sid_prefix}), skipping LSARPC")
+
+    # Tier 3: Try SMB/LSARPC if connection available (skip for foreign domain SIDs)
     # This is very useful when using Kerberos CIFS tickets where LDAP auth might fail
-    if smb_connection:
+    if smb_connection and not is_foreign:
         resolved = resolve_sid_via_smb(sid, smb_connection)
         if resolved:
             debug(f"SID {sid} resolved via SMB/LSARPC: {resolved}")
@@ -772,9 +827,12 @@ def resolve_sid(
     elif not ldap_auth_domain or not ldap_auth_user:
         debug(f"SID {sid} not resolved: insufficient authentication information")
         return f"{sid} (SID - insufficient auth for LDAP resolution)", None
+    elif is_foreign:
+        debug(f"SID {sid} not resolved: foreign domain SID (cross-trust)")
+        return f"{sid} (SID - foreign domain/trust)", None
     else:
         debug(f"SID {sid} not resolved: could not find in BloodHound offline, BloodHound API, SMB, or LDAP")
-        return f"{sid} (SID - could not resolve: deleted user, cross-domain, or access denied)", None
+        return f"{sid} (SID - could not resolve: deleted user or access denied)", None
 
 
 def batch_get_user_attributes(
@@ -1035,6 +1093,7 @@ def format_runas_with_sid_resolution(
     ldap_user: Optional[str] = None,
     ldap_password: Optional[str] = None,
     ldap_hashes: Optional[str] = None,
+    local_domain_sid_prefix: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Format RunAs field with SID resolution if needed.
@@ -1055,6 +1114,7 @@ def format_runas_with_sid_resolution(
         ldap_user: Separate LDAP username (for local admin case)
         ldap_password: Separate LDAP password (for local admin case - plaintext only)
         ldap_hashes: Separate LDAP NTLM hashes (for local admin case - use instead of ldap_password)
+        local_domain_sid_prefix: Known local domain SID prefix for foreign domain detection
 
     Returns:
         Tuple of (display_runas, resolved_username)
@@ -1082,11 +1142,11 @@ def format_runas_with_sid_resolution(
             ldap_user,
             ldap_password,
             ldap_hashes,
+            local_domain_sid_prefix,
         )
     else:
         # Regular username, return as-is
         return runas, None
-
 
 
 
