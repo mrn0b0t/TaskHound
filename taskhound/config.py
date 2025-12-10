@@ -323,6 +323,13 @@ def load_config() -> Dict[str, Any]:
     if "verbose" in output:
         defaults["verbose"] = output["verbose"]
 
+    # Audit Mode
+    audit = config_data.get("audit", {})
+    if "enabled" in audit:
+        defaults["audit_mode"] = audit["enabled"]
+    if "html_report" in audit:
+        defaults["html_report"] = audit["html_report"]
+
     return defaults
 
 
@@ -591,6 +598,21 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--opengraph", help="Directory to save BloodHound OpenGraph JSON files")
     out.add_argument("--backup", help="Directory to save raw XML task files (per target)")
     out.add_argument("--no-summary", action="store_true", help="Disable summary table at the end of the run")
+
+    # Audit Mode options
+    audit = ap.add_argument_group(
+        "Audit Mode",
+        description="Generate comprehensive security audit reports with severity scoring and remediation recommendations."
+    )
+    audit.add_argument(
+        "--audit-mode",
+        action="store_true",
+        help="Enable audit mode: Generate HTML security report with severity scoring, statistics, and recommendations.",
+    )
+    audit.add_argument(
+        "--html-report",
+        help="Path to save the HTML audit report (default: taskhound_audit_report.html). Implies --audit-mode.",
+    )
 
     # Misc
     misc = ap.add_argument_group("Misc")

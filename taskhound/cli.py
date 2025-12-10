@@ -307,6 +307,20 @@ def main():
         if laps_cache is not None:
             print_laps_summary(laps_cache, laps_successes, laps_failures)
 
+    # Audit Mode: Generate HTML security report
+    # --html-report implies --audit-mode
+    if getattr(args, "html_report", None) or getattr(args, "audit_mode", False):
+        from .output.html_report import generate_html_report
+
+        # Determine output path
+        report_path = getattr(args, "html_report", None) or "taskhound_audit_report.html"
+
+        if all_rows:
+            generate_html_report(all_rows, report_path)
+            info(f"Open {report_path} in a browser to view the audit report")
+        else:
+            warn("No tasks found - skipping HTML report generation")
+
     # BloodHound OpenGraph Integration
     if args.bh_opengraph:
         from rich.console import Console
