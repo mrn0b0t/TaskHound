@@ -76,7 +76,7 @@ class TestAnalyzePasswordAge:
         meta = {"date": "2024-01-01T00:00:00"}
         result = _analyze_password_age(hv, "user@domain.local", meta, "\\Task")
 
-        assert result == "Password 180+ days old"
+        assert result == "HIGH: Password 180+ days old"
         hv.analyze_password_age.assert_called_once()
 
     def test_returns_none_when_risk_unknown(self):
@@ -104,7 +104,7 @@ class TestAnalyzePasswordAge:
             assert "no explicit creation date" in mock_warn.call_args[0][0]
             assert "TestTask" in mock_warn.call_args[0][0]
             # Should still return the analysis result even with fallback warning
-            assert result == "Analysis result"
+            assert result == "HIGH: Analysis result"
 
 
 class TestClassifyTask:
@@ -137,7 +137,7 @@ class TestClassifyTask:
 
         assert result.task_type == "TIER-0"
         assert result.reason == "Domain Admin member"
-        assert result.password_analysis == "Password old"
+        assert result.password_analysis == "HIGH: Password old"
         assert result.should_include is True
         assert row.type == TaskType.TIER0.value
 
@@ -426,7 +426,7 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 pwd_cache=pwd_cache,
             )
             
-            assert result == "Password changed after task creation"
+            assert result == "GOOD: Password changed after task creation"
             mock_analyze.assert_called_once()
 
     def test_pwd_cache_normalizes_domain_username(self):
@@ -449,7 +449,7 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 pwd_cache=pwd_cache,
             )
             
-            assert result == "Password older than task"
+            assert result == "BAD: Password older than task"
 
     def test_pwd_cache_handles_simple_username(self):
         """Should handle username without domain prefix."""
@@ -471,7 +471,7 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 pwd_cache=pwd_cache,
             )
             
-            assert result == "Password fresh"
+            assert result == "GOOD: Password fresh"
 
     def test_pwd_cache_returns_none_when_user_not_found(self):
         """Should return None when user not in pwd_cache."""
@@ -569,7 +569,7 @@ class TestAnalyzePasswordAgeWithPwdCache:
         )
         
         # Should use BloodHound result, not pwd_cache
-        assert result == "BloodHound analysis"
+        assert result == "HIGH: BloodHound analysis"
 
     def test_pwd_cache_used_when_bloodhound_returns_unknown(self):
         """Should fall back to pwd_cache when BloodHound returns UNKNOWN."""
@@ -595,7 +595,7 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 pwd_cache=pwd_cache,
             )
             
-            assert result == "Cache-based analysis"
+            assert result == "GOOD: Cache-based analysis"
 
 
 class TestClassifyTaskWithPwdCache:

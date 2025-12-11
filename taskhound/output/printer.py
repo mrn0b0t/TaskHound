@@ -64,17 +64,22 @@ def print_task_table(
         if label == "Decrypted Pwd" and value:
             value_style = COLORS["password"]
         elif label == "Cred Validation":
-            if "[+]" in value:
+            if "VALID" in value.upper() and "INVALID" not in value.upper():
                 value_style = COLORS["success"]
-            elif "[-]" in value:
+            elif "INVALID" in value.upper() or "BLOCKED" in value.upper():
                 value_style = COLORS["error"]
-            elif "[?]" in value:
+            elif "UNKNOWN" in value.upper():
                 value_style = COLORS["warning"]
         elif label == "Pwd Analysis":
             if "GOOD" in value.upper() or "newer" in value.lower():
                 value_style = COLORS["success"]
             elif "BAD" in value.upper() or "stale" in value.lower():
                 value_style = COLORS["warning"]
+            # Strip the GOOD:/BAD: prefix from display (used only for color detection)
+            if value.upper().startswith("GOOD: "):
+                value = value[6:]
+            elif value.upper().startswith("BAD: "):
+                value = value[5:]
         elif label == "Enabled":
             if value.lower() == "true":
                 value_style = COLORS["success"]
@@ -353,19 +358,19 @@ def format_block(
         # Build status display
         if cred_status == "unknown":
             if password_analysis and "GOOD" in password_analysis.upper():
-                status_display = "[+] LIKELY VALID (task never ran, but password newer than pwdLastSet)"
+                status_display = "LIKELY VALID (task never ran, password newer than pwdLastSet)"
             elif password_analysis and "BAD" in password_analysis.upper():
-                status_display = "[-] LIKELY INVALID (task never ran, password older than pwdLastSet)"
+                status_display = "LIKELY INVALID (task never ran, password older than pwdLastSet)"
             else:
-                status_display = f"[?] UNKNOWN - task never ran ({cred_code})"
+                status_display = f"UNKNOWN - task never ran ({cred_code})"
         elif cred_valid is True:
-            status_display = "[+] VALID (hijackable)" if cred_hijackable else f"[+] VALID (restricted: {cred_status})"
+            status_display = "VALID" if cred_hijackable else f"VALID (restricted: {cred_status})"
         elif cred_status == "invalid":
-            status_display = "[-] INVALID (wrong password)"
+            status_display = "INVALID (wrong password)"
         elif cred_status == "blocked":
-            status_display = "[-] BLOCKED (account disabled/expired)"
+            status_display = "BLOCKED (account disabled/expired)"
         else:
-            status_display = f"[?] {cred_status} ({cred_code})"
+            status_display = f"{cred_status} ({cred_code})"
 
         rows.append(("Cred Validation", status_display))
 

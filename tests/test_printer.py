@@ -382,7 +382,9 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[+] VALID (hijackable)" in text
+        assert "Cred Validation" in text
+        assert "VALID" in text
+        assert "INVALID" not in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_valid_restricted(self, mock_resolve):
@@ -405,7 +407,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[+] VALID (restricted: logon_as_batch)" in text
+        assert "VALID (restricted: logon_as_batch)" in text
         assert "Cred Detail        : User has SeLogonAsBatchJob right" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
@@ -427,7 +429,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[-] INVALID (wrong password)" in text
+        assert "INVALID (wrong password)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_blocked(self, mock_resolve):
@@ -447,7 +449,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[-] BLOCKED (account disabled/expired)" in text
+        assert "BLOCKED (account disabled/expired)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_unknown_with_good_password(self, mock_resolve):
@@ -469,7 +471,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[+] LIKELY VALID (task never ran, but password newer than pwdLastSet)" in text
+        assert "LIKELY VALID (task never ran, password newer than pwdLastSet)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_unknown_with_bad_password(self, mock_resolve):
@@ -491,7 +493,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[-] LIKELY INVALID (task never ran, password older than pwdLastSet)" in text
+        assert "LIKELY INVALID (task never ran, password older than pwdLastSet)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_unknown_no_analysis(self, mock_resolve):
@@ -512,7 +514,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[?] UNKNOWN - task never ran (0x80070005)" in text
+        assert "UNKNOWN - task never ran (0x80070005)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_other_status(self, mock_resolve):
@@ -533,7 +535,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "[?] custom_status (0x12345678)" in text
+        assert "custom_status (0x12345678)" in text
 
 
 class TestFormatBlockTaskKind:
@@ -577,7 +579,9 @@ class TestFormatBlockTaskKind:
         )
 
         text = "\n".join(lines)
-        assert "[+] VALID (hijackable)" in text
+        assert "Cred Validation" in text
+        assert "VALID" in text
+        assert "INVALID" not in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_task_with_decrypted_credentials(self, mock_resolve):

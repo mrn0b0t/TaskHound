@@ -93,7 +93,7 @@ def _analyze_password_age(
     if hv and hv.loaded:
         risk_level, pwd_analysis = hv.analyze_password_age(runas, task_date)
         if risk_level != "UNKNOWN":
-            return pwd_analysis
+            return f"{risk_level}: {pwd_analysis}"
 
     # Fall back to pre-fetched LDAP data if BloodHound not available
     if pwd_cache and task_date:
@@ -108,7 +108,7 @@ def _analyze_password_age(
             if pwd_last_set:
                 risk_level, pwd_analysis = _analyze_password_freshness(task_date, pwd_last_set)
                 if risk_level != "UNKNOWN":
-                    return pwd_analysis
+                    return f"{risk_level}: {pwd_analysis}"
         except Exception as e:
             from .utils.logging import debug
             debug(f"Password analysis failed for {runas}: {e}")
