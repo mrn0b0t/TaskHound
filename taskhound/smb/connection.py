@@ -46,24 +46,27 @@ def smb_connect(
     kerberos: bool = False,
     dc_ip: str = None,
     timeout: int = 60,
+    aes_key: str = None,
 ) -> SMBConnection:
     # Create and authenticate an SMBConnection to `target`.
     #
     # This function prefers passing an explicit lm/nthash when provided and
     # falls back to a cleartext password. For Kerberos mode we delegate to
     # Impacket's kerberosLogin (which supports a KDC host if provided).
+    # If an AES key is provided, Kerberos authentication is used automatically.
     smb = SMBConnection(remoteName=target, remoteHost=target, sess_port=445, timeout=timeout)
 
     pwd, lmhash, nthash = _parse_hashes(password)
 
-    if kerberos:
+    # AES key implies Kerberos authentication
+    if kerberos or aes_key:
         smb.kerberosLogin(
             user=username,
             password=pwd,
             domain=domain,
             lmhash=lmhash,
             nthash=nthash,
-            aesKey=None,
+            aesKey=aes_key or "",
             TGT=None,
             TGS=None,
             kdcHost=dc_ip,
@@ -106,6 +109,7 @@ def smb_login(
     password: str = None,
     kerberos: bool = False,
     dc_ip: str = None,
+    aes_key: str = None,
 ) -> None:
     """
     Authenticate an existing SMBConnection.
@@ -120,17 +124,19 @@ def smb_login(
         password: Password or NTLM hash
         kerberos: Use Kerberos authentication
         dc_ip: Domain controller IP (for Kerberos)
+        aes_key: AES key for Kerberos authentication (128 or 256 bit)
     """
     pwd, lmhash, nthash = _parse_hashes(password)
 
-    if kerberos:
+    # AES key implies Kerberos authentication
+    if kerberos or aes_key:
         smb.kerberosLogin(
             user=username,
             password=pwd,
             domain=domain,
             lmhash=lmhash,
             nthash=nthash,
-            aesKey=None,
+            aesKey=aes_key or "",
             TGT=None,
             TGS=None,
             kdcHost=dc_ip,
@@ -357,10 +363,11 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
     Extract the server's FQDN from an established SMB connection.
 
     Attempts multiple resolution methods in order:
-    1. SMB DNS hostname (most reliable)
-    2. Constructed from SMB hostname + DNS domain
-    3. DNS PTR lookup using DC as nameserver (if dc_ip provided)
-    4. System DNS PTR lookup (fallback)
+    1. If target is already an FQDN (has dots, not an IP), use it directly
+    2. SMB DNS hostname (most reliable)
+    3. Constructed from SMB hostname + DNS domain
+    4. DNS PTR lookup using DC as nameserver (if dc_ip provided)
+    5. System DNS PTR lookup (fallback)
 
     Args:
         smb: Established SMBConnection
@@ -371,6 +378,10 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
     Returns:
         FQDN string (e.g., "DC.badsuccessor.lab") or "UNKNOWN_HOST"
     """
+    # Method 0: If target already looks like an FQDN (has dots and isn't an IP), use it
+    if target_ip and "." in target_ip and not _is_ip_address(target_ip):
+        return target_ip
+
     try:
         # Method 1: Try to get the full DNS hostname directly from SMB
         fqdn = smb.getServerDNSHostName()

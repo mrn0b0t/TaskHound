@@ -102,6 +102,7 @@ def get_ldap_connection(
     password: Optional[str] = None,
     hashes: Optional[str] = None,
     kerberos: bool = False,
+    aes_key: Optional[str] = None,
     dc_host: Optional[str] = None,
     use_tcp: bool = False,
 ) -> ldap_impacket.LDAPConnection:
@@ -119,6 +120,7 @@ def get_ldap_connection(
         password: Password (plaintext)
         hashes: NTLM hashes in LM:NT or NT format
         kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos (128-bit or 256-bit hex string)
         dc_host: DC hostname for Kerberos SPN (optional, will try to resolve)
         use_tcp: Force DNS queries over TCP (required for SOCKS proxies)
 
@@ -134,10 +136,10 @@ def get_ldap_connection(
     # Parse hashes
     lmhash, nthash = parse_ntlm_hashes(hashes)
 
-    # For Kerberos, we need the DC hostname for the SPN (ldap/dc01.domain.local)
+    # For Kerberos (or AES key auth), we need the DC hostname for the SPN (ldap/dc01.domain.local)
     # If not provided, try to resolve
     kerberos_target = dc_host
-    if kerberos and not kerberos_target:
+    if (kerberos or aes_key) and not kerberos_target:
         kerberos_target = resolve_dc_hostname(dc_ip, domain, use_tcp=use_tcp)
         if kerberos_target:
             debug(f"LDAP: Resolved DC hostname for Kerberos SPN: {kerberos_target}")
@@ -155,10 +157,10 @@ def get_ldap_connection(
     last_error = None
     for protocol, port, use_ssl in connection_attempts:
         try:
-            # For Kerberos, use hostname in URL WITHOUT port (so SPN is ldap/hostname, not ldap/hostname:port)
+            # For Kerberos (or AES key), use hostname in URL WITHOUT port (so SPN is ldap/hostname, not ldap/hostname:port)
             # The port is inferred from the protocol (ldaps=636, ldap=389)
             # Connect via dstIp for actual network connection
-            if kerberos and kerberos_target:
+            if (kerberos or aes_key) and kerberos_target:
                 ldap_url = f"{protocol}://{kerberos_target}"
             else:
                 ldap_url = f"{protocol}://{dc_ip}:{port}"
@@ -171,7 +173,8 @@ def get_ldap_connection(
             )
 
             # Authenticate
-            if kerberos:
+            # AES key implies Kerberos authentication
+            if kerberos or aes_key:
                 # kdcHost is used for AS-REQ/TGS-REQ, not for SPN
                 ldap_conn.kerberosLogin(
                     user=username,
@@ -179,6 +182,7 @@ def get_ldap_connection(
                     domain=domain,
                     lmhash=lmhash,
                     nthash=nthash,
+                    aesKey=aes_key or "",
                     kdcHost=kerberos_target,
                 )
             else:

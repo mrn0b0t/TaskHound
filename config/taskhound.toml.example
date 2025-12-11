@@ -11,6 +11,7 @@
 # domain = "CORP.LOCAL"
 # password = "Password123!"
 # hashes = "aad3b435b51404eeaad3b435b51404ee:..." (optional)
+# aes_key = "0123456789abcdef..." (AES-128: 32 hex chars, AES-256: 64 hex chars)
 # kerberos = true
 
 [target]

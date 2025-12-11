@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Optional
 
 from impacket.dcerpc.v5 import transport, tsch
-from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY
+from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_AUTHN_GSS_NEGOTIATE
 
 from taskhound.utils.logging import debug as log_debug
 from taskhound.utils.logging import warn
@@ -145,6 +145,9 @@ class TaskSchedulerRPC:
         password: str,
         lm_hash: str = "",
         nt_hash: str = "",
+        aes_key: str = "",
+        kerberos: bool = False,
+        dc_ip: str = "",
     ):
         """
         Initialize Task Scheduler RPC client.
@@ -153,9 +156,12 @@ class TaskSchedulerRPC:
             target: Target hostname or IP
             domain: Domain name
             username: Username for authentication
-            password: Password (or empty if using hash)
+            password: Password (or empty if using hash/aesKey)
             lm_hash: LM hash (optional)
             nt_hash: NT hash (optional)
+            aes_key: Kerberos AES key (optional, 128 or 256-bit)
+            kerberos: Use Kerberos authentication
+            dc_ip: Domain Controller IP for KDC (optional)
         """
         self.target = target
         self.domain = domain
@@ -163,7 +169,11 @@ class TaskSchedulerRPC:
         self.password = password
         self.lm_hash = lm_hash
         self.nt_hash = nt_hash
+        self.aes_key = aes_key
+        self.kerberos = kerberos
+        self.dc_ip = dc_ip
         self._dce = None
+        self._connection_lost = False
 
     def connect(self) -> bool:
         """
@@ -181,13 +191,24 @@ class TaskSchedulerRPC:
                 self.domain,
                 self.lm_hash,
                 self.nt_hash,
+                self.aes_key,
             )
 
+            # Enable Kerberos if requested (needed for AES key auth)
+            if self.kerberos or self.aes_key:
+                kdc_host = self.dc_ip or self.target
+                rpc_transport.set_kerberos(True, kdcHost=kdc_host)
+                log_debug(f"Using Kerberos authentication for RPC (KDC: {kdc_host})")
+
             self._dce = rpc_transport.get_dce_rpc()
-            self._dce.connect()
             # PKT_PRIVACY is REQUIRED - lower auth levels get access denied
             self._dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
+            # For Kerberos, must set GSS_NEGOTIATE auth type BEFORE connect()
+            if self.kerberos or self.aes_key:
+                self._dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
+            self._dce.connect()
             self._dce.bind(tsch.MSRPC_UUID_TSCHS)
+            self._connection_lost = False
 
             log_debug(f"Connected to Task Scheduler RPC on {self.target}")
             return True
@@ -274,6 +295,9 @@ class TaskSchedulerRPC:
                     task_hijackable=False,  # Can't determine
                 )
             log_debug(f"Failed to get run info for {task_path}: {e}")
+            # Check if connection was lost (need to reconnect)
+            if "PIPE_DISCONNECTED" in error_str or "rpc_s_access_denied" in error_str:
+                self._connection_lost = True
             return None
 
     def _interpret_return_code(
@@ -345,7 +369,16 @@ class TaskSchedulerRPC:
         SMB_TASK_PREFIX = "Windows\\System32\\Tasks\\"
         SMB_TASK_PREFIX_ALT = "Windows/System32/Tasks/"
 
+        # Track if we need to reconnect (Kerberos connections can drop after errors)
         for original_path in task_paths:
+            # Reconnect if connection was lost (common with Kerberos after RPC errors)
+            if self._connection_lost:
+                log_debug("Reconnecting to Task Scheduler RPC (connection lost)...")
+                self.disconnect()
+                if not self.connect():
+                    log_debug("Failed to reconnect to Task Scheduler RPC")
+                    break
+
             # Convert SMB path to RPC path
             # SMB: "Windows\System32\Tasks\HIGH_PRIV_CREDS"
             # RPC: "\HIGH_PRIV_CREDS"

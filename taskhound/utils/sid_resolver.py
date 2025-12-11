@@ -853,6 +853,7 @@ def batch_get_user_attributes(
     password: Optional[str] = None,
     hashes: Optional[str] = None,
     kerberos: bool = False,
+    aes_key: Optional[str] = None,
     attributes: list[str] = None,
 ) -> dict[str, dict]:
     """
@@ -869,6 +870,7 @@ def batch_get_user_attributes(
         password: LDAP authentication password
         hashes: NTLM hashes for pass-the-hash
         kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos authentication (128 or 256 bit)
         attributes: List of attributes to fetch (default: pwdLastSet, lastLogon)
 
     Returns:
@@ -935,6 +937,7 @@ def batch_get_user_attributes(
             password=password,
             hashes=hashes,
             kerberos=kerberos,
+            aes_key=aes_key,
         )
     except LDAPConnectionError as e:
         warn(f"LDAP connection failed for user attribute lookup: {e}")
@@ -1203,6 +1206,7 @@ def fetch_tier0_members(
     auth_password: Optional[str] = None,
     hashes: Optional[str] = None,
     kerberos: bool = False,
+    aes_key: Optional[str] = None,
 ) -> Tier0Cache:
     """
     Pre-flight fetch of all Tier-0 group members via LDAP.
@@ -1220,6 +1224,7 @@ def fetch_tier0_members(
         auth_password: LDAP authentication password
         hashes: NTLM hashes for pass-the-hash
         kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos authentication (128 or 256 bit)
 
     Returns:
         Tier0Cache: Dict of normalized_username -> (is_tier0, list_of_group_names)
@@ -1256,6 +1261,7 @@ def fetch_tier0_members(
             password=auth_password,
             hashes=hashes,
             kerberos=kerberos,
+            aes_key=aes_key,
         )
     except LDAPConnectionError as e:
         debug(f"LDAP connection failed for Tier-0 pre-flight: {e}")

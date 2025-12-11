@@ -161,6 +161,7 @@ def process_target(
     username = auth.username
     password = auth.password
     hashes = auth.hashes
+    aes_key = auth.aes_key
     kerberos = auth.kerberos
     dc_ip = auth.dc_ip
     timeout = auth.timeout
@@ -267,7 +268,7 @@ def process_target(
         else:
             # Standard mode: Direct SMB connection
             smb = smb_connect(
-                target, domain, username, hashes or password, kerberos=kerberos, dc_ip=dc_ip, timeout=timeout
+                target, domain, username, hashes or password, kerberos=kerberos, dc_ip=dc_ip, timeout=timeout, aes_key=aes_key
             )
 
         good(f"{target}: Connected via SMB")
@@ -421,48 +422,55 @@ def process_target(
 
     # Credential validation via Task Scheduler RPC (if requested and not in OPSEC mode)
     if validate_creds and not opsec and password_task_paths:
-        info(f"{target}: Querying Task Scheduler RPC for credential validation...")
-        try:
-            # Parse hashes for RPC auth
-            lm_hash = ""
-            nt_hash = ""
-            if hashes:
-                hash_parts = hashes.split(":")
-                if len(hash_parts) == 2:
-                    lm_hash, nt_hash = hash_parts
-                elif len(hash_parts) == 1 and len(hash_parts[0]) == 32:
-                    nt_hash = hash_parts[0]
+        # Skip if using ccache-only Kerberos (no credentials to use for RPC)
+        if kerberos and not password and not hashes and not aes_key:
+            warn(f"{target}: Credential validation not supported with ccache-only Kerberos (use password, --hashes, or --aes-key)")
+        else:
+            info(f"{target}: Querying Task Scheduler RPC for credential validation...")
+            try:
+                # Parse hashes for RPC auth
+                lm_hash = ""
+                nt_hash = ""
+                if hashes:
+                    hash_parts = hashes.split(":")
+                    if len(hash_parts) == 2:
+                        lm_hash, nt_hash = hash_parts
+                    elif len(hash_parts) == 1 and len(hash_parts[0]) == 32:
+                        nt_hash = hash_parts[0]
 
-            rpc_client = TaskSchedulerRPC(
-                target=target,
-                domain=domain,
-                username=username,
-                password=password or "",
-                lm_hash=lm_hash,
-                nt_hash=nt_hash,
-            )
+                rpc_client = TaskSchedulerRPC(
+                    target=target,
+                    domain=domain,
+                    username=username,
+                    password=password or "",
+                    lm_hash=lm_hash,
+                    nt_hash=nt_hash,
+                    aes_key=aes_key or "",
+                    kerberos=kerberos,
+                    dc_ip=dc_ip or "",
+                )
 
-            if rpc_client.connect():
-                # Validate only the tasks we know have Password logon type
-                cred_validation_results = rpc_client.validate_specific_tasks(password_task_paths)
-                rpc_client.disconnect()
+                if rpc_client.connect():
+                    # Validate only the tasks we know have Password logon type
+                    cred_validation_results = rpc_client.validate_specific_tasks(password_task_paths)
+                    rpc_client.disconnect()
 
-                if cred_validation_results:
-                    valid_count = sum(1 for r in cred_validation_results.values() if r.password_valid)
-                    invalid_count = sum(1 for r in cred_validation_results.values()
-                                       if r.credential_status == CredentialStatus.INVALID)
-                    unknown_count = sum(1 for r in cred_validation_results.values()
-                                       if r.credential_status == CredentialStatus.UNKNOWN)
-                    good(f"{target}: Validated {len(cred_validation_results)} password tasks "
-                         f"({valid_count} valid, {invalid_count} invalid, {unknown_count} unknown)")
+                    if cred_validation_results:
+                        valid_count = sum(1 for r in cred_validation_results.values() if r.password_valid)
+                        invalid_count = sum(1 for r in cred_validation_results.values()
+                                           if r.credential_status == CredentialStatus.INVALID)
+                        unknown_count = sum(1 for r in cred_validation_results.values()
+                                           if r.credential_status == CredentialStatus.UNKNOWN)
+                        good(f"{target}: Validated {len(cred_validation_results)} password tasks "
+                             f"({valid_count} valid, {invalid_count} invalid, {unknown_count} unknown)")
+                    else:
+                        info(f"{target}: No run info available for password tasks")
                 else:
-                    info(f"{target}: No run info available for password tasks")
-            else:
-                warn(f"{target}: Failed to connect to Task Scheduler RPC")
-        except Exception as e:
-            warn(f"{target}: Credential validation failed: {e}")
-            if debug:
-                traceback.print_exc()
+                    warn(f"{target}: Failed to connect to Task Scheduler RPC")
+            except Exception as e:
+                warn(f"{target}: Credential validation failed: {e}")
+                if debug:
+                    traceback.print_exc()
     elif validate_creds and not password_task_paths:
         info(f"{target}: No password-authenticated tasks found - skipping credential validation")
     elif validate_creds and opsec:
@@ -594,6 +602,7 @@ def process_target(
                     password=ldap_auth_pass,
                     hashes=ldap_auth_hashes,
                     kerberos=kerberos,
+                    aes_key=aes_key,
                     attributes=["pwdLastSet", "sAMAccountName"],
                 )
 
@@ -634,6 +643,7 @@ def process_target(
                 auth_password=ldap_auth_pass,
                 hashes=ldap_auth_hashes,
                 kerberos=kerberos,
+                aes_key=aes_key,
             )
 
             if tier0_cache:

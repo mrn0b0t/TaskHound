@@ -180,6 +180,8 @@ def load_config() -> Dict[str, Any]:
         defaults["hashes"] = auth["hashes"]
     if "kerberos" in auth:
         defaults["kerberos"] = auth["kerberos"]
+    if "aes_key" in auth:
+        defaults["aes_key"] = auth["aes_key"]
 
     # Target
     target = config_data.get("target", {})
@@ -354,6 +356,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--hashes", help="NTLM hashes in LM:NT format (or NT-only 32-hex) to use instead of password"
     )
     auth.add_argument("-k", "--kerberos", action="store_true", help="Use Kerberos authentication (supports ccache)")
+    auth.add_argument(
+        "--aes-key",
+        dest="aes_key",
+        help="AES key for Kerberos authentication (AES-128: 32 hex chars, AES-256: 64 hex chars). Implies -k."
+    )
 
     # Target selection
     target = ap.add_argument_group("Target options")
@@ -773,12 +780,13 @@ def validate_args(args):
         print("[!] Either --target or --targets-file is required for online mode")
         sys.exit(1)
 
-    # Authentication method validation - require either password, hash, or Kerberos
-    if not args.password and not args.hashes and not args.kerberos:
+    # Authentication method validation - require either password, hash, AES key, or Kerberos
+    if not args.password and not args.hashes and not getattr(args, "aes_key", None) and not args.kerberos:
         print("[!] ERROR: Authentication required for online mode")
         print("[!] You must specify one of:")
         print("[!]   -p PASSWORD     (password authentication)")
         print("[!]   --hashes HASH   (NTLM hash authentication)")
+        print("[!]   --aes-key KEY   (Kerberos with AES key)")
         print("[!]   -k              (Kerberos authentication with ccache)")
         print()
         if "KRB5CCNAME" in os.environ:

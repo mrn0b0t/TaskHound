@@ -48,6 +48,7 @@ class AuthContext:
     password: Optional[str] = None
     domain: str = ""
     hashes: Optional[str] = None
+    aes_key: Optional[str] = None  # AES key for Kerberos (128-bit or 256-bit)
     kerberos: bool = False
     dc_ip: Optional[str] = None
     timeout: int = 60
@@ -62,7 +63,7 @@ class AuthContext:
     @property
     def has_credentials(self) -> bool:
         """Check if valid credentials are configured."""
-        return bool(self.username and (self.password or self.hashes or self.kerberos))
+        return bool(self.username and (self.password or self.hashes or self.aes_key or self.kerberos))
 
     @property
     def ldap_effective_domain(self) -> str:
@@ -104,5 +105,6 @@ class AuthContext:
             f"AuthContext(username={self.username!r}, domain={self.domain!r}, "
             f"kerberos={self.kerberos}, dc_ip={self.dc_ip!r}, "
             f"has_password={self.password is not None}, "
-            f"has_hashes={self.hashes is not None})"
+            f"has_hashes={self.hashes is not None}, "
+            f"has_aes_key={self.aes_key is not None})"
         )

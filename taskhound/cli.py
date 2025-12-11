@@ -192,12 +192,15 @@ def main():
         targets = normalize_targets(targets, args.domain)
 
         # Build AuthContext from args
+        # AES key implies Kerberos authentication
+        kerberos_enabled = args.kerberos or getattr(args, "aes_key", None) is not None
         auth = AuthContext(
             username=args.username,
             password=args.password,
             domain=args.domain,
             hashes=args.hashes,
-            kerberos=args.kerberos,
+            aes_key=getattr(args, "aes_key", None),
+            kerberos=kerberos_enabled,
             dc_ip=args.dc_ip,
             timeout=args.timeout,
             dns_tcp=getattr(args, "dns_tcp", False),

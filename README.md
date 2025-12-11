@@ -234,6 +234,20 @@ taskhound -u homer.simpson --hashes :5d41402abc4b2a76b9719d911017c592 -d thesimp
 taskhound -u Administrator -p L0c@lAdm1n! -d . -t moe.thesimpsons.local --ldap-user bart.simpson --ldap-password B@rtP@ss --ldap-domain thesimpsons.local
 ```
 
+### AES Key Authentication
+
+Authenticate using Kerberos AES keys (from a keytab, secretsdump, etc.):
+
+```bash
+# AES-256 key (64 hex characters)
+taskhound -u svc_backup -d corp.local --aes-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef -t dc01.corp.local --dc-ip 10.0.0.1
+
+# AES-128 key (32 hex characters) 
+taskhound -u admin -d corp.local --aes-key 0123456789abcdef0123456789abcdef -t server01.corp.local --dc-ip 10.0.0.1
+```
+
+> **NOTE**: AES key authentication implies `-k` (Kerberos). The `--dc-ip` flag is recommended for reliable KDC resolution.
+
 **Why separate LDAP credentials?**
 - LDAP SID resolution now uses Impacket's LDAP implementation with NTLM hash support
 - You might only have local admin access but need domain LDAP for SID resolution
@@ -331,6 +345,7 @@ Authentication:
   -d, --domain          Domain (required for online mode)
   --hashes HASHES       NTLM hashes (LM:NT or NT-only format)
   -k, --kerberos        Use Kerberos authentication (supports ccache)
+  --aes-key AES_KEY     AES key for Kerberos (128-bit: 32 hex, 256-bit: 64 hex)
 
 Targets:
   -t, --target          Single target hostname/IP
