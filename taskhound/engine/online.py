@@ -26,13 +26,13 @@ from ..parsers.highvalue import HighValueLoader
 from ..parsers.task_xml import parse_task_xml
 from ..smb.connection import (
     _dns_ptr_lookup,
-    _is_ip_address,
     get_server_fqdn,
     get_server_sid,
     smb_connect,
     smb_login,
     smb_negotiate,
 )
+from ..utils.helpers import is_ipv4
 from ..smb.credguard import check_credential_guard
 from ..smb.task_rpc import CredentialStatus, TaskRunInfo, TaskSchedulerRPC
 from ..smb.tasks import crawl_tasks, smb_listdir
@@ -196,7 +196,7 @@ def process_target(
             if not discovered_hostname:
                 # SMBv3 doesn't populate server name during negotiate
                 # Try DNS reverse lookup as fallback
-                if _is_ip_address(target):
+                if is_ipv4(target):
                     # Try DC first, then system DNS
                     if dc_ip:
                         discovered_hostname = _dns_ptr_lookup(target, nameserver=dc_ip, use_tcp=dns_tcp)

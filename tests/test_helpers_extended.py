@@ -4,7 +4,9 @@ Test suite for additional helper utilities.
 Tests cover:
 - is_ipv4 function
 - parse_ntlm_hashes function
-- normalize_targets function
+- normalize_targets function (including CIDR expansion)
+- expand_cidr function
+- is_cidr function
 - sanitize_json_string function
 """
 
@@ -12,6 +14,8 @@ import pytest
 
 from taskhound.utils.helpers import (
     is_ipv4,
+    is_cidr,
+    expand_cidr,
     parse_ntlm_hashes,
     normalize_targets,
     sanitize_json_string,
@@ -160,6 +164,109 @@ class TestNormalizeTargets:
         result = normalize_targets([], "example.com")
         
         assert result == []
+
+    def test_cidr_expansion(self):
+        """Should expand CIDR notation to individual IPs"""
+        targets = ["192.168.1.0/30"]
+        
+        result = normalize_targets(targets, "example.com")
+        
+        # /30 has 4 IPs, but .hosts() excludes network (.0) and broadcast (.3)
+        assert result == ["192.168.1.1", "192.168.1.2"]
+
+    def test_cidr_with_mixed_targets(self):
+        """Should handle CIDR mixed with other target types"""
+        targets = ["10.0.0.0/30", "DC01", "192.168.1.100"]
+        
+        result = normalize_targets(targets, "example.com")
+        
+        assert result == ["10.0.0.1", "10.0.0.2", "DC01.example.com", "192.168.1.100"]
+
+    def test_cidr_single_host(self):
+        """Should handle /32 single host CIDR"""
+        targets = ["192.168.1.50/32"]
+        
+        result = normalize_targets(targets, "example.com")
+        
+        assert result == ["192.168.1.50"]
+
+
+# ============================================================================
+# Test: expand_cidr
+# ============================================================================
+
+
+class TestExpandCidr:
+    """Tests for expand_cidr function"""
+
+    def test_slash_24(self):
+        """Should expand /24 to 254 hosts"""
+        result = expand_cidr("192.168.1.0/24")
+        
+        assert len(result) == 254
+        assert result[0] == "192.168.1.1"
+        assert result[-1] == "192.168.1.254"
+
+    def test_slash_30(self):
+        """Should expand /30 to 2 hosts"""
+        result = expand_cidr("10.0.0.0/30")
+        
+        assert result == ["10.0.0.1", "10.0.0.2"]
+
+    def test_slash_31(self):
+        """Should expand /31 point-to-point"""
+        result = expand_cidr("10.0.0.0/31")
+        
+        assert result == ["10.0.0.0", "10.0.0.1"]
+
+    def test_slash_32(self):
+        """Should expand /32 single host"""
+        result = expand_cidr("192.168.1.100/32")
+        
+        assert result == ["192.168.1.100"]
+
+    def test_invalid_cidr_raises(self):
+        """Should raise ValueError for invalid CIDR"""
+        with pytest.raises(ValueError):
+            expand_cidr("not-a-cidr")
+
+    def test_invalid_prefix_raises(self):
+        """Should raise ValueError for invalid prefix"""
+        with pytest.raises(ValueError):
+            expand_cidr("192.168.1.0/33")
+
+
+# ============================================================================
+# Test: is_cidr
+# ============================================================================
+
+
+class TestIsCidr:
+    """Tests for is_cidr function"""
+
+    def test_valid_cidr(self):
+        """Should return True for valid CIDR notation"""
+        assert is_cidr("192.168.1.0/24") is True
+        assert is_cidr("10.0.0.0/8") is True
+        assert is_cidr("172.16.0.0/16") is True
+
+    def test_single_host_cidr(self):
+        """Should return True for /32 single host"""
+        assert is_cidr("192.168.1.1/32") is True
+
+    def test_plain_ip_not_cidr(self):
+        """Should return False for plain IP address"""
+        assert is_cidr("192.168.1.1") is False
+
+    def test_hostname_not_cidr(self):
+        """Should return False for hostname"""
+        assert is_cidr("DC01.example.com") is False
+        assert is_cidr("DC01") is False
+
+    def test_invalid_cidr(self):
+        """Should return False for invalid CIDR notation"""
+        assert is_cidr("192.168.1.0/33") is False
+        assert is_cidr("not/valid") is False
 
 
 # ============================================================================

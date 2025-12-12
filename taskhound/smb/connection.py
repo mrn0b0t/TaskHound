@@ -11,6 +11,8 @@ from typing import Optional, Tuple
 
 from impacket.smbconnection import SMBConnection
 
+from ..utils.helpers import is_ipv4
+
 
 def _parse_hashes(password: str):
     # Parse a provided password or NTLM hash string.
@@ -379,7 +381,7 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
         FQDN string (e.g., "DC.badsuccessor.lab") or "UNKNOWN_HOST"
     """
     # Method 0: If target already looks like an FQDN (has dots and isn't an IP), use it
-    if target_ip and "." in target_ip and not _is_ip_address(target_ip):
+    if target_ip and "." in target_ip and not is_ipv4(target_ip):
         return target_ip
 
     try:
@@ -404,7 +406,7 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
         server_name = None
 
     # Method 3 & 4: DNS fallback - try to resolve via PTR record
-    if target_ip and _is_ip_address(target_ip):
+    if target_ip and is_ipv4(target_ip):
         # Method 3: Try using DC as DNS server (if provided)
         if dc_ip:
             fqdn = _dns_ptr_lookup(target_ip, nameserver=dc_ip, use_tcp=dns_tcp)
@@ -421,17 +423,6 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
         return server_name
 
     return "UNKNOWN_HOST"
-
-
-def _is_ip_address(hostname: str) -> bool:
-    """Check if a string is an IPv4 address."""
-    parts = hostname.split(".")
-    if len(parts) == 4:
-        try:
-            return all(0 <= int(p) <= 255 for p in parts)
-        except (ValueError, TypeError):
-            return False
-    return False
 
 
 def _dns_ptr_lookup(ip: str, nameserver: Optional[str] = None, use_tcp: bool = False) -> Optional[str]:

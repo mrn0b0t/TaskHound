@@ -3,6 +3,7 @@
 # This module contains simple utilities for classifying RunAs values,
 # normalizing target hostnames, and the ASCII banner used by the CLI.
 
+import ipaddress
 import re
 import uuid
 from typing import List, Tuple
@@ -41,17 +42,67 @@ def parse_ntlm_hashes(hashes: str) -> Tuple[str, str]:
         return "", hashes
 
 
+def expand_cidr(cidr: str) -> List[str]:
+    """Expand a CIDR notation to a list of IP addresses.
+    
+    Args:
+        cidr: CIDR notation string (e.g., '192.168.1.0/24')
+        
+    Returns:
+        List of IP address strings (excludes network and broadcast for /31+)
+        
+    Raises:
+        ValueError: If the CIDR notation is invalid
+    """
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+        # For /31 and /32, return all addresses (point-to-point or single host)
+        # For larger networks, exclude network and broadcast addresses
+        if network.prefixlen >= 31:
+            return [str(ip) for ip in network.hosts()] or [str(network.network_address)]
+        return [str(ip) for ip in network.hosts()]
+    except ValueError as e:
+        raise ValueError(f"Invalid CIDR notation '{cidr}': {e}")
+
+
+def is_cidr(target: str) -> bool:
+    """Check if a string is CIDR notation (e.g., '192.168.1.0/24')."""
+    if "/" not in target:
+        return False
+    try:
+        ipaddress.ip_network(target, strict=False)
+        return True
+    except ValueError:
+        return False
+
+
 def normalize_targets(targets: List[str], domain: str) -> List[str]:
-    # Normalize a list of targets: keep IPs, append domain for short hostnames.
-    #
-    # Empty lines are ignored. This mirrors the behavior expected by the CLI
-    # where users may pass bare hostnames that need to be FQDN-ified.
+    """Normalize a list of targets: expand CIDRs, keep IPs, append domain for short hostnames.
+    
+    Args:
+        targets: List of target strings (IPs, hostnames, FQDNs, or CIDR notation)
+        domain: Domain to append to short hostnames
+        
+    Returns:
+        Normalized list of targets with CIDRs expanded to individual IPs
+        
+    Empty lines are ignored. This mirrors the behavior expected by the CLI
+    where users may pass bare hostnames that need to be FQDN-ified.
+    """
     out = []
     for t in targets:
         t = t.strip()
         if not t:
             continue
-        if is_ipv4(t):
+        # Check for CIDR notation first
+        if is_cidr(t):
+            try:
+                expanded = expand_cidr(t)
+                out.extend(expanded)
+            except ValueError:
+                # Invalid CIDR, treat as hostname
+                out.append(t)
+        elif is_ipv4(t):
             out.append(t)
         else:
             # append domain if it's a short host (no dot)
