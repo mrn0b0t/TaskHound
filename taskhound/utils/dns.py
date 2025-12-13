@@ -1,0 +1,273 @@
+# DNS utilities for TaskHound
+#
+# This module provides DNS discovery and resolution utilities,
+# including DC discovery via SRV records and configurable nameserver support.
+
+import socket
+from typing import List, Optional
+
+from .logging import debug, warn
+
+# Default timeout for DNS operations (seconds)
+DEFAULT_DNS_TIMEOUT = 5
+
+# Default timeout for LDAP connections (seconds)
+DEFAULT_LDAP_TIMEOUT = 10
+
+
+def discover_domain_controllers(
+    domain: str,
+    nameserver: Optional[str] = None,
+    use_tcp: bool = False,
+    timeout: int = DEFAULT_DNS_TIMEOUT,
+) -> List[str]:
+    """
+    Discover domain controllers via DNS SRV records.
+
+    Queries _ldap._tcp.dc._msdcs.<domain> SRV record to find all DCs.
+    Falls back to A record lookup if SRV fails.
+
+    Args:
+        domain: Domain name (e.g., "corp.local")
+        nameserver: Optional DNS server to use (defaults to system DNS)
+        use_tcp: Force DNS queries over TCP (required for SOCKS proxies)
+        timeout: DNS query timeout in seconds
+
+    Returns:
+        List of DC hostnames/IPs (may be empty if discovery fails)
+    """
+    dcs = []
+
+    # Try DNS SRV record first (proper AD DC discovery)
+    try:
+        import dns.resolver
+
+        resolver = dns.resolver.Resolver(configure=True)
+        if nameserver:
+            resolver.nameservers = [nameserver]
+        resolver.timeout = timeout
+        resolver.lifetime = timeout
+
+        # Query SRV record for LDAP service on DCs
+        srv_name = f"_ldap._tcp.dc._msdcs.{domain}"
+        debug(f"DNS: Querying SRV record {srv_name}")
+
+        answers = resolver.resolve(srv_name, "SRV", tcp=use_tcp)
+        for rdata in answers:
+            dc_host = str(rdata.target).rstrip(".")
+            if dc_host:
+                dcs.append(dc_host)
+                debug(f"DNS: Found DC via SRV: {dc_host} (priority={rdata.priority}, weight={rdata.weight})")
+
+        # Sort by priority (lower = better), then by weight (higher = better)
+        # SRV records already come sorted, but let's be explicit
+        if dcs:
+            debug(f"DNS: Discovered {len(dcs)} DCs via SRV records")
+            return dcs
+
+    except ImportError:
+        debug("DNS: dnspython not available, falling back to system DNS")
+    except Exception as e:
+        debug(f"DNS: SRV lookup failed: {e}")
+
+    # Fallback: Try A record for domain name
+    try:
+        debug(f"DNS: Falling back to A record lookup for {domain}")
+
+        # If nameserver specified, use dnspython
+        if nameserver:
+            try:
+                import dns.resolver
+                resolver = dns.resolver.Resolver(configure=False)
+                resolver.nameservers = [nameserver]
+                resolver.timeout = timeout
+                resolver.lifetime = timeout
+
+                answers = resolver.resolve(domain, "A", tcp=use_tcp)
+                for rdata in answers:
+                    ip = str(rdata)
+                    dcs.append(ip)
+                    debug(f"DNS: Found DC via A record: {ip}")
+                return dcs
+            except Exception as e:
+                debug(f"DNS: A record lookup with custom nameserver failed: {e}")
+
+        # System DNS fallback
+        ip = socket.gethostbyname(domain)
+        if ip:
+            dcs.append(ip)
+            debug(f"DNS: Resolved domain to IP: {ip}")
+
+    except socket.gaierror as e:
+        debug(f"DNS: Could not resolve domain {domain}: {e}")
+    except Exception as e:
+        debug(f"DNS: Domain resolution failed: {e}")
+
+    return dcs
+
+
+def resolve_hostname(
+    hostname: str,
+    nameserver: Optional[str] = None,
+    use_tcp: bool = False,
+    timeout: int = DEFAULT_DNS_TIMEOUT,
+) -> Optional[str]:
+    """
+    Resolve a hostname to an IP address.
+
+    Args:
+        hostname: Hostname to resolve
+        nameserver: Optional DNS server to use
+        use_tcp: Force DNS queries over TCP
+        timeout: DNS query timeout in seconds
+
+    Returns:
+        IP address string, or None if resolution fails
+    """
+    # If already an IP, return as-is
+    if _is_ip_address(hostname):
+        return hostname
+
+    try:
+        if nameserver:
+            import dns.resolver
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [nameserver]
+            resolver.timeout = timeout
+            resolver.lifetime = timeout
+
+            answers = resolver.resolve(hostname, "A", tcp=use_tcp)
+            if answers:
+                return str(answers[0])
+        else:
+            return socket.gethostbyname(hostname)
+    except Exception as e:
+        debug(f"DNS: Could not resolve {hostname}: {e}")
+
+    return None
+
+
+def reverse_lookup(
+    ip: str,
+    nameserver: Optional[str] = None,
+    use_tcp: bool = False,
+    timeout: int = DEFAULT_DNS_TIMEOUT,
+) -> Optional[str]:
+    """
+    Perform reverse DNS lookup (PTR record).
+
+    Args:
+        ip: IP address to lookup
+        nameserver: Optional DNS server to use
+        use_tcp: Force DNS queries over TCP
+        timeout: DNS query timeout in seconds
+
+    Returns:
+        Hostname (FQDN), or None if lookup fails
+    """
+    try:
+        if nameserver:
+            import dns.resolver
+            import dns.reversename
+
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [nameserver]
+            resolver.timeout = timeout
+            resolver.lifetime = timeout
+
+            rev_name = dns.reversename.from_address(ip)
+            answers = resolver.resolve(rev_name, "PTR", tcp=use_tcp)
+            if answers:
+                return str(answers[0]).rstrip(".")
+        else:
+            return socket.gethostbyaddr(ip)[0]
+    except Exception as e:
+        debug(f"DNS: Reverse lookup for {ip} failed: {e}")
+
+    return None
+
+
+def _is_ip_address(hostname: str) -> bool:
+    """Check if a string is an IPv4 address."""
+    parts = hostname.split(".")
+    if len(parts) == 4:
+        try:
+            return all(0 <= int(p) <= 255 for p in parts)
+        except (ValueError, TypeError):
+            return False
+    return False
+
+
+def get_working_dc(
+    domain: str,
+    dc_ip: Optional[str] = None,
+    nameserver: Optional[str] = None,
+    use_tcp: bool = False,
+    timeout: int = DEFAULT_LDAP_TIMEOUT,
+) -> Optional[str]:
+    """
+    Get a working DC IP for LDAP connections.
+
+    If dc_ip is provided, returns it directly (user override).
+    Otherwise, discovers DCs and tests connectivity.
+
+    Args:
+        domain: Domain name
+        dc_ip: User-specified DC IP (if provided, used directly)
+        nameserver: DNS server for discovery
+        use_tcp: Force DNS over TCP
+        timeout: Connection timeout for testing
+
+    Returns:
+        DC IP address, or None if no working DC found
+    """
+    # User explicitly specified DC - use it
+    if dc_ip:
+        return dc_ip
+
+    # Discover DCs
+    dcs = discover_domain_controllers(domain, nameserver=nameserver, use_tcp=use_tcp)
+
+    if not dcs:
+        warn(f"Could not discover any DCs for domain {domain}")
+        return None
+
+    # Resolve hostnames to IPs and test connectivity
+    for dc in dcs:
+        # Resolve if hostname
+        dc_resolved = resolve_hostname(dc, nameserver=nameserver, use_tcp=use_tcp, timeout=timeout)
+        if not dc_resolved:
+            debug(f"DNS: Could not resolve DC hostname {dc}")
+            continue
+
+        # Test LDAP port connectivity (quick check)
+        if _test_port(dc_resolved, 636, timeout=min(timeout, 3)):
+            debug(f"DNS: DC {dc_resolved} is reachable on LDAPS (636)")
+            return dc_resolved
+        elif _test_port(dc_resolved, 389, timeout=min(timeout, 3)):
+            debug(f"DNS: DC {dc_resolved} is reachable on LDAP (389)")
+            return dc_resolved
+        else:
+            debug(f"DNS: DC {dc_resolved} not reachable on LDAP ports")
+
+    # If no DC responded on LDAP ports, return first one anyway
+    # (let LDAP connection handle the error with better diagnostics)
+    if dcs:
+        first_dc = resolve_hostname(dcs[0], nameserver=nameserver, use_tcp=use_tcp)
+        if first_dc:
+            warn(f"No DC responded on LDAP ports, trying {first_dc} anyway")
+            return first_dc
+
+    return None
+
+
+def _test_port(host: str, port: int, timeout: int = 3) -> bool:
+    """Test if a TCP port is reachable."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False

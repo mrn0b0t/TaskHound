@@ -96,7 +96,7 @@ def resolve_dc_hostname(dc_ip: str, domain: str, use_tcp: bool = False) -> Optio
 
 
 def get_ldap_connection(
-    dc_ip: str,
+    dc_ip: Optional[str],
     domain: str,
     username: str,
     password: Optional[str] = None,
@@ -105,6 +105,8 @@ def get_ldap_connection(
     aes_key: Optional[str] = None,
     dc_host: Optional[str] = None,
     use_tcp: bool = False,
+    nameserver: Optional[str] = None,
+    timeout: int = 10,
 ) -> ldap_impacket.LDAPConnection:
     """
     Establish LDAP connection to domain controller.
@@ -113,8 +115,10 @@ def get_ldap_connection(
     LDAP (port 389) if LDAPS fails. This handles DCs that require channel
     binding or LDAP signing (strongerAuthRequired error).
 
+    If dc_ip is not provided, attempts to discover DCs via DNS SRV records.
+
     Args:
-        dc_ip: Domain controller IP address
+        dc_ip: Domain controller IP address (optional - will auto-discover if not provided)
         domain: Domain name (FQDN format, e.g., "domain.local")
         username: Username for authentication
         password: Password (plaintext)
@@ -123,6 +127,10 @@ def get_ldap_connection(
         aes_key: AES key for Kerberos (128-bit or 256-bit hex string)
         dc_host: DC hostname for Kerberos SPN (optional, will try to resolve)
         use_tcp: Force DNS queries over TCP (required for SOCKS proxies)
+        nameserver: DNS server for lookups (defaults to dc_ip or system DNS)
+        timeout: Timeout for DC discovery only (default: 10s). Note: actual LDAP
+            connection uses OS-level TCP timeout (~75s on most systems) because
+            impacket doesn't support per-connection timeouts.
 
     Returns:
         LDAPConnection object
@@ -130,6 +138,35 @@ def get_ldap_connection(
     Raises:
         LDAPConnectionError: If connection fails
     """
+    from .dns import DEFAULT_LDAP_TIMEOUT, get_working_dc
+
+    # Use provided timeout or default
+    effective_timeout = timeout if timeout else DEFAULT_LDAP_TIMEOUT
+
+    # NOTE: The timeout parameter only applies to DC discovery, not the LDAP connection.
+    # We cannot use socket.setdefaulttimeout() because it breaks SSL connections
+    # (causes WantReadError during handshake). impacket's LDAPConnection doesn't
+    # support per-connection timeouts, so we rely on OS-level TCP timeout (~75s)
+    # for unreachable DCs. The DC discovery phase tests port connectivity with
+    # proper timeouts, so unreachable DCs should be filtered out before we get here.
+
+    # If no DC IP provided, try to discover one
+    if not dc_ip:
+        # Use nameserver if provided, otherwise let discovery use system DNS
+        effective_ns = nameserver
+        dc_ip = get_working_dc(
+            domain=domain,
+            nameserver=effective_ns,
+            use_tcp=use_tcp,
+            timeout=effective_timeout,
+        )
+        if not dc_ip:
+            raise LDAPConnectionError(
+                f"Could not discover DC for domain {domain}. "
+                "Specify --dc-ip explicitly or check DNS configuration."
+            )
+        debug(f"LDAP: Auto-discovered DC: {dc_ip}")
+
     # Build base DN from domain
     base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
 

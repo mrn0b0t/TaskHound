@@ -338,22 +338,13 @@ def resolve_sid_via_ldap(
             debug(f"Invalid domain '{domain}' for LDAP SID resolution - must be FQDN")
             return None
 
-        # If no DC IP provided, try to resolve it
-        if not dc_ip:
-            try:
-                dc_ip = socket.gethostbyname(domain)
-                debug(f"Resolved domain {domain} to DC IP: {dc_ip}")
-            except socket.gaierror:
-                warn(f"Could not resolve domain {domain} to IP address")
-                return None
-
         # Convert SID to binary format for LDAP search
         binary_sid = sid_to_binary(sid)
         if not binary_sid:
             warn(f"Could not convert SID {sid} to binary format")
             return None
 
-        # Get LDAP connection using shared utility
+        # Get LDAP connection using shared utility (handles DC discovery if dc_ip is None)
         try:
             conn = get_ldap_connection(
                 dc_ip=dc_ip,
@@ -499,7 +490,7 @@ def resolve_name_to_sid_via_ldap(
                 warn(f"Could not resolve domain {domain} to IP address")
                 return None
 
-        # Get LDAP connection using shared utility
+        # Get LDAP connection using shared utility (handles DC discovery if dc_ip is None)
         try:
             conn = get_ldap_connection(
                 dc_ip=dc_ip,
@@ -510,7 +501,7 @@ def resolve_name_to_sid_via_ldap(
                 kerberos=kerberos,
             )
         except LDAPConnectionError as e:
-            warn(f"Failed to connect to LDAP server {dc_ip} for name resolution: {e}")
+            warn(f"Failed to connect to LDAP server for name resolution: {e}")
             return None
 
         debug(f"Successfully bound to LDAP server {dc_ip}")
@@ -921,14 +912,7 @@ def batch_get_user_attributes(
 
     debug(f"Querying LDAP for {len(users_needing_query)} users (cached: {len(results)})")
 
-    # Query LDAP for remaining users
-    if not dc_ip:
-        try:
-            dc_ip = socket.gethostbyname(domain)
-        except socket.gaierror:
-            warn(f"Could not resolve domain {domain} for user attribute lookup")
-            return results
-
+    # Query LDAP for remaining users (get_ldap_connection handles DC discovery if dc_ip is None)
     try:
         conn = get_ldap_connection(
             dc_ip=dc_ip,
@@ -1245,14 +1229,7 @@ def fetch_tier0_members(
             debug(f"Tier-0 pre-flight: Using cached data for {domain}")
             return cached
 
-    # Resolve DC IP if not provided
-    if not dc_ip:
-        try:
-            dc_ip = socket.gethostbyname(domain)
-        except socket.gaierror:
-            warn(f"Could not resolve domain {domain} for Tier-0 pre-flight")
-            return tier0_cache
-
+    # Get LDAP connection (handles DC discovery if dc_ip is None)
     try:
         conn = get_ldap_connection(
             dc_ip=dc_ip,

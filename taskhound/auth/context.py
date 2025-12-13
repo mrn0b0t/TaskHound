@@ -53,6 +53,7 @@ class AuthContext:
     dc_ip: Optional[str] = None
     timeout: int = 60
     dns_tcp: bool = False  # Force DNS queries over TCP (for SOCKS proxies)
+    nameserver: Optional[str] = None  # DNS nameserver (defaults to dc_ip or system DNS)
 
     # LDAP-specific credentials (optional override)
     ldap_domain: Optional[str] = None

@@ -17,6 +17,7 @@
 [target]
 # Default domain controller
 # dc_ip = "10.0.0.1"
+# nameserver = "10.0.0.53"  # DNS server for lookups (defaults to dc_ip or system DNS)
 # target = "10.0.0.1"
 # targets_file = "targets.txt"
 # timeout = 60

@@ -204,6 +204,7 @@ def main():
             dc_ip=args.dc_ip,
             timeout=args.timeout,
             dns_tcp=getattr(args, "dns_tcp", False),
+            nameserver=getattr(args, "nameserver", None),
             ldap_domain=args.ldap_domain,
             ldap_user=args.ldap_user,
             ldap_password=args.ldap_password,

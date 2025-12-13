@@ -187,6 +187,8 @@ def load_config() -> Dict[str, Any]:
     target = config_data.get("target", {})
     if "dc_ip" in target:
         defaults["dc_ip"] = target["dc_ip"]
+    if "nameserver" in target:
+        defaults["nameserver"] = target["nameserver"]
     if "timeout" in target:
         defaults["timeout"] = target["timeout"]
     if "target" in target:
@@ -367,6 +369,12 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("-t", "--target", action=OnceOnly, help="Target(s) - single host or comma-separated list (e.g., 192.168.1.1,192.168.1.2)")
     target.add_argument("--targets-file", help="File with targets, one per line")
     target.add_argument("--dc-ip", help="Domain controller IP (required when using Kerberos without DNS)")
+    target.add_argument(
+        "--ns", "--nameserver",
+        dest="nameserver",
+        help="DNS nameserver for lookups. If not specified, uses --dc-ip or system DNS. "
+        "Useful when DNS server differs from DC (lab environments, split DNS).",
+    )
     target.add_argument(
         "--timeout",
         type=int,
