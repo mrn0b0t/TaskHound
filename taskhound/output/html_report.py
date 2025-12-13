@@ -131,10 +131,7 @@ def calculate_severity(row: Any) -> SeverityScore:
             level = "LOW"
 
     elif task_type == "TASK":
-        if has_stored_creds:
-            level = "LOW"
-        else:
-            level = "INFO"
+        level = "LOW" if has_stored_creds else "INFO"
 
     else:
         # Unknown task type
@@ -366,13 +363,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             --border: #374151;
             --border-light: #4b5563;
         }
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             background: var(--bg-primary);
@@ -380,13 +377,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             line-height: 1.6;
             min-height: 100vh;
         }
-        
+
         .container {
             max-width: 1400px;
             margin: 0 auto;
             padding: 2rem;
         }
-        
+
         /* Header */
         .header {
             text-align: center;
@@ -396,25 +393,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 8px;
             border: 1px solid var(--border);
         }
-        
+
         .header h1 {
             font-size: 2rem;
             color: var(--text-primary);
             margin-bottom: 0.25rem;
             font-weight: 600;
         }
-        
+
         .header .subtitle {
             color: var(--text-muted);
             font-size: 0.95rem;
         }
-        
+
         .header .meta {
             margin-top: 1rem;
             color: var(--text-muted);
             font-size: 0.9rem;
         }
-        
+
         .header .meta-grid {
             display: flex;
             justify-content: center;
@@ -424,29 +421,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             padding-top: 1.5rem;
             border-top: 1px solid var(--border);
         }
-        
+
         .header .meta-item {
             display: flex;
             flex-direction: column;
             align-items: center;
         }
-        
+
         .header .meta-value {
             font-size: 1.75rem;
             font-weight: 600;
             color: var(--text-primary);
         }
-        
+
         .header .meta-value.success { color: var(--success-light); }
         .header .meta-value.failure { color: var(--failure-light); }
-        
+
         .header .meta-label {
             font-size: 0.75rem;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-        
+
         /* Summary */
         .executive-summary {
             background: var(--bg-secondary);
@@ -455,7 +452,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             margin-bottom: 1.5rem;
             border: 1px solid var(--border);
         }
-        
+
         .executive-summary h2 {
             color: var(--text-primary);
             margin-bottom: 1rem;
@@ -464,45 +461,45 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-        
+
         .risk-banner {
             padding: 1.25rem;
             border-radius: 6px;
             margin-bottom: 1.25rem;
             text-align: center;
         }
-        
+
         .risk-banner.severity-critical {
             background: transparent;
         }
-        
+
         .risk-banner.severity-high {
             background: transparent;
         }
-        
+
         .risk-banner.severity-medium {
             background: transparent;
         }
-        
+
         .risk-banner.severity-low {
             background: transparent;
         }
-        
+
         .risk-banner.severity-info {
             background: transparent;
         }
-        
+
         .risk-banner h3 {
             font-size: 1.25rem;
             margin-bottom: 0.25rem;
             font-weight: 600;
         }
-        
+
         .risk-banner p {
             color: var(--text-secondary);
             font-size: 0.9rem;
         }
-        
+
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -510,7 +507,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             gap: 0.75rem;
             margin-bottom: 1.5rem;
         }
-        
+
         .stat-card {
             background: var(--bg-card);
             border-radius: 6px;
@@ -518,17 +515,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             text-align: center;
             border: 1px solid var(--border);
         }
-        
+
         .stat-card:hover {
             border-color: var(--border-light);
         }
-        
+
         .stat-card .value {
             font-size: 1.75rem;
             font-weight: 600;
             color: var(--text-primary);
         }
-        
+
         .stat-card .label {
             color: var(--text-muted);
             font-size: 0.75rem;
@@ -536,13 +533,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             letter-spacing: 0.03em;
             margin-top: 0.5rem;
         }
-        
+
         .stat-card.critical .value { color: var(--failure-light); }
         .stat-card.high .value { color: var(--failure-light); }
         .stat-card.medium .value { color: var(--text-secondary); }
         .stat-card.low .value { color: var(--text-secondary); }
         .stat-card.success .value { color: var(--success-light); }
-        
+
         /* Severity Breakdown - Table Layout */
         .severity-breakdown {
             display: grid;
@@ -550,7 +547,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             gap: 0.75rem;
             margin-bottom: 1.25rem;
         }
-        
+
         .severity-badge {
             padding: 1rem;
             border-radius: 6px;
@@ -564,45 +561,45 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border: 1px solid;
             text-align: center;
         }
-        
+
         .severity-badge .count {
             font-size: 1.5rem;
             font-weight: 600;
         }
-        
+
         .severity-badge .label {
             font-size: 0.7rem;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             opacity: 0.85;
         }
-        
-        .severity-badge.severity-critical { 
-            background: var(--severity-critical-bg); 
+
+        .severity-badge.severity-critical {
+            background: var(--severity-critical-bg);
             border-color: var(--severity-critical);
             color: #fca5a5;
         }
-        .severity-badge.severity-high { 
-            background: var(--severity-high-bg); 
+        .severity-badge.severity-high {
+            background: var(--severity-high-bg);
             border-color: var(--severity-high);
             color: #fdba74;
         }
-        .severity-badge.severity-medium { 
-            background: var(--severity-medium-bg); 
+        .severity-badge.severity-medium {
+            background: var(--severity-medium-bg);
             border-color: var(--severity-medium);
             color: #fcd34d;
         }
-        .severity-badge.severity-low { 
-            background: var(--severity-low-bg); 
+        .severity-badge.severity-low {
+            background: var(--severity-low-bg);
             border-color: var(--severity-low);
             color: #93c5fd;
         }
-        .severity-badge.severity-info { 
-            background: rgba(75, 85, 99, 0.15); 
+        .severity-badge.severity-info {
+            background: rgba(75, 85, 99, 0.15);
             border-color: var(--severity-info);
             color: var(--text-secondary);
         }
-        
+
         /* Tier-0 Warning Box */
         .tier0-warning {
             margin-top: 1.25rem;
@@ -611,39 +608,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border: 1px solid rgba(239, 68, 68, 0.25);
             border-radius: 6px;
         }
-        
+
         .tier0-warning-header {
             display: flex;
             align-items: center;
             gap: 0.5rem;
             margin-bottom: 0.75rem;
         }
-        
+
         .tier0-warning-header .icon {
             font-size: 1rem;
         }
-        
+
         .tier0-warning-header .title {
             color: #fca5a5;
             font-weight: 600;
             font-size: 0.9rem;
             letter-spacing: 0.02em;
         }
-        
+
         .tier0-warning strong {
             color: var(--text-primary);
             display: block;
             margin-bottom: 0.5rem;
             font-size: 0.85rem;
         }
-        
+
         .tier0-accounts-list {
             list-style: none;
             display: flex;
             flex-direction: column;
             gap: 0.25rem;
         }
-        
+
         .tier0-accounts-list li {
             font-family: 'Consolas', 'Monaco', monospace;
             color: var(--text-secondary);
@@ -652,7 +649,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 3px;
             font-size: 0.85rem;
         }
-        
+
         /* Failures Section - Subtle collapsed style */
         .failures-section {
             margin-top: 1rem;
@@ -661,7 +658,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 6px;
             overflow: hidden;
         }
-        
+
         .failures-header {
             display: flex;
             align-items: center;
@@ -670,37 +667,37 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             cursor: pointer;
             user-select: none;
         }
-        
+
         .failures-header:hover {
             background: var(--bg-card);
         }
-        
+
         .failures-header .title {
             color: var(--text-muted);
             font-size: 0.8rem;
             font-weight: 500;
         }
-        
+
         .failures-header .toggle {
             color: var(--text-muted);
             font-size: 0.75rem;
             transition: transform 0.2s;
         }
-        
+
         .failures-section.expanded .failures-header .toggle {
             transform: rotate(180deg);
         }
-        
+
         .failures-content {
             display: none;
             padding: 0 1rem 0.75rem;
             border-top: 1px solid var(--border);
         }
-        
+
         .failures-section.expanded .failures-content {
             display: block;
         }
-        
+
         .failure-item {
             display: flex;
             align-items: center;
@@ -708,17 +705,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             padding: 0.35rem 0;
             font-size: 0.8rem;
         }
-        
+
         .failure-item .host {
             font-family: 'Consolas', 'Monaco', monospace;
             color: var(--text-secondary);
             min-width: 180px;
         }
-        
+
         .failure-item .error {
             color: var(--text-muted);
         }
-        
+
         /* Sections */
         .section {
             background: var(--bg-secondary);
@@ -727,7 +724,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             margin-bottom: 1.5rem;
             border: 1px solid var(--border);
         }
-        
+
         .section h2 {
             color: var(--text-primary);
             margin-bottom: 1rem;
@@ -736,14 +733,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-        
+
         /* Findings Table */
         .findings-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.85rem;
         }
-        
+
         .findings-table th {
             background: var(--bg-card);
             padding: 0.75rem 1rem;
@@ -757,21 +754,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             font-size: 0.7rem;
             letter-spacing: 0.05em;
         }
-        
+
         .findings-table td {
             padding: 0.75rem 1rem;
             border-bottom: 1px solid var(--border);
             vertical-align: top;
         }
-        
+
         .findings-table tr:hover {
             background: rgba(99, 102, 241, 0.05);
         }
-        
+
         .findings-table .severity-cell {
             width: 90px;
         }
-        
+
         .findings-table .severity-pill {
             padding: 0.2rem 0.5rem;
             border-radius: 3px;
@@ -781,48 +778,48 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             display: inline-block;
             letter-spacing: 0.03em;
         }
-        
-        .severity-pill.severity-critical { 
-            background: var(--severity-critical-bg); 
+
+        .severity-pill.severity-critical {
+            background: var(--severity-critical-bg);
             color: #fca5a5;
             border: 1px solid var(--severity-critical);
         }
-        .severity-pill.severity-high { 
-            background: var(--severity-high-bg); 
+        .severity-pill.severity-high {
+            background: var(--severity-high-bg);
             color: #fdba74;
             border: 1px solid var(--severity-high);
         }
-        .severity-pill.severity-medium { 
-            background: var(--severity-medium-bg); 
+        .severity-pill.severity-medium {
+            background: var(--severity-medium-bg);
             color: #fcd34d;
             border: 1px solid var(--severity-medium);
         }
-        .severity-pill.severity-low { 
-            background: var(--severity-low-bg); 
+        .severity-pill.severity-low {
+            background: var(--severity-low-bg);
             color: #93c5fd;
             border: 1px solid var(--severity-low);
         }
-        .severity-pill.severity-info { 
-            background: rgba(75, 85, 99, 0.15); 
+        .severity-pill.severity-info {
+            background: rgba(75, 85, 99, 0.15);
             color: var(--text-secondary);
             border: 1px solid var(--severity-info);
         }
-        
+
         .task-path {
             font-family: 'Consolas', 'Monaco', monospace;
             color: var(--text-muted);
             font-size: 0.75rem;
             word-break: break-all;
         }
-        
+
         .runas-account {
             font-weight: 500;
             font-size: 0.85rem;
         }
-        
+
         .runas-account.tier0 { color: #fca5a5; }
         .runas-account.priv { color: #fdba74; }
-        
+
         .password-reveal {
             font-family: 'Consolas', 'Monaco', monospace;
             background: rgba(22, 101, 52, 0.2);
@@ -831,28 +828,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             color: var(--success-light);
             font-size: 0.8rem;
         }
-        
+
         .factors-list {
             list-style: none;
             margin-top: 0.25rem;
         }
-        
+
         .factors-list li {
             font-size: 0.75rem;
             color: var(--text-muted);
             padding: 0.1rem 0;
         }
-        
+
         .factors-list li::before {
             content: "· ";
             color: var(--text-muted);
         }
-        
+
         /* Recommendations */
         .recommendations {
             list-style: none;
         }
-        
+
         .recommendations li {
             padding: 0.75rem 1rem;
             background: var(--bg-card);
@@ -860,14 +857,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             margin-bottom: 0.5rem;
             border-left: 3px solid var(--border-light);
         }
-        
+
         .recommendations li.critical { border-left-color: var(--severity-critical); }
         .recommendations li.critical strong { color: #fca5a5; }
         .recommendations li.high { border-left-color: var(--severity-high); }
         .recommendations li.high strong { color: #fdba74; }
         .recommendations li.medium { border-left-color: var(--severity-medium); }
         .recommendations li.medium strong { color: #fcd34d; }
-        
+
         .recommendations li strong {
             color: var(--text-primary);
             display: block;
@@ -875,26 +872,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             font-size: 0.9rem;
             font-weight: 500;
         }
-        
+
         .recommendations li p {
             color: var(--text-muted);
             font-size: 0.85rem;
         }
-        
+
         /* Host Findings - Collapsible */
         .host-findings-container {
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
         }
-        
+
         .host-block {
             background: var(--bg-card);
             border-radius: 6px;
             border: 1px solid var(--border);
             overflow: hidden;
         }
-        
+
         .host-header {
             display: flex;
             align-items: center;
@@ -903,17 +900,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             cursor: pointer;
             user-select: none;
         }
-        
+
         .host-header:hover {
             background: rgba(99, 102, 241, 0.05);
         }
-        
+
         .host-header-left {
             display: flex;
             align-items: center;
             gap: 0.75rem;
         }
-        
+
         .host-header h4 {
             font-family: 'Consolas', 'Monaco', monospace;
             color: var(--text-primary);
@@ -921,12 +918,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             margin: 0;
             font-weight: 500;
         }
-        
+
         .host-header .host-badges {
             display: flex;
             gap: 0.35rem;
         }
-        
+
         .host-badge {
             padding: 0.15rem 0.4rem;
             border-radius: 3px;
@@ -935,32 +932,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             text-transform: uppercase;
             letter-spacing: 0.03em;
         }
-        
+
         .host-badge.tier0 { background: var(--severity-critical-bg); color: #fca5a5; border: 1px solid var(--severity-critical); }
         .host-badge.stored { background: var(--severity-medium-bg); color: #fcd34d; border: 1px solid var(--severity-medium); }
         .host-badge.decrypted { background: rgba(22, 101, 52, 0.2); color: var(--success-light); border: 1px solid var(--success); }
         .host-badge.tasks { background: rgba(99, 102, 241, 0.15); color: var(--accent-light); border: 1px solid var(--accent); }
-        
+
         .host-header .expand-icon {
             font-size: 0.8rem;
             color: var(--text-muted);
             transition: transform 0.2s;
         }
-        
+
         .host-block.expanded .host-header .expand-icon {
             transform: rotate(180deg);
         }
-        
+
         .host-tasks {
             display: none;
             border-top: 1px solid var(--border);
             background: var(--bg-secondary);
         }
-        
+
         .host-block.expanded .host-tasks {
             display: block;
         }
-        
+
         .host-task-row {
             display: grid;
             grid-template-columns: 80px 1fr 160px 1fr;
@@ -970,15 +967,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             align-items: start;
             font-size: 0.85rem;
         }
-        
+
         .host-task-row:last-child {
             border-bottom: none;
         }
-        
+
         .host-task-row:hover {
             background: rgba(99, 102, 241, 0.03);
         }
-        
+
         /* Footer */
         .footer {
             text-align: center;
@@ -988,48 +985,48 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-top: 1px solid var(--border);
             margin-top: 1rem;
         }
-        
+
         .footer a {
             color: var(--accent-light);
             text-decoration: none;
         }
-        
+
         .footer a:hover {
             text-decoration: underline;
         }
-        
+
         /* Responsive */
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
             }
-            
+
             .header h1 {
                 font-size: 1.5rem;
             }
-            
+
             .stats-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
-            
+
             .host-task-row {
                 grid-template-columns: 1fr;
                 gap: 0.5rem;
             }
         }
-        
+
         /* Print styles */
         @media print {
             body {
                 background: white;
                 color: black;
             }
-            
+
             .section, .executive-summary, .header {
                 background: white;
                 border: 1px solid #ddd;
             }
-            
+
             .stat-card {
                 background: #f5f5f5;
             }
@@ -1044,7 +1041,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         {{FAILURES}}
         {{FOOTER}}
     </div>
-    
+
     <script>
         function toggleHost(hostId) {
             const hostBlock = document.getElementById(hostId);
@@ -1211,10 +1208,10 @@ def _generate_detailed_findings(rows: list[Any], findings: list[tuple[SeveritySc
             row = task_data["row"]
             severity = task_data["severity"]
 
-            task_path = _get_row_value(row, "path", "Unknown")
-            runas = _get_row_value(row, "runas", "") or _get_row_value(row, "resolved_runas", "N/A")
-            task_type = str(_get_row_value(row, "type", "")).upper()
-            decrypted = _get_row_value(row, "decrypted_password", "")
+            task_path = _get_row_value(row, "path", "Unknown") or "Unknown"
+            runas = _get_row_value(row, "runas", "") or _get_row_value(row, "resolved_runas", "") or "N/A"
+            task_type = str(_get_row_value(row, "type", "") or "").upper()
+            decrypted = _get_row_value(row, "decrypted_password", "") or ""
 
             # RunAs styling
             runas_class = ""
@@ -1276,8 +1273,8 @@ def _generate_failures(stats: AuditStatistics) -> str:
     """
 
     for failure in stats.failures:
-        host = html.escape(failure.get("host", "Unknown"))
-        error = html.escape(failure.get("error", "Unknown error"))
+        host = html.escape(failure.get("host") or "Unknown")
+        error = html.escape(failure.get("error") or "Unknown error")
         failures_html += f"""
                 <div class="failure-item">
                     <span class="host">{host}</span>
