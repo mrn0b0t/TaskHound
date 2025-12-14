@@ -49,9 +49,9 @@ def main():
         cache.invalidate()
         info("Cache cleared")
 
-    # Auto-enable icon setting on first run if OpenGraph is enabled
-    if args.bh_opengraph and cache.is_new_db and not args.bh_set_icon:
-        info("First run detected: Enabling custom icon for Scheduled Tasks in BloodHound")
+    # Auto-enable icon setting when OpenGraph is enabled
+    # The _set_custom_icon function handles "already exists" gracefully
+    if args.bh_opengraph and not args.bh_set_icon:
         args.bh_set_icon = True
 
     # Load HighValue data - either from file or live BloodHound connection
