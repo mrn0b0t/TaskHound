@@ -126,6 +126,7 @@ def classify_task(
     include_local: bool,
     pwd_cache: Optional[PwdLastSetCache] = None,
     tier0_cache: Optional[Tier0Cache] = None,
+    resolved_runas: Optional[str] = None,
 ) -> ClassificationResult:
     """
     Classify a task as TIER-0, PRIV, or TASK based on the runas account.
@@ -143,6 +144,7 @@ def classify_task(
         include_local: Whether to include local system accounts
         pwd_cache: Pre-fetched dict of username -> pwdLastSet datetime
         tier0_cache: Pre-fetched dict of username -> (is_tier0, group_list) from LDAP
+        resolved_runas: Pre-resolved username if runas was a SID (for tier0_cache lookup)
 
     Returns:
         ClassificationResult with task_type, reason, password_analysis, should_include
@@ -208,7 +210,12 @@ def classify_task(
     # Check LDAP-based Tier-0 detection (when BloodHound not available)
     elif tier0_cache:
         # Normalize username for lookup
-        norm_user = runas.split("\\")[-1].lower() if "\\" in runas else runas.lower()
+        # If runas is a SID and we have a resolved username, use that instead
+        from .utils.sid_resolver import is_sid
+        lookup_user = runas
+        if is_sid(runas) and resolved_runas:
+            lookup_user = resolved_runas
+        norm_user = lookup_user.split("\\")[-1].lower() if "\\" in lookup_user else lookup_user.lower()
         tier0_result = tier0_cache.get(norm_user)
 
         if tier0_result:

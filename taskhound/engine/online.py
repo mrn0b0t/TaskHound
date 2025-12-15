@@ -777,6 +777,7 @@ def process_target(
             include_local=include_local,
             pwd_cache=pwd_cache,
             tier0_cache=tier0_cache,
+            resolved_runas=row.resolved_runas,
         )
 
         if not result.should_include:

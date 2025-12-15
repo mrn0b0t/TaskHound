@@ -122,6 +122,56 @@ class TestClassifyTask:
         assert result.task_type == "TIER-0"
         assert "Domain Admins" in result.reason
 
+    def test_uses_resolved_runas_for_sid_in_tier0_cache(self):
+        """Should use resolved_runas for tier0_cache lookup when runas is a SID.
+        
+        This test verifies the fix for the issue where tasks with SID-based runas
+        values (instead of username) were not being classified as TIER-0 even when
+        the resolved username was in the tier0_cache.
+        """
+        row = self._make_task_row("S-1-5-21-1234567890-1234567890-1234567890-500")
+        
+        # tier0_cache is keyed by lowercase username
+        tier0_cache = {"adm-service": (True, ["Domain Admins", "Enterprise Admins"])}
+        
+        result = classify_task(
+            row=row,
+            meta={},
+            runas="S-1-5-21-1234567890-1234567890-1234567890-500",
+            rel_path="Tasks\\Test",
+            hv=None,
+            show_unsaved_creds=False,
+            include_local=False,
+            tier0_cache=tier0_cache,
+            resolved_runas="DOMAIN\\adm-service",  # SID resolved to this username
+        )
+        
+        assert result.task_type == "TIER-0"
+        assert "Domain Admins" in result.reason
+        assert "Enterprise Admins" in result.reason
+
+    def test_sid_without_resolved_runas_not_tier0(self):
+        """When runas is a SID and no resolved_runas provided, should not match tier0_cache."""
+        row = self._make_task_row("S-1-5-21-1234567890-1234567890-1234567890-500")
+        
+        # tier0_cache is keyed by lowercase username - SID won't match
+        tier0_cache = {"adm-service": (True, ["Domain Admins"])}
+        
+        result = classify_task(
+            row=row,
+            meta={},
+            runas="S-1-5-21-1234567890-1234567890-1234567890-500",
+            rel_path="Tasks\\Test",
+            hv=None,
+            show_unsaved_creds=False,
+            include_local=False,
+            tier0_cache=tier0_cache,
+            resolved_runas=None,  # No resolved username available
+        )
+        
+        # Without resolved_runas, the SID won't match "adm-service" in tier0_cache
+        assert result.task_type == "TASK"
+
 
 class TestGetTaskDateForAnalysis:
     """Tests for _get_task_date_for_analysis function."""
