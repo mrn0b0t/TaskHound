@@ -17,7 +17,6 @@ def test_load_output_config(mock_tomllib):
             "plain": "./out/plain",
             "json": "./out/results.json",
             "csv": "./out/results.csv",
-            "opengraph": "./out/og",
             "backup": "./out/backup",
             "no_summary": True,
             "debug": True,
@@ -32,7 +31,6 @@ def test_load_output_config(mock_tomllib):
     assert config["plain"] == "./out/plain"
     assert config["json"] == "./out/results.json"
     assert config["csv"] == "./out/results.csv"
-    assert config["opengraph"] == "./out/og"
     assert config["backup"] == "./out/backup"
     assert config["no_summary"] is True
     assert config["debug"] is True

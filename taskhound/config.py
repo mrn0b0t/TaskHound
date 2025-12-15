@@ -282,8 +282,7 @@ def load_config() -> Dict[str, Any]:
         defaults["bh_output"] = bhog["output_dir"]
     if "no_upload" in bhog:
         defaults["bh_no_upload"] = bhog["no_upload"]
-    if "set_icon" in bhog:
-        defaults["bh_set_icon"] = bhog["set_icon"]
+    # Note: set_icon removed - icon is now always set on upload
     if "force_icon" in bhog:
         defaults["bh_force_icon"] = bhog["force_icon"]
     if "icon" in bhog:
@@ -291,7 +290,7 @@ def load_config() -> Dict[str, Any]:
     if "color" in bhog:
         defaults["bh_color"] = bhog["color"]
     if "allow_orphans" in bhog:
-        defaults["allow_orphans"] = bhog["allow_orphans"]
+        defaults["bh_allow_orphans"] = bhog["allow_orphans"]
 
     # LDAP
     ldap = config_data.get("ldap", {})
@@ -316,8 +315,7 @@ def load_config() -> Dict[str, Any]:
         defaults["json"] = output["json"]
     if "csv" in output:
         defaults["csv"] = output["csv"]
-    if "opengraph" in output:
-        defaults["opengraph"] = output["opengraph"]
+    # Note: opengraph removed - use [bloodhound.opengraph] output_dir instead
     if "backup" in output:
         defaults["backup"] = output["backup"]
     if "no_summary" in output:
@@ -472,12 +470,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate OpenGraph files but skip automatic upload to BloodHound (files still saved)",
     )
     bhog.add_argument(
-        "--bh-set-icon", action="store_true", help="Automatically set custom icon for ScheduledTask nodes after upload"
-    )
-    bhog.add_argument(
         "--bh-force-icon",
         action="store_true",
-        help="Force icon update even if ScheduledTask icon already exists (requires --bh-set-icon)",
+        help="Force icon update even if ScheduledTask icon already exists (icon is set automatically on upload)",
     )
     bhog.add_argument(
         "--bh-icon", default="clock", help="Font Awesome icon name for ScheduledTask nodes (default: clock)"
@@ -488,7 +483,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Hex color code for ScheduledTask node icon (default: #8B5CF6 - vibrant purple)",
     )
     bhog.add_argument(
-        "--allow-orphans",
+        "--bh-allow-orphans",
         action="store_true",
         help="Create edges even when Computer/User nodes are missing from BloodHound (may create orphaned edges)",
     )
@@ -610,7 +605,6 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--plain", help="Directory to save normal text output (per target)")
     out.add_argument("--json", help="Write all results to a JSON file")
     out.add_argument("--csv", help="Write all results to a CSV file")
-    out.add_argument("--opengraph", help="Directory to save BloodHound OpenGraph JSON files")
     out.add_argument("--backup", help="Directory to save raw XML task files (per target)")
     out.add_argument("--no-summary", action="store_true", help="Disable summary table at the end of the run")
 
@@ -705,6 +699,23 @@ def validate_args(args):
         args.include_ms = True
         args.include_local = True
         args.unsaved_creds = True
+
+    # Auto-enable --bh-live when any BloodHound-specific flag is set
+    # This provides a better UX - users don't need to remember to add --bh-live
+    if not args.bh_live:
+        bh_flags_set = any([
+            args.bh_user,
+            args.bh_password,
+            args.bh_api_key,
+            args.bh_api_key_id,
+            args.bh_opengraph,
+            getattr(args, "bhce", False),
+            # Note: --bh-connector has a default, so we check if it's non-default
+            args.bh_connector and args.bh_connector != "http://127.0.0.1:8080",
+        ])
+        if bh_flags_set:
+            args.bh_live = True
+            print("[+] BloodHound live mode auto-enabled (BloodHound flags detected)")
 
     # Handle BloodHound OpenGraph integration auto-detection
     # Auto-enable OpenGraph if BHCE credentials are present and user didn't explicitly disable

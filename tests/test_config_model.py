@@ -32,7 +32,6 @@ def mock_args_minimal():
         bh_password=None,
         bh_api_key=None,
         bh_api_key_id=None,
-        bh_set_icon=False,
         bh_force_icon=False,
         bh_icon="clock",
         bh_color="#8B5CF6",
@@ -56,7 +55,6 @@ def mock_args_with_creds():
         bh_password="password123",
         bh_api_key=None,
         bh_api_key_id=None,
-        bh_set_icon=True,
         bh_force_icon=True,
         bh_icon="alarm",
         bh_color="#FF0000",
@@ -80,7 +78,6 @@ def mock_args_with_api_key():
         bh_password=None,
         bh_api_key="api_key_123",
         bh_api_key_id="key_id_456",
-        bh_set_icon=False,
         bh_force_icon=False,
         bh_icon="clock",
         bh_color="#8B5CF6",
@@ -113,7 +110,6 @@ class TestBloodHoundConfigInit:
         assert config.bh_api_key is None
         assert config.bh_api_key_id is None
         assert config.bh_type is None
-        assert config.bh_set_icon is False
         assert config.bh_force_icon is False
         assert config.bh_icon == "clock"
         assert config.bh_color == "#8B5CF6"
@@ -173,7 +169,6 @@ class TestFromArgsAndConfig:
         """Should copy icon settings from args"""
         config = BloodHoundConfig.from_args_and_config(mock_args_with_creds)
         
-        assert config.bh_set_icon is True
         assert config.bh_force_icon is True
         assert config.bh_icon == "alarm"
         assert config.bh_color == "#FF0000"

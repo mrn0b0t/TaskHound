@@ -69,9 +69,10 @@ type = "bhce" # or "legacy"
 enabled = true
 output_dir = "./opengraph"
 no_upload = false
-set_icon = true
+# force_icon = false  # Force icon update even if already exists
 icon = "clock"
 color = "#8B5CF6"
+# allow_orphans = false  # Create edges even when nodes are missing
 
 [ldap]
 # LDAP SID resolution settings
@@ -90,7 +91,6 @@ color = "#8B5CF6"
 # plain = "./output/plain"
 # json = "./output/results.json"
 # csv = "./output/results.csv"
-# opengraph = "./output/opengraph"
 # backup = "./output/xml_backup"
 # no_summary = false
 # debug = false

@@ -49,11 +49,6 @@ def main():
         cache.invalidate()
         info("Cache cleared")
 
-    # Auto-enable icon setting when OpenGraph is enabled
-    # The _set_custom_icon function handles "already exists" gracefully
-    if args.bh_opengraph and not args.bh_set_icon:
-        args.bh_set_icon = True
-
     # Load HighValue data - either from file or live BloodHound connection
     hv = None
     hv_loaded = False
@@ -293,9 +288,6 @@ def main():
         # Auto-write to ./output in concise mode
         write_rich_plain("./output", all_rows)
 
-    if args.opengraph:
-        generate_opengraph_files(args.opengraph, all_rows)
-
     # Print decrypted credentials summary (always shown when credentials found)
     # This is printed BEFORE the summary table so high-value findings are visible
     print_decrypted_credentials(all_rows)
@@ -391,7 +383,7 @@ def main():
             tasks=all_rows,
             bh_connector=bh_connector,
             ldap_config=ldap_config,
-            allow_orphans=getattr(args, "allow_orphans", False),
+            allow_orphans=getattr(args, "bh_allow_orphans", False),
         )
 
         # Upload to BloodHound if not disabled and we have credentials
@@ -405,7 +397,7 @@ def main():
                     password=bh_config.bh_password,
                     api_key=bh_config.bh_api_key,
                     api_key_id=bh_config.bh_api_key_id,
-                    set_icon=bh_config.bh_set_icon,
+                    set_icon=True,  # Always set icon on upload
                     force_icon=bh_config.bh_force_icon,
                     icon_name=bh_config.bh_icon,
                     icon_color=bh_config.bh_color,
