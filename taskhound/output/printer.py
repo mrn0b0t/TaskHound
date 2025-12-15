@@ -14,6 +14,7 @@ def print_task_table(
     kind: str,
     rel_path: str,
     rows: List[tuple],
+    hostname: Optional[str] = None,
 ) -> None:
     """
     Print a task as a Rich table with colored borders.
@@ -22,6 +23,7 @@ def print_task_table(
         kind: Task classification ('TIER-0', 'PRIV', or 'TASK')
         rel_path: Task path for the header
         rows: List of (label, value) tuples to display
+        hostname: The hostname where the task was found (for multi-target scans)
     """
     if not (log_utils._VERBOSE or log_utils._DEBUG):
         return
@@ -40,8 +42,11 @@ def print_task_table(
         border_style = COLORS["task_border"]
         tag = "[TASK]"
 
-    # Build the title with tag and path
-    title = f"[{header_style}]{tag}[/] {rel_path}"
+    # Build the title with tag, hostname (if provided), and path
+    if hostname:
+        title = f"[{header_style}]{tag}[/] {hostname} - {rel_path}"
+    else:
+        title = f"[{header_style}]{tag}[/] {rel_path}"
 
     # Create a simple two-column table
     table = Table(
@@ -228,6 +233,7 @@ def format_block(
     no_ldap: bool = False,
     domain: Optional[str] = None,
     dc_ip: Optional[str] = None,
+    hostname: Optional[str] = None,
     username: Optional[str] = None,
     password: Optional[str] = None,
     hashes: Optional[str] = None,
@@ -290,8 +296,11 @@ def format_block(
 
     if concise:
         # Concise output: One line per task
-        # Format: [KIND] RunAs | Path | What | (optional reason) | (optional password)
-        line = f"{header} {display_runas} | {rel_path} | {what}"
+        # Format: [KIND] Hostname - RunAs | Path | What | (optional reason) | (optional password)
+        if hostname:
+            line = f"{header} {hostname} - {display_runas} | {rel_path} | {what}"
+        else:
+            line = f"{header} {display_runas} | {rel_path} | {what}"
         if extra_reason:
             line += f" | {extra_reason}"
 
@@ -415,11 +424,14 @@ def format_block(
             rows.append(("Next Step", "Try DPAPI Dump / Task Manipulation"))
 
     # Print Rich table to console
-    print_task_table(kind, rel_path, rows)
+    print_task_table(kind, rel_path, rows, hostname=hostname)
 
     # Return text format for file output (backward compatibility)
     # Label width is 18 chars + 1 space before colon = 19 chars total before ":"
-    base = [f"\n{header} {rel_path}"]
+    if hostname:
+        base = [f"\n{header} {hostname} - {rel_path}"]
+    else:
+        base = [f"\n{header} {rel_path}"]
     for label, value in rows:
         base.append(f"        {label:<18} : {value}")
 

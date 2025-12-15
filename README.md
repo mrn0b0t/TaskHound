@@ -79,7 +79,7 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
 [*] moe.thesimpsons.local: Crawling Scheduled Tasks (skipping \Microsoft for speed)
 [+] moe.thesimpsons.local: Found 7 tasks, privileged 2
 
-[TIER-0] Windows\System32\Tasks\BackupTask
+[TIER-0] moe.thesimpsons.local - Windows\System32\Tasks\BackupTask
         Enabled : True
         RunAs   : THESIMPSONS\Administrator
         What    : C:\Scripts\backup.exe --daily
@@ -90,7 +90,7 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
         Password Analysis : Password changed BEFORE task creation, password is valid!
         Next Step: Try DPAPI Dump / Task Manipulation
 
-[PRIV] Windows\System32\Tasks\MaintenanceTask
+[PRIV] moe.thesimpsons.local - Windows\System32\Tasks\MaintenanceTask
         Enabled : True
         RunAs   : THESIMPSONS\marge.simpson
         What    : C:\Tools\cleanup.exe
@@ -101,7 +101,7 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
         Password Analysis : Password changed AFTER task creation, Password could be stale
         Next Step: Try DPAPI Dump / Task Manipulation
 
-[TASK] Windows\System32\Tasks\SIDTask  
+[TASK] moe.thesimpsons.local - Windows\System32\Tasks\SIDTask  
         Enabled : True
         RunAs   : Administrator (S-1-5-21-3211413907-14631080-1147255650-500)
         What    : C:\Windows\System32\cmd.exe /c backup
@@ -109,7 +109,7 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
         Date    : 2025-09-15T08:15:22.1234567
         Trigger : Time at 2025-09-16 03:00
 
-[TASK] Windows\System32\Tasks\UserTask
+[TASK] moe.thesimpsons.local - Windows\System32\Tasks\UserTask
         Enabled : False
         RunAs   : THESIMPSONS\bart.simpson
         What    : C:\Windows\System32\notepad.exe
