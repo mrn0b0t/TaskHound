@@ -29,6 +29,8 @@
 # Default scan options
 # offline = "./offline_data"
 # include_local = true
+# include_ms = false  # Include tasks in \Microsoft folder
+# include_all = false  # Include ALL tasks (very slow, includes everything)
 # unsaved_creds = true
 # opsec = false
 # credguard_detect = false
@@ -85,6 +87,7 @@ color = "#8B5CF6"
 
 [dpapi]
 # DPAPI credential decryption settings
+# loot = false  # Enable automatic download and decryption of ALL Task Scheduler credential blobs
 # key = "0x51e43225e5b43b25d3768a2ae7f99934cb35d3ea"  # DPAPI_SYSTEM userkey from LSA secrets
 
 [output]
@@ -95,3 +98,8 @@ color = "#8B5CF6"
 # no_summary = false
 # debug = false
 # verbose = false
+
+[audit]
+# Blue Team Audit Mode with HTML reporting
+# enabled = false  # Enable audit mode
+# html_report = "./output/audit_report.html"  # HTML report output path

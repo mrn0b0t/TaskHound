@@ -246,6 +246,8 @@ def load_config() -> Dict[str, Any]:
 
     # DPAPI
     dpapi = config_data.get("dpapi", {})
+    if "loot" in dpapi:
+        defaults["loot"] = dpapi["loot"]
     if "key" in dpapi:
         defaults["dpapi_key"] = dpapi["key"]
 
