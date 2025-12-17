@@ -151,7 +151,8 @@ class TestProcessOfflineDirectory:
             with patch("taskhound.engine.offline.info"):
                 with patch("taskhound.engine.offline._process_offline_dpapi_decryption") as mock_dpapi:
                     with patch("taskhound.engine.offline._process_offline_host") as mock_host:
-                        mock_dpapi.return_value = []
+                        # Return tuple (out_lines, decrypted_creds)
+                        mock_dpapi.return_value = ([], [])
                         mock_host.return_value = []
                         result = process_offline_directory(
                             offline_dir=tmpdir,
@@ -309,7 +310,7 @@ class TestProcessOfflineDPAPIDecryption:
     """Tests for _process_offline_dpapi_decryption function."""
 
     def test_no_dpapi_directory(self):
-        """Returns empty list when no DPAPI directory exists."""
+        """Returns empty tuple when no DPAPI directory exists."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = _process_offline_dpapi_decryption(
                 hostname="DC01",
@@ -317,7 +318,8 @@ class TestProcessOfflineDPAPIDecryption:
                 dpapi_key="test_key",
                 debug=False,
             )
-        assert result == []
+        # Returns (out_lines, decrypted_creds) tuple
+        assert result == ([], [])
 
     def test_direct_masterkeys_structure(self):
         """Detects direct dpapi_loot structure with masterkeys/."""
@@ -399,18 +401,20 @@ class TestProcessOfflineDPAPIDecryption:
                 with patch("taskhound.engine.offline.info"):
                     with patch("taskhound.engine.offline.good"):
                         mock_decrypt.return_value = [mock_cred]
-                        result = _process_offline_dpapi_decryption(
+                        out_lines, decrypted_creds = _process_offline_dpapi_decryption(
                             hostname="DC01",
                             host_dir=tmpdir,
                             dpapi_key="test_key",
                             debug=False,
                         )
 
-            # Should contain credential information
-            output = "\n".join(result)
+            # Should contain credential information in out_lines
+            output = "\n".join(out_lines)
             assert "TestTask" in output
             assert "DOMAIN\\admin" in output
             assert "P@ssw0rd123" in output
+            # decrypted_creds should contain the credential object
+            assert len(decrypted_creds) == 1
 
     def test_decryption_failure_handled(self):
         """Handles decryption failures gracefully."""
@@ -421,7 +425,7 @@ class TestProcessOfflineDPAPIDecryption:
             with patch("taskhound.dpapi.looter.decrypt_offline_dpapi_files") as mock_decrypt:
                 with patch("taskhound.engine.offline.warn") as mock_warn:
                     mock_decrypt.side_effect = Exception("Decryption failed")
-                    result = _process_offline_dpapi_decryption(
+                    out_lines, decrypted_creds = _process_offline_dpapi_decryption(
                         hostname="DC01",
                         host_dir=tmpdir,
                         dpapi_key="test_key",
@@ -429,7 +433,8 @@ class TestProcessOfflineDPAPIDecryption:
                     )
 
             # Should not crash
-            assert result == []
+            assert out_lines == []
+            assert decrypted_creds == []
             mock_warn.assert_called()
 
     def test_debug_mode_prints_traceback(self):
