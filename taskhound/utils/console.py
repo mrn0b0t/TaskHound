@@ -67,41 +67,54 @@ def print_banner():
 # =============================================================================
 
 def status(msg: str):
-    """Print a status message (always visible)."""
-    console.print(msg)
+    """Print a status message (always visible). Thread-safe."""
+    with _output_lock:
+        console.print(msg)
 
 
 def good(msg: str, verbose_only: bool = False):
-    """Print a success message in green."""
+    """Print a success message in green. Thread-safe."""
     if verbose_only and not _is_verbose():
         return
-    console.print(f"[green][+][/] {msg}")
+    with _output_lock:
+        console.print(f"[green][+][/] {msg}")
 
 
-def warn(msg: str):
-    """Print a warning message in yellow."""
-    console.print(f"[yellow][!][/] {msg}")
+def warn(msg: str, verbose_only: bool = False):
+    """Print a warning message in yellow. Thread-safe.
+
+    Args:
+        msg: Message to print
+        verbose_only: If True, only print in verbose mode
+    """
+    if verbose_only and not _is_verbose():
+        return
+    with _output_lock:
+        console.print(f"[yellow][!][/] {msg}")
 
 
 def error(msg: str):
-    """Print an error message in red."""
-    console.print(f"[red][-][/] {msg}")
+    """Print an error message in red. Thread-safe."""
+    with _output_lock:
+        console.print(f"[red][-][/] {msg}")
 
 
 def info(msg: str, verbose_only: bool = False):
-    """Print an info message in blue."""
+    """Print an info message in blue. Thread-safe."""
     if verbose_only and not _is_verbose():
         return
-    console.print(f"[blue][*][/] {msg}")
+    with _output_lock:
+        console.print(f"[blue][*][/] {msg}")
 
 
 def debug(msg: str, exc_info: bool = False):
-    """Print a debug message in dim text."""
+    """Print a debug message in dim text. Thread-safe."""
     if not _is_debug():
         return
-    console.print(f"[dim][DEBUG][/] {msg}")
-    if exc_info:
-        console.print_exception()
+    with _output_lock:
+        console.print(f"[dim][DEBUG][/] {msg}")
+        if exc_info:
+            console.print_exception()
 
 
 # =============================================================================
@@ -243,6 +256,8 @@ def print_summary_table(
     """
     Print a rich summary table with host statistics.
 
+    Shows successful hosts first with task counts, then failed hosts in a separate table.
+
     Args:
         host_stats: Dict of {hostname: {tier0, privileged, normal, status, failure_reason}}
         has_hv_data: Whether high-value data was loaded
@@ -251,67 +266,86 @@ def print_summary_table(
     if not host_stats:
         return
 
-    table = Table(
-        title="[bold]SUMMARY[/]",
-        show_header=True,
-        header_style="bold cyan",
-        border_style="dim",
-    )
-
-    table.add_column("Hostname", style="white", no_wrap=True)
-    table.add_column("Tier-0", justify="center", style="red")
-    table.add_column("Privileged", justify="center", style="yellow")
-    table.add_column("Normal", justify="center", style="green")
-    table.add_column("Status", style="dim")
+    # Separate successful and failed hosts
+    success_hosts = {}
+    failed_hosts = {}
+    for host, stats in host_stats.items():
+        if stats["status"] == "[+]":
+            success_hosts[host] = stats
+        else:
+            failed_hosts[host] = stats
 
     total_tier0 = 0
     total_priv = 0
     total_normal = 0
 
-    for host in sorted(host_stats.keys()):
-        stats = host_stats[host]
+    # Print successful hosts table
+    if success_hosts:
+        table = Table(
+            title="[bold]TASK SUMMARY[/]",
+            show_header=True,
+            header_style="bold cyan",
+            border_style="dim",
+        )
 
-        if stats["status"] == "[+]":
-            # Success
+        table.add_column("Hostname", style="white", no_wrap=True)
+        table.add_column("Tier-0", justify="center", style="red")
+        table.add_column("Privileged", justify="center", style="yellow")
+        table.add_column("Normal", justify="center", style="green")
+
+        for host in sorted(success_hosts.keys()):
+            stats = success_hosts[host]
             tier0 = str(stats["tier0"]) if has_hv_data else "N/A"
             priv = str(stats["privileged"]) if has_hv_data else "N/A"
             normal = str(stats["normal"])
-            status_cell = "[green][+][/]"
 
             total_tier0 += stats["tier0"]
             total_priv += stats["privileged"]
             total_normal += stats["normal"]
-        else:
-            # Failure
-            tier0 = "[dim]N/A[/]"
-            priv = "[dim]N/A[/]"
-            normal = "[dim]N/A[/]"
-            reason = stats.get("failure_reason", "Unknown error")
-            if len(reason) > 40:
-                reason = reason[:37] + "..."
-            status_cell = f"[red][-][/] [dim]{reason}[/]"
 
-        table.add_row(host, tier0, priv, normal, status_cell)
+            table.add_row(host, tier0, priv, normal)
 
-    # Add totals row if multiple hosts
-    if len(host_stats) > 1:
-        table.add_section()
-        tier0_total = str(total_tier0) if has_hv_data else "N/A"
-        priv_total = str(total_priv) if has_hv_data else "N/A"
-        table.add_row(
-            "[bold]TOTAL[/]",
-            f"[bold]{tier0_total}[/]",
-            f"[bold]{priv_total}[/]",
-            f"[bold]{total_normal}[/]",
-            "",
+        # Add totals row if multiple hosts
+        if len(success_hosts) > 1:
+            table.add_section()
+            tier0_total = str(total_tier0) if has_hv_data else "N/A"
+            priv_total = str(total_priv) if has_hv_data else "N/A"
+            table.add_row(
+                "[bold]TOTAL[/]",
+                f"[bold]{tier0_total}[/]",
+                f"[bold]{priv_total}[/]",
+                f"[bold]{total_normal}[/]",
+            )
+
+        console.print()
+        console.print(table)
+
+    # Print failed hosts table
+    if failed_hosts:
+        fail_table = Table(
+            title=f"[bold red]FAILED HOSTS ({len(failed_hosts)})[/]",
+            show_header=True,
+            header_style="bold red",
+            border_style="dim red",
         )
 
-    console.print()
-    console.print(table)
+        fail_table.add_column("Hostname", style="white", no_wrap=True)
+        fail_table.add_column("Reason", style="dim")
+
+        for host in sorted(failed_hosts.keys()):
+            stats = failed_hosts[host]
+            reason = stats.get("failure_reason", "Unknown error")
+            if len(reason) > 60:
+                reason = reason[:57] + "..."
+            fail_table.add_row(host, reason)
+
+        console.print()
+        console.print(fail_table)
+
     console.print()
 
     # Additional hints
-    if not has_hv_data:
+    if not has_hv_data and success_hosts:
         console.print(
             "[dim]Note: Tier-0/Privileged detection requires --bh-data, --bh-live, or --ldap-tier0[/]"
         )

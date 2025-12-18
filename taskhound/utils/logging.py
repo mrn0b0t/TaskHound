@@ -48,15 +48,25 @@ def status(msg: str):
     _status(msg)
 
 
-def good(msg: str):
-    """Print success message (verbose/debug only for backwards compat)."""
+def good(msg: str, verbose_only: bool = False):
+    """Print success message (verbose/debug only for backwards compat).
+
+    Args:
+        msg: Message to print
+        verbose_only: If True, only print in verbose mode (default behavior anyway)
+    """
     if _VERBOSE or _DEBUG:
         _good(msg)
 
 
-def warn(msg: str):
-    """Print warning message."""
-    _warn(msg)
+def warn(msg: str, verbose_only: bool = False):
+    """Print warning message.
+
+    Args:
+        msg: Message to print
+        verbose_only: If True, only print in verbose mode
+    """
+    _warn(msg, verbose_only=verbose_only)
 
 
 def error(msg: str):
@@ -64,8 +74,15 @@ def error(msg: str):
     _error(msg)
 
 
-def info(msg: str):
-    """Print info message (verbose/debug only for backwards compat)."""
+def info(msg: str, verbose_only: bool = False):
+    """Print info message (verbose/debug only for backwards compat).
+
+    Args:
+        msg: Message to print
+        verbose_only: If True, only print in verbose mode (same as default behavior)
+    """
+    # verbose_only parameter is kept for API consistency but info()
+    # is already verbose-only by default
     if _VERBOSE or _DEBUG:
         _info(msg)
 
