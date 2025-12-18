@@ -75,6 +75,7 @@ class HighValueLoader:
         self.hv_users: Dict[str, Dict[str, Any]] = {}
         self.hv_sids: Dict[str, Dict[str, Any]] = {}
         self.hv_computers: Dict[str, str] = {}  # hostname -> SID mapping for computers
+        self.hv_domain_sids: Dict[str, str] = {}  # domain SID prefix -> FQDN mapping
         self.loaded = False
         self.format_type = "unknown"
 

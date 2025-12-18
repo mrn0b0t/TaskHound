@@ -149,6 +149,205 @@ def is_foreign_domain_sid(sid: str, local_domain_sid_prefix: Optional[str]) -> b
     return sid_prefix != local_domain_sid_prefix
 
 
+# Well-known local account RIDs for resolving unknown domain SIDs
+# These are common RIDs found on Windows machines that we can map to names
+# even when we can't query the actual machine's SAM database
+WELL_KNOWN_LOCAL_RIDS = {
+    500: "Administrator",
+    501: "Guest",
+    502: "krbtgt",  # Only in AD, but included for completeness
+    503: "DefaultAccount",
+    504: "WDAGUtilityAccount",  # Windows Defender Application Guard
+    512: "Domain Admins",  # Only in AD
+    513: "Domain Users",  # Only in AD
+    514: "Domain Guests",  # Only in AD
+    515: "Domain Computers",  # Only in AD
+    516: "Domain Controllers",  # Only in AD
+    # Local user RIDs start at 1000+
+}
+
+
+def is_unknown_domain_sid(sid: str, known_domain_prefixes: set) -> bool:
+    """
+    Check if a SID is from an unknown domain (not in our known set).
+
+    Unknown domain SIDs are likely local machine accounts that cannot be
+    resolved via DC queries. They should either be skipped or displayed
+    as "UNKNOWN\\<name>" based on well-known RIDs.
+
+    Args:
+        sid: SID to check (e.g., "S-1-5-21-1406697320-...-500")
+        known_domain_prefixes: Set of known domain SID prefixes
+
+    Returns:
+        True if SID is from an unknown domain (not in known_domain_prefixes)
+    """
+    if not known_domain_prefixes:
+        return False  # No known prefixes means we can't classify
+
+    sid_prefix = get_domain_sid_prefix(sid)
+    if not sid_prefix:
+        return False  # Not a domain-style SID (built-in, well-known, etc.)
+
+    return sid_prefix not in known_domain_prefixes
+
+
+def resolve_unknown_sid_to_local_name(sid: str) -> Optional[str]:
+    """
+    Attempt to resolve an unknown domain SID to a local account name.
+
+    For SIDs from unknown domains (likely local machine accounts), we can
+    infer the account name from well-known RIDs like 500 (Administrator).
+
+    Args:
+        sid: SID to resolve (e.g., "S-1-5-21-1406697320-...-500")
+
+    Returns:
+        "UNKNOWN\\<name>" if RID is well-known, None otherwise
+    """
+    if not sid or not sid.startswith("S-1-5-21-"):
+        return None
+
+    try:
+        # Extract RID (last component)
+        parts = sid.split("-")
+        if len(parts) < 8:
+            return None
+
+        rid = int(parts[-1])
+
+        # Check if it's a well-known RID
+        if rid in WELL_KNOWN_LOCAL_RIDS:
+            name = WELL_KNOWN_LOCAL_RIDS[rid]
+            return f"UNKNOWN\\{name}"
+
+        # For unknown RIDs, just show the RID number
+        # RIDs >= 1000 are typically local user accounts
+        if rid >= 1000:
+            return f"UNKNOWN\\User-{rid}"
+
+        return None
+
+    except (ValueError, IndexError):
+        return None
+
+
+def fetch_known_domain_sids_via_ldap(
+    domain: str,
+    dc_ip: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+) -> Dict[str, str]:
+    """
+    Fetch known domain SID prefixes from LDAP (own domain + trusts).
+
+    Queries the domain's own SID and all trusted domain SIDs via LDAP.
+    This is used as a fallback when BloodHound is not available.
+
+    Args:
+        domain: Domain name (e.g., "corp.local")
+        dc_ip: Domain controller IP
+        username: LDAP authentication username
+        password: LDAP authentication password
+        hashes: NTLM hashes for pass-the-hash
+        kerberos: Use Kerberos authentication
+
+    Returns:
+        Dict mapping domain SID prefix -> domain name
+    """
+    result: Dict[str, str] = {}
+
+    # Validate domain
+    if not domain or "." not in domain:
+        debug(f"Invalid domain '{domain}' for LDAP domain SID query")
+        return result
+
+    if not username or not (password or hashes or kerberos):
+        debug("No valid credentials for LDAP domain SID query")
+        return result
+
+    try:
+        from ..utils.ldap import LDAPConnectionError, get_ldap_connection
+
+        conn = get_ldap_connection(
+            dc_ip=dc_ip,
+            domain=domain,
+            username=username,
+            password=password,
+            hashes=hashes,
+            kerberos=kerberos,
+        )
+
+        base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
+
+        # Query 1: Get own domain's SID from the domain object
+        domain_filter = "(objectClass=domain)"
+        try:
+            search_results = conn.search(
+                searchBase=base_dn,
+                searchFilter=domain_filter,
+                attributes=["objectSid", "name"],
+                searchControls=None,
+            )
+
+            if search_results:
+                for entry in search_results:
+                    if isinstance(entry, ldapasn1_impacket.SearchResultEntry):
+                        for attribute in entry["attributes"]:
+                            attr_name = str(attribute["type"])
+                            if attr_name.lower() == "objectsid":
+                                binary_sid = bytes(attribute["vals"][0])
+                                sid_str = binary_to_sid(binary_sid)
+                                if sid_str:
+                                    result[sid_str] = domain.upper()
+                                    debug(f"Own domain SID: {sid_str} -> {domain}")
+        except Exception as e:
+            debug(f"Error querying own domain SID: {e}")
+
+        # Query 2: Get trusted domain SIDs
+        trust_filter = "(objectClass=trustedDomain)"
+        try:
+            search_results = conn.search(
+                searchBase=f"CN=System,{base_dn}",
+                searchFilter=trust_filter,
+                attributes=["securityIdentifier", "trustPartner", "name"],
+                searchControls=None,
+            )
+
+            if search_results:
+                for entry in search_results:
+                    if isinstance(entry, ldapasn1_impacket.SearchResultEntry):
+                        trust_name = None
+                        trust_sid = None
+
+                        for attribute in entry["attributes"]:
+                            attr_name = str(attribute["type"])
+                            if attr_name.lower() == "securityidentifier":
+                                binary_sid = bytes(attribute["vals"][0])
+                                trust_sid = binary_to_sid(binary_sid)
+                            elif attr_name.lower() in ("trustpartner", "name"):
+                                trust_name = str(attribute["vals"][0])
+
+                        if trust_sid and trust_name:
+                            result[trust_sid] = trust_name.upper()
+                            debug(f"Trust SID: {trust_sid} -> {trust_name}")
+
+        except Exception as e:
+            debug(f"Error querying trust SIDs: {e}")
+
+        if result:
+            info(f"Loaded {len(result)} domain SID prefixes via LDAP")
+
+    except LDAPConnectionError as e:
+        debug(f"LDAP connection failed for domain SID query: {e}")
+    except Exception as e:
+        debug(f"Error fetching domain SIDs via LDAP: {e}")
+
+    return result
+
+
 def sid_to_binary(sid_string: str) -> Optional[bytes]:
     """
     Convert a SID string (S-1-5-21-...) to binary format for LDAP queries.
@@ -919,6 +1118,7 @@ def resolve_sid(
     ldap_password: Optional[str] = None,
     ldap_hashes: Optional[str] = None,
     local_domain_sid_prefix: Optional[str] = None,
+    known_domain_prefixes: Optional[set] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Comprehensive SID resolution with 4-tier fallback chain.
@@ -929,6 +1129,9 @@ def resolve_sid(
     3. SMB/LSARPC via existing connection (uses target's LSA to resolve SIDs)
        - SKIPPED for foreign domain SIDs (different domain prefix)
     4. LDAP queries to domain controller (if credentials provided and not disabled)
+
+    For unknown domain SIDs (not matching any known domain prefix), falls back to
+    UNKNOWN\\<name> based on well-known RIDs (e.g., 500 -> UNKNOWN\\Administrator).
 
     Args:
         sid: Windows SID to resolve
@@ -947,6 +1150,7 @@ def resolve_sid(
         ldap_password: Separate LDAP password (for local admin case - plaintext only)
         ldap_hashes: Separate LDAP NTLM hashes (for local admin case - use instead of ldap_password)
         local_domain_sid_prefix: Known local domain SID prefix for foreign domain detection
+        known_domain_prefixes: Set of all known domain SID prefixes (own + trusts)
 
     Returns:
         Tuple of (display_name, resolved_username)
@@ -1031,6 +1235,20 @@ def resolve_sid(
             _cache_success(resolved)
             return f"{resolved} ({sid})", resolved
 
+    # Check if this is an unknown domain SID (not matching any known domain)
+    # This is likely a local machine account that cannot be resolved via DC
+    is_unknown_domain = False
+    if known_domain_prefixes:
+        is_unknown_domain = is_unknown_domain_sid(sid, known_domain_prefixes)
+        if is_unknown_domain:
+            debug(f"SID {sid} is from unknown domain (not in {len(known_domain_prefixes)} known prefixes)")
+            # Try to resolve to UNKNOWN\<name> based on well-known RIDs
+            local_name = resolve_unknown_sid_to_local_name(sid)
+            if local_name:
+                debug(f"SID {sid} resolved to {local_name} (unknown domain, well-known RID)")
+                _cache_success(local_name)
+                return f"{local_name} ({sid})", local_name
+
     # Could not resolve - return SID with appropriate explanation
     if cache:
         # Increment fail count
@@ -1042,7 +1260,10 @@ def resolve_sid(
         cache.set("sid_failures", sid, fail_count)
         debug(f"SID {sid} resolution failed (attempt {fail_count}/3)")
 
-    if no_ldap:
+    if is_unknown_domain:
+        debug(f"SID {sid} not resolved: unknown domain SID (possibly local machine account)")
+        return f"{sid} (SID - unknown domain)", None
+    elif no_ldap:
         debug(f"SID {sid} not resolved: LDAP resolution disabled")
         return f"{sid} (SID - LDAP resolution disabled)", None
     elif not ldap_auth_domain or not ldap_auth_user:
@@ -1316,6 +1537,7 @@ def format_runas_with_sid_resolution(
     ldap_password: Optional[str] = None,
     ldap_hashes: Optional[str] = None,
     local_domain_sid_prefix: Optional[str] = None,
+    known_domain_prefixes: Optional[set] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Format RunAs field with SID resolution if needed.
@@ -1337,6 +1559,7 @@ def format_runas_with_sid_resolution(
         ldap_password: Separate LDAP password (for local admin case - plaintext only)
         ldap_hashes: Separate LDAP NTLM hashes (for local admin case - use instead of ldap_password)
         local_domain_sid_prefix: Known local domain SID prefix for foreign domain detection
+        known_domain_prefixes: Set of all known domain SID prefixes (own + trusts)
 
     Returns:
         Tuple of (display_runas, resolved_username)
@@ -1365,6 +1588,7 @@ def format_runas_with_sid_resolution(
             ldap_password,
             ldap_hashes,
             local_domain_sid_prefix,
+            known_domain_prefixes,
         )
     else:
         # Regular username, return as-is

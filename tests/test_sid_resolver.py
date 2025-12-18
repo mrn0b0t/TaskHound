@@ -428,3 +428,139 @@ class TestLDAPDomainValidation:
         result = fetch_tier0_members(domain="SINGLELABEL")
 
         assert result == {}
+
+
+class TestUnknownDomainSIDDetection:
+    """Tests for unknown domain SID detection (F3 feature)"""
+
+    def test_is_unknown_domain_sid_returns_true_for_unknown_prefix(self):
+        """Should return True when SID prefix is not in known set"""
+        from taskhound.utils.sid_resolver import is_unknown_domain_sid
+
+        known_prefixes = {
+            "S-1-5-21-123456789-987654321-111111111",  # corp.local
+            "S-1-5-21-999888777-666555444-333222111",  # trust.local
+        }
+
+        # Unknown domain SID (different prefix)
+        unknown_sid = "S-1-5-21-1406697320-1662514025-3551983607-500"
+
+        assert is_unknown_domain_sid(unknown_sid, known_prefixes) is True
+
+    def test_is_unknown_domain_sid_returns_false_for_known_prefix(self):
+        """Should return False when SID prefix is in known set"""
+        from taskhound.utils.sid_resolver import is_unknown_domain_sid
+
+        known_prefixes = {
+            "S-1-5-21-123456789-987654321-111111111",  # corp.local
+            "S-1-5-21-999888777-666555444-333222111",  # trust.local
+        }
+
+        # Known domain SID
+        known_sid = "S-1-5-21-123456789-987654321-111111111-1001"
+
+        assert is_unknown_domain_sid(known_sid, known_prefixes) is False
+
+    def test_is_unknown_domain_sid_returns_false_for_empty_known_set(self):
+        """Should return False when known set is empty (can't classify)"""
+        from taskhound.utils.sid_resolver import is_unknown_domain_sid
+
+        unknown_sid = "S-1-5-21-1406697320-1662514025-3551983607-500"
+
+        assert is_unknown_domain_sid(unknown_sid, set()) is False
+        assert is_unknown_domain_sid(unknown_sid, None) is False
+
+    def test_is_unknown_domain_sid_returns_false_for_non_domain_sid(self):
+        """Should return False for well-known SIDs (not domain SIDs)"""
+        from taskhound.utils.sid_resolver import is_unknown_domain_sid
+
+        known_prefixes = {"S-1-5-21-123456789-987654321-111111111"}
+
+        # Well-known SIDs are not domain SIDs
+        assert is_unknown_domain_sid("S-1-5-18", known_prefixes) is False  # SYSTEM
+        assert is_unknown_domain_sid("S-1-5-32-544", known_prefixes) is False  # BUILTIN
+
+
+class TestResolveUnknownSIDToLocalName:
+    """Tests for resolve_unknown_sid_to_local_name function"""
+
+    def test_resolves_rid_500_to_administrator(self):
+        """Should resolve RID 500 to UNKNOWN\\Administrator"""
+        from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
+
+        sid = "S-1-5-21-1406697320-1662514025-3551983607-500"
+        result = resolve_unknown_sid_to_local_name(sid)
+
+        assert result == "UNKNOWN\\Administrator"
+
+    def test_resolves_rid_501_to_guest(self):
+        """Should resolve RID 501 to UNKNOWN\\Guest"""
+        from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
+
+        sid = "S-1-5-21-1406697320-1662514025-3551983607-501"
+        result = resolve_unknown_sid_to_local_name(sid)
+
+        assert result == "UNKNOWN\\Guest"
+
+    def test_resolves_high_rid_to_user_number(self):
+        """Should resolve high RIDs (>=1000) to UNKNOWN\\User-<RID>"""
+        from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
+
+        sid = "S-1-5-21-1406697320-1662514025-3551983607-1001"
+        result = resolve_unknown_sid_to_local_name(sid)
+
+        assert result == "UNKNOWN\\User-1001"
+
+    def test_returns_none_for_unknown_low_rid(self):
+        """Should return None for unknown low RIDs (not well-known)"""
+        from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
+
+        # RID 600 is not well-known and < 1000
+        sid = "S-1-5-21-1406697320-1662514025-3551983607-600"
+        result = resolve_unknown_sid_to_local_name(sid)
+
+        assert result is None
+
+    def test_returns_none_for_non_domain_sid(self):
+        """Should return None for non-domain SIDs"""
+        from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
+
+        assert resolve_unknown_sid_to_local_name("S-1-5-18") is None
+        assert resolve_unknown_sid_to_local_name("S-1-5-32-544") is None
+
+    def test_returns_none_for_invalid_input(self):
+        """Should return None for invalid SID strings"""
+        from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
+
+        assert resolve_unknown_sid_to_local_name("") is None
+        assert resolve_unknown_sid_to_local_name(None) is None
+        assert resolve_unknown_sid_to_local_name("invalid") is None
+
+
+class TestFetchKnownDomainSIDsViaLDAP:
+    """Tests for fetch_known_domain_sids_via_ldap function"""
+
+    def test_returns_empty_dict_for_empty_domain(self):
+        """Should return empty dict for empty domain"""
+        from taskhound.utils.sid_resolver import fetch_known_domain_sids_via_ldap
+
+        result = fetch_known_domain_sids_via_ldap(domain="")
+        assert result == {}
+
+    def test_returns_empty_dict_for_domain_without_dots(self):
+        """Should return empty dict for domain without dots"""
+        from taskhound.utils.sid_resolver import fetch_known_domain_sids_via_ldap
+
+        result = fetch_known_domain_sids_via_ldap(domain="NODOTS")
+        assert result == {}
+
+    def test_returns_empty_dict_without_credentials(self):
+        """Should return empty dict when no credentials provided"""
+        from taskhound.utils.sid_resolver import fetch_known_domain_sids_via_ldap
+
+        result = fetch_known_domain_sids_via_ldap(
+            domain="corp.local",
+            username="testuser",
+            # No password or hashes
+        )
+        assert result == {}

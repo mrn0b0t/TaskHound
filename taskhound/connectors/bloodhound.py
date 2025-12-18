@@ -604,6 +604,51 @@ class BloodHoundConnector:
             warn(f"Error querying domain '{netbios_name}': {e}")
             return None
 
+    def query_all_domain_sids(self) -> Dict[str, str]:
+        """
+        Query BloodHound for all domain SID prefixes (own domain + trusts).
+
+        This is used during warmup to cache known domain SID prefixes for
+        efficient classification of SIDs during scanning. Unknown SID prefixes
+        are likely local machine accounts that cannot be resolved via DC.
+
+        Returns:
+            Dict mapping domain SID prefix -> domain FQDN (e.g., "S-1-5-21-123-456-789" -> "CORP.LOCAL")
+        """
+        result: Dict[str, str] = {}
+
+        if self.bh_type != "bhce":
+            debug("Domain SID query only supported for BloodHound CE")
+            return result
+
+        try:
+            # Query all Domain nodes - they contain the domain SID as objectId
+            query = "MATCH (d:Domain) RETURN d"
+            data = self.run_cypher_query(query)
+
+            if data:
+                # Parse nodes from BHCE response format (same as other methods)
+                nodes = data.get("data", {}).get("nodes", {})
+
+                for _, node_data in nodes.items():
+                    # Extract name (label) and objectId from node
+                    name = node_data.get("label", "")
+                    objectid = node_data.get("objectId", "")
+
+                    if name and objectid and objectid.startswith("S-1-5-21-"):
+                        # Store the SID prefix (domains don't have trailing RID in objectid)
+                        # Domain SIDs are S-1-5-21-X-Y-Z format
+                        result[objectid] = name
+                        debug(f"Cached domain SID: {objectid} -> {name}")
+
+            if result:
+                good(f"Loaded {len(result)} domain SID prefixes from BloodHound")
+
+        except Exception as e:
+            warn(f"Error querying domain SIDs from BloodHound: {e}")
+
+        return result
+
     def query_user_by_upn(self, upn: str) -> Optional[Dict[str, str]]:
         """
         Query BloodHound for user by UPN (User Principal Name).

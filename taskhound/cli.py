@@ -86,6 +86,12 @@ def main():
                     if hv.hv_computers:
                         debug(f"Loaded {len(hv.hv_computers)} computer SIDs from BHCE")
 
+                # Load domain SIDs for unknown domain SID detection
+                if bh_connector and hasattr(bh_connector, "query_all_domain_sids"):
+                    hv.hv_domain_sids = bh_connector.query_all_domain_sids()
+                    if hv.hv_domain_sids:
+                        debug(f"Loaded {len(hv.hv_domain_sids)} domain SID prefixes from BHCE")
+
                 hv.loaded = True
                 hv.format_type = "bloodhound_live"
                 hv_loaded = True
@@ -121,6 +127,31 @@ def main():
             hv_loaded = True
         else:
             warn("Failed to load High Value target data from file")
+
+    # If no BloodHound but have LDAP credentials, fetch domain SIDs for unknown SID detection
+    # This helps classify local machine SIDs vs domain SIDs even without BloodHound
+    if hv is None and not args.no_ldap and args.domain and args.username:
+        from .utils.sid_resolver import fetch_known_domain_sids_via_ldap
+
+        ldap_domain = args.ldap_domain if args.ldap_domain else args.domain
+        ldap_user = args.ldap_user if args.ldap_user else args.username
+        ldap_pass = args.ldap_password if args.ldap_password else args.password
+        ldap_hashes = args.ldap_hashes if args.ldap_hashes else args.hashes
+
+        domain_sids = fetch_known_domain_sids_via_ldap(
+            domain=ldap_domain,
+            dc_ip=args.dc_ip,
+            username=ldap_user,
+            password=ldap_pass,
+            hashes=ldap_hashes,
+            kerberos=args.kerberos,
+        )
+        if domain_sids:
+            # Create empty HV loader just to hold domain SIDs
+            hv = HighValueLoader("")
+            hv.hv_domain_sids = domain_sids
+            hv.loaded = True
+            good(f"Loaded {len(domain_sids)} domain SID prefixes via LDAP (own domain + trusts)")
 
     # Initialize LAPS if requested (online mode only)
     laps_cache: Optional[LAPSCache] = None
