@@ -1,12 +1,13 @@
 """Additional tests for taskhound/laps/parsing.py module."""
 
 import pytest
+
+from taskhound.laps.exceptions import LAPSParseError
 from taskhound.laps.parsing import (
-    parse_mslaps_password,
     _looks_like_base64,
     parse_filetime,
+    parse_mslaps_password,
 )
-from taskhound.laps.exceptions import LAPSParseError
 
 
 class TestParseMslapsPassword:
@@ -16,7 +17,7 @@ class TestParseMslapsPassword:
         """Test parsing valid msLAPS-Password JSON."""
         json_data = '{"n": "Administrator", "p": "MyP@ssw0rd123"}'
         password, username, is_encrypted = parse_mslaps_password(json_data)
-        
+
         assert password == "MyP@ssw0rd123"
         assert username == "Administrator"
         assert is_encrypted is False
@@ -25,7 +26,7 @@ class TestParseMslapsPassword:
         """Test parsing JSON without 'n' field uses default."""
         json_data = '{"p": "Password123"}'
         password, username, is_encrypted = parse_mslaps_password(json_data)
-        
+
         assert password == "Password123"
         assert username == "Administrator"
 
@@ -35,7 +36,7 @@ class TestParseMslapsPassword:
         password, username, is_encrypted = parse_mslaps_password(
             json_data, default_username="LocalAdmin"
         )
-        
+
         assert username == "LocalAdmin"
 
     def test_parse_invalid_json_raises(self):
@@ -64,21 +65,21 @@ class TestParseMslapsPassword:
         long_base64 = "A" * 100
         json_data = f'{{"n": "Administrator", "p": "{long_base64}"}}'
         password, username, is_encrypted = parse_mslaps_password(json_data)
-        
+
         assert is_encrypted is True
 
     def test_parse_short_base64_not_encrypted(self):
         """Test short base64-like string is not detected as encrypted."""
         json_data = '{"n": "Admin", "p": "Abc123"}'
         password, username, is_encrypted = parse_mslaps_password(json_data)
-        
+
         assert is_encrypted is False
 
     def test_parse_with_timestamp(self):
         """Test parsing JSON with timestamp field."""
         json_data = '{"n": "Admin", "p": "Pass123", "t": "1d9a2b3c"}'
         password, username, is_encrypted = parse_mslaps_password(json_data)
-        
+
         assert password == "Pass123"
 
 

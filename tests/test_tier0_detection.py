@@ -3,16 +3,15 @@ Tests for Tier-0 detection functionality in sid_resolver.
 
 Tests the pre-flight LDAP query approach for detecting Tier-0 users.
 """
-import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 from taskhound.utils.sid_resolver import (
-    TIER0_GROUP_RIDS,
     TIER0_ACCOUNT_RIDS,
     TIER0_BUILTIN_SIDS,
+    TIER0_GROUP_RIDS,
     Tier0Cache,
-    fetch_tier0_members,
     check_tier0_membership,
+    fetch_tier0_members,
 )
 
 
@@ -68,32 +67,32 @@ class TestCheckTier0Membership:
     def test_returns_false_for_empty_username(self):
         """Should return False for empty username."""
         cache: Tier0Cache = {"admin": (True, ["Domain Admins"])}
-        
+
         is_tier0, groups = check_tier0_membership("", cache)
-        
+
         assert is_tier0 is False
         assert groups == []
 
     def test_returns_false_for_none_username(self):
         """Should return False for None username."""
         cache: Tier0Cache = {"admin": (True, ["Domain Admins"])}
-        
+
         is_tier0, groups = check_tier0_membership(None, cache)
-        
+
         assert is_tier0 is False
         assert groups == []
 
     def test_returns_false_for_empty_cache(self):
         """Should return False for empty cache."""
         is_tier0, groups = check_tier0_membership("admin", {})
-        
+
         assert is_tier0 is False
         assert groups == []
 
     def test_returns_false_for_none_cache(self):
         """Should return False for None cache."""
         is_tier0, groups = check_tier0_membership("admin", None)
-        
+
         assert is_tier0 is False
         assert groups == []
 
@@ -103,9 +102,9 @@ class TestCheckTier0Membership:
             "admin": (True, ["Domain Admins", "Schema Admins"]),
             "user1": (True, ["Administrators"]),
         }
-        
+
         is_tier0, groups = check_tier0_membership("admin", cache)
-        
+
         assert is_tier0 is True
         assert "Domain Admins" in groups
         assert "Schema Admins" in groups
@@ -113,27 +112,27 @@ class TestCheckTier0Membership:
     def test_handles_domain_prefix(self):
         """Should strip domain prefix from username."""
         cache: Tier0Cache = {"admin": (True, ["Domain Admins"])}
-        
+
         is_tier0, groups = check_tier0_membership("DOMAIN\\admin", cache)
-        
+
         assert is_tier0 is True
         assert groups == ["Domain Admins"]
 
     def test_handles_upn_format(self):
         """Should strip UPN suffix from username."""
         cache: Tier0Cache = {"admin": (True, ["Enterprise Admins"])}
-        
+
         is_tier0, groups = check_tier0_membership("admin@domain.local", cache)
-        
+
         assert is_tier0 is True
         assert groups == ["Enterprise Admins"]
 
     def test_case_insensitive_lookup(self):
         """Should do case-insensitive lookup."""
         cache: Tier0Cache = {"admin": (True, ["Domain Admins"])}
-        
+
         is_tier0, groups = check_tier0_membership("ADMIN", cache)
-        
+
         assert is_tier0 is True
 
     def test_skips_system_accounts(self):
@@ -143,7 +142,7 @@ class TestCheckTier0Membership:
             "local service": (True, ["Administrators"]),
             "network service": (True, ["Administrators"]),
         }
-        
+
         assert check_tier0_membership("SYSTEM", cache) == (False, [])
         assert check_tier0_membership("Local Service", cache) == (False, [])
         assert check_tier0_membership("Network Service", cache) == (False, [])
@@ -151,9 +150,9 @@ class TestCheckTier0Membership:
     def test_returns_false_for_non_tier0_user(self):
         """Should return False for user not in cache."""
         cache: Tier0Cache = {"admin": (True, ["Domain Admins"])}
-        
+
         is_tier0, groups = check_tier0_membership("regularuser", cache)
-        
+
         assert is_tier0 is False
         assert groups == []
 
@@ -164,13 +163,13 @@ class TestFetchTier0Members:
     def test_returns_empty_for_no_domain(self):
         """Should return empty cache if no domain provided."""
         result = fetch_tier0_members(domain="")
-        
+
         assert result == {}
 
     def test_returns_empty_for_none_domain(self):
         """Should return empty cache if domain is None."""
         result = fetch_tier0_members(domain=None)
-        
+
         assert result == {}
 
     @patch("taskhound.utils.sid_resolver.get_cache")
@@ -179,9 +178,9 @@ class TestFetchTier0Members:
         mock_cache = MagicMock()
         mock_cache.get.return_value = {"cacheduser": (True, ["Domain Admins"])}
         mock_get_cache.return_value = mock_cache
-        
+
         result = fetch_tier0_members(domain="test.local")
-        
+
         assert result == {"cacheduser": (True, ["Domain Admins"])}
         mock_cache.get.assert_called_once()
 
@@ -191,13 +190,13 @@ class TestFetchTier0Members:
         """Should return empty cache on DNS failure."""
         mock_get_cache.return_value = MagicMock(get=MagicMock(return_value=None))
         mock_gethostbyname.side_effect = OSError("DNS error")
-        
+
         # Import socket.gaierror which is what the actual code catches
         import socket
         mock_gethostbyname.side_effect = socket.gaierror("DNS error")
-        
+
         result = fetch_tier0_members(domain="test.local", dc_ip=None)
-        
+
         # Should try to resolve
         mock_gethostbyname.assert_called_with("test.local")
         # Should return empty on DNS failure
@@ -209,17 +208,17 @@ class TestFetchTier0Members:
     def test_handles_ldap_connection_failure(self, mock_ldap, mock_dns, mock_cache):
         """Should return empty cache on LDAP connection failure."""
         from taskhound.utils.ldap import LDAPConnectionError
-        
+
         mock_cache.return_value = MagicMock(get=MagicMock(return_value=None))
         mock_dns.return_value = "192.168.1.1"
         mock_ldap.side_effect = LDAPConnectionError("Connection refused")
-        
+
         result = fetch_tier0_members(
             domain="test.local",
             auth_username="user",
             auth_password="pass",
         )
-        
+
         assert result == {}
 
     @patch("taskhound.utils.sid_resolver.get_cache")
@@ -229,18 +228,18 @@ class TestFetchTier0Members:
         """Should query domain controllers to find domain SID."""
         mock_cache.return_value = MagicMock(get=MagicMock(return_value=None))
         mock_dns.return_value = "192.168.1.1"
-        
+
         # Mock LDAP connection that returns empty results
         mock_conn = MagicMock()
         mock_conn.search.return_value = []  # No DCs found
         mock_ldap.return_value = mock_conn
-        
+
         result = fetch_tier0_members(
             domain="test.local",
             auth_username="user",
             auth_password="pass",
         )
-        
+
         # Should have tried to search for domain controllers
         mock_conn.search.assert_called()
         # Should return empty since no DC found
@@ -253,9 +252,9 @@ class TestFetchTier0MembersIntegration:
     def _create_ldap_entry(self, attrs: dict):
         """Create a mock LDAP SearchResultEntry."""
         from impacket.ldap import ldapasn1 as ldapasn1_impacket
-        
+
         mock_entry = MagicMock(spec=ldapasn1_impacket.SearchResultEntry)
-        
+
         # Build mock attributes
         mock_attrs = []
         for name, value in attrs.items():
@@ -264,7 +263,7 @@ class TestFetchTier0MembersIntegration:
                 __iter__=MagicMock(return_value=iter([v] if not isinstance(v, list) else v)),
                 asOctets=MagicMock(return_value=v if isinstance(v, bytes) else None)
             ))
-            
+
             # Set up the type attribute
             type(mock_attr).__getitem__ = lambda self, key, n=name, v=value: (
                 n if key == "type" else MagicMock(
@@ -272,7 +271,7 @@ class TestFetchTier0MembersIntegration:
                 )
             )
             mock_attrs.append(mock_attr)
-        
+
         mock_entry.__getitem__ = MagicMock(side_effect=lambda k: mock_attrs if k == "attributes" else None)
         return mock_entry
 
@@ -285,14 +284,14 @@ class TestFetchTier0MembersIntegration:
         mock_conn = MagicMock()
         mock_conn.search.return_value = []
         mock_ldap.return_value = mock_conn
-        
+
         fetch_tier0_members(
             domain="test.local",
             dc_ip="10.0.0.1",
             auth_username="user",
             auth_password="pass",
         )
-        
+
         # Should NOT try to resolve domain
         mock_dns.assert_not_called()
         # Should use provided IP
@@ -310,7 +309,7 @@ class TestTier0CacheTypeAlias:
             "admin": (True, ["Domain Admins", "Enterprise Admins"]),
             "user1": (True, ["Administrators"]),
         }
-        
+
         # Verify structure
         for username, (is_tier0, groups) in cache.items():
             assert isinstance(username, str)
@@ -334,7 +333,7 @@ class TestTier0CacheTypeAlias:
                 "Administrators",
             ])
         }
-        
+
         is_tier0, groups = cache["superadmin"]
         assert is_tier0 is True
         assert len(groups) == 4

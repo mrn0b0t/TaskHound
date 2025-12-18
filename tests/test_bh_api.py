@@ -6,18 +6,15 @@ Tests cover:
 - get_bloodhound_token function
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
 import base64
-import datetime
-import hashlib
-import hmac
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from taskhound.utils.bh_api import (
     bhce_signed_request,
     get_bloodhound_token,
 )
-
 
 # ============================================================================
 # Test: bhce_signed_request
@@ -34,10 +31,10 @@ class TestBhceSignedRequest:
         mock_now = MagicMock()
         mock_now.isoformat.return_value = "2024-01-15T10:30:00+00:00"
         mock_datetime.now.return_value.astimezone.return_value = mock_now
-        
+
         mock_response = MagicMock()
         mock_request.return_value = mock_response
-        
+
         result = bhce_signed_request(
             method="GET",
             uri="/api/version",
@@ -45,7 +42,7 @@ class TestBhceSignedRequest:
             api_key="secret_api_key",
             api_key_id="key_id_123"
         )
-        
+
         assert result == mock_response
         mock_request.assert_called_once()
         call_kwargs = mock_request.call_args[1]
@@ -60,10 +57,10 @@ class TestBhceSignedRequest:
         mock_now = MagicMock()
         mock_now.isoformat.return_value = "2024-01-15T10:30:00+00:00"
         mock_datetime.now.return_value.astimezone.return_value = mock_now
-        
+
         mock_response = MagicMock()
         mock_request.return_value = mock_response
-        
+
         body = b'{"query": "test"}'
         result = bhce_signed_request(
             method="POST",
@@ -73,7 +70,7 @@ class TestBhceSignedRequest:
             api_key_id="key_id_123",
             body=body
         )
-        
+
         assert result == mock_response
         call_kwargs = mock_request.call_args[1]
         assert call_kwargs["data"] == body
@@ -85,9 +82,9 @@ class TestBhceSignedRequest:
         mock_now = MagicMock()
         mock_now.isoformat.return_value = "2024-01-15T10:30:00+00:00"
         mock_datetime.now.return_value.astimezone.return_value = mock_now
-        
+
         mock_request.return_value = MagicMock()
-        
+
         bhce_signed_request(
             method="GET",
             uri="/api/version",
@@ -95,10 +92,10 @@ class TestBhceSignedRequest:
             api_key="test_key",
             api_key_id="test_id"
         )
-        
+
         call_kwargs = mock_request.call_args[1]
         headers = call_kwargs["headers"]
-        
+
         assert headers["Authorization"] == "bhesignature test_id"
         assert headers["RequestDate"] == "2024-01-15T10:30:00+00:00"
         assert "Signature" in headers
@@ -112,9 +109,9 @@ class TestBhceSignedRequest:
         mock_now = MagicMock()
         mock_now.isoformat.return_value = "2024-01-15T10:30:00+00:00"
         mock_datetime.now.return_value.astimezone.return_value = mock_now
-        
+
         mock_request.return_value = MagicMock()
-        
+
         bhce_signed_request(
             method="GET",
             uri="/api/version",
@@ -123,7 +120,7 @@ class TestBhceSignedRequest:
             api_key_id="test_id",
             timeout=60
         )
-        
+
         call_kwargs = mock_request.call_args[1]
         assert call_kwargs["timeout"] == 60
 
@@ -134,9 +131,9 @@ class TestBhceSignedRequest:
         mock_now = MagicMock()
         mock_now.isoformat.return_value = "2024-01-15T10:30:00+00:00"
         mock_datetime.now.return_value.astimezone.return_value = mock_now
-        
+
         mock_request.return_value = MagicMock()
-        
+
         bhce_signed_request(
             method="GET",
             uri="/api/version",
@@ -144,10 +141,10 @@ class TestBhceSignedRequest:
             api_key="test_key",
             api_key_id="test_id"
         )
-        
+
         call_kwargs = mock_request.call_args[1]
         signature = call_kwargs["headers"]["Signature"]
-        
+
         # Should be valid base64
         try:
             decoded = base64.b64decode(signature)
@@ -174,13 +171,13 @@ class TestGetBloodhoundToken:
             }
         }
         mock_post.return_value = mock_response
-        
+
         result = get_bloodhound_token(
             base_url="https://bh.local",
             username="admin",
             password="password123"
         )
-        
+
         assert result == "token123abc"
         mock_post.assert_called_once()
         call_args = mock_post.call_args
@@ -192,13 +189,13 @@ class TestGetBloodhoundToken:
         mock_response = MagicMock()
         mock_response.json.return_value = {"data": {"session_token": "tok"}}
         mock_post.return_value = mock_response
-        
+
         get_bloodhound_token(
             base_url="https://bh.local",
             username="testuser",
             password="testpass"
         )
-        
+
         call_kwargs = mock_post.call_args[1]
         assert call_kwargs["json"]["login_method"] == "secret"
         assert call_kwargs["json"]["username"] == "testuser"
@@ -210,14 +207,14 @@ class TestGetBloodhoundToken:
         mock_response = MagicMock()
         mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
         mock_post.return_value = mock_response
-        
+
         with pytest.raises(Exception) as exc_info:
             get_bloodhound_token(
                 base_url="https://bh.local",
                 username="admin",
                 password="wrong"
             )
-        
+
         assert "401" in str(exc_info.value)
 
     @patch('taskhound.utils.bh_api.requests.post')
@@ -226,14 +223,14 @@ class TestGetBloodhoundToken:
         mock_response = MagicMock()
         mock_response.json.return_value = {"error": "something"}
         mock_post.return_value = mock_response
-        
+
         with pytest.raises(ValueError) as exc_info:
             get_bloodhound_token(
                 base_url="https://bh.local",
                 username="admin",
                 password="pass"
             )
-        
+
         assert "missing session_token" in str(exc_info.value)
 
     @patch('taskhound.utils.bh_api.requests.post')
@@ -242,14 +239,14 @@ class TestGetBloodhoundToken:
         mock_response = MagicMock()
         mock_response.json.return_value = {"data": {"other": "value"}}
         mock_post.return_value = mock_response
-        
+
         with pytest.raises(ValueError) as exc_info:
             get_bloodhound_token(
                 base_url="https://bh.local",
                 username="admin",
                 password="pass"
             )
-        
+
         assert "missing session_token" in str(exc_info.value)
 
     @patch('taskhound.utils.bh_api.requests.post')
@@ -258,13 +255,13 @@ class TestGetBloodhoundToken:
         mock_response = MagicMock()
         mock_response.json.return_value = {"data": {"session_token": "tok"}}
         mock_post.return_value = mock_response
-        
+
         get_bloodhound_token(
             base_url="https://bh.local",
             username="admin",
             password="pass",
             timeout=120
         )
-        
+
         call_kwargs = mock_post.call_args[1]
         assert call_kwargs["timeout"] == 120

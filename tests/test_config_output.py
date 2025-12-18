@@ -1,8 +1,8 @@
-from unittest.mock import mock_open, patch, MagicMock
+from unittest.mock import mock_open, patch
 
 import pytest
 
-from taskhound.config import load_config, build_parser, validate_args
+from taskhound.config import build_parser, load_config, validate_args
 
 
 @pytest.fixture

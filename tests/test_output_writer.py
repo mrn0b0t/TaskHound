@@ -10,12 +10,17 @@ Tests cover:
 
 import csv
 import json
-import os
-import pytest
 from unittest.mock import MagicMock, patch
 
-from taskhound.output.writer import _rows_to_dicts, write_json, write_csv
+import pytest
 
+from taskhound.output.writer import (
+    _format_task_table,
+    _rows_to_dicts,
+    write_csv,
+    write_json,
+    write_rich_plain,
+)
 
 # ============================================================================
 # Test Fixtures
@@ -78,14 +83,14 @@ class TestRowsToDicts:
     def test_object_with_to_dict(self, sample_task_object):
         """Should call to_dict on objects that have it"""
         result = _rows_to_dicts([sample_task_object])
-        
+
         sample_task_object.to_dict.assert_called_once()
         assert result == [{"host": "WS01.example.com", "path": "\\MaintTask", "type": "TASK"}]
 
     def test_mixed_objects_and_dicts(self, sample_task_dict, sample_task_object):
         """Should handle mixed list of dicts and objects"""
         result = _rows_to_dicts([sample_task_dict, sample_task_object])
-        
+
         assert len(result) == 2
         assert result[0] == sample_task_dict
         assert result[1] == {"host": "WS01.example.com", "path": "\\MaintTask", "type": "TASK"}
@@ -103,14 +108,14 @@ class TestWriteJson:
     def test_writes_json_file(self, mock_good, temp_output_dir, sample_task_dict):
         """Should write JSON file with proper formatting"""
         output_file = temp_output_dir / "output.json"
-        
+
         write_json(str(output_file), [sample_task_dict])
-        
+
         assert output_file.exists()
-        
+
         with open(output_file) as f:
             data = json.load(f)
-        
+
         assert len(data) == 1
         assert data[0]["host"] == "DC01.example.com"
 
@@ -118,21 +123,21 @@ class TestWriteJson:
     def test_empty_list_writes_empty_array(self, mock_good, temp_output_dir):
         """Should write empty JSON array for empty input"""
         output_file = temp_output_dir / "output.json"
-        
+
         write_json(str(output_file), [])
-        
+
         with open(output_file) as f:
             data = json.load(f)
-        
+
         assert data == []
 
     @patch('taskhound.output.writer.good')
     def test_json_indented(self, mock_good, temp_output_dir, sample_task_dict):
         """Should write indented JSON for readability"""
         output_file = temp_output_dir / "output.json"
-        
+
         write_json(str(output_file), [sample_task_dict])
-        
+
         content = output_file.read_text()
         # Indented JSON has newlines and spaces
         assert "\n" in content
@@ -142,21 +147,21 @@ class TestWriteJson:
     def test_converts_objects(self, mock_good, temp_output_dir, sample_task_object):
         """Should convert objects with to_dict method"""
         output_file = temp_output_dir / "output.json"
-        
+
         write_json(str(output_file), [sample_task_object])
-        
+
         with open(output_file) as f:
             data = json.load(f)
-        
+
         assert data[0]["host"] == "WS01.example.com"
 
     @patch('taskhound.output.writer.good')
     def test_logs_success_message(self, mock_good, temp_output_dir):
         """Should log success message"""
         output_file = temp_output_dir / "output.json"
-        
+
         write_json(str(output_file), [])
-        
+
         mock_good.assert_called_once()
         call_arg = mock_good.call_args[0][0]
         assert "Wrote JSON results to" in call_arg
@@ -174,15 +179,15 @@ class TestWriteCsv:
     def test_writes_csv_file(self, mock_good, temp_output_dir, sample_task_dict):
         """Should write CSV file with headers"""
         output_file = temp_output_dir / "output.csv"
-        
+
         write_csv(str(output_file), [sample_task_dict])
-        
+
         assert output_file.exists()
-        
+
         with open(output_file) as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-        
+
         assert len(rows) == 1
         assert rows[0]["host"] == "DC01.example.com"
 
@@ -190,13 +195,13 @@ class TestWriteCsv:
     def test_csv_headers_present(self, mock_good, temp_output_dir):
         """Should write CSV with all expected headers"""
         output_file = temp_output_dir / "output.csv"
-        
+
         write_csv(str(output_file), [])
-        
+
         with open(output_file) as f:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames
-        
+
         expected_fields = [
             "host", "target_ip", "computer_sid", "path", "type",
             "runas", "command", "arguments", "author", "date",
@@ -209,9 +214,9 @@ class TestWriteCsv:
     def test_empty_list_writes_headers_only(self, mock_good, temp_output_dir):
         """Should write headers even with empty input"""
         output_file = temp_output_dir / "output.csv"
-        
+
         write_csv(str(output_file), [])
-        
+
         content = output_file.read_text()
         assert "host" in content
         assert "path" in content
@@ -220,22 +225,22 @@ class TestWriteCsv:
     def test_converts_objects(self, mock_good, temp_output_dir, sample_task_object):
         """Should convert objects with to_dict method"""
         output_file = temp_output_dir / "output.csv"
-        
+
         write_csv(str(output_file), [sample_task_object])
-        
+
         with open(output_file) as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-        
+
         assert rows[0]["host"] == "WS01.example.com"
 
     @patch('taskhound.output.writer.good')
     def test_logs_success_message(self, mock_good, temp_output_dir):
         """Should log success message"""
         output_file = temp_output_dir / "output.csv"
-        
+
         write_csv(str(output_file), [])
-        
+
         mock_good.assert_called_once()
         call_arg = mock_good.call_args[0][0]
         assert "Wrote CSV results to" in call_arg
@@ -244,16 +249,16 @@ class TestWriteCsv:
     def test_multiple_rows(self, mock_good, temp_output_dir, sample_task_dict):
         """Should handle multiple rows"""
         output_file = temp_output_dir / "output.csv"
-        
+
         task2 = sample_task_dict.copy()
         task2["host"] = "WS02.example.com"
-        
+
         write_csv(str(output_file), [sample_task_dict, task2])
-        
+
         with open(output_file) as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-        
+
         assert len(rows) == 2
         assert rows[0]["host"] == "DC01.example.com"
         assert rows[1]["host"] == "WS02.example.com"
@@ -262,8 +267,6 @@ class TestWriteCsv:
 # ============================================================================
 # Unit Tests: write_rich_plain
 # ============================================================================
-
-from taskhound.output.writer import write_rich_plain, _format_task_table
 
 
 class TestWriteRichPlain:
@@ -274,9 +277,9 @@ class TestWriteRichPlain:
         """Should create output directory if it doesn't exist"""
         subdir = temp_output_dir / "nested" / "output"
         rows = [{"host": "DC01.example.com", "path": "\\Task1", "type": "TASK"}]
-        
+
         write_rich_plain(str(subdir), rows)
-        
+
         assert subdir.exists()
 
     @patch('taskhound.output.writer.good')
@@ -287,9 +290,9 @@ class TestWriteRichPlain:
             {"host": "DC01.example.com", "path": "\\Task2", "type": "PRIV"},
             {"host": "WS01.example.com", "path": "\\Task3", "type": "TIER-0"},
         ]
-        
+
         write_rich_plain(str(temp_output_dir), rows)
-        
+
         # Check summary file exists
         assert (temp_output_dir / "summary.txt").exists()
         # Check host subdirectories with tasks.txt
@@ -302,9 +305,9 @@ class TestWriteRichPlain:
         rows = [
             {"host": "DC01.example.com", "path": "\\Task1", "type": "TIER-0", "reason": "High privilege"},
         ]
-        
+
         write_rich_plain(str(temp_output_dir), rows)
-        
+
         content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
         assert "TIER-0" in content
         assert "Task1" in content
@@ -321,9 +324,9 @@ class TestWriteRichPlain:
                 "decrypted_password": "SecretPass123!",
             },
         ]
-        
+
         write_rich_plain(str(temp_output_dir), rows)
-        
+
         # Check in tasks file
         content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
         assert "SecretPass123!" in content
@@ -339,15 +342,15 @@ class TestWriteRichPlain:
             {"host": "DC01.example.com", "path": "\\TaskTier0", "type": "TIER-0"},
             {"host": "DC01.example.com", "path": "\\TaskPriv", "type": "PRIV"},
         ]
-        
+
         write_rich_plain(str(temp_output_dir), rows)
-        
+
         content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
         # TIER-0 should appear before PRIV which should appear before TASK
         tier0_pos = content.find("TaskTier0")
         priv_pos = content.find("TaskPriv")
         task_pos = content.find("TaskNormal")
-        
+
         assert tier0_pos < priv_pos < task_pos
 
     @patch('taskhound.output.writer.good')
@@ -358,9 +361,9 @@ class TestWriteRichPlain:
             "path": "\\MaintTask",
             "type": "TASK"
         }
-        
+
         write_rich_plain(str(temp_output_dir), [sample_task_object])
-        
+
         assert (temp_output_dir / "WS01.example.com" / "tasks.txt").exists()
         sample_task_object.to_dict.assert_called()
 
@@ -370,9 +373,9 @@ class TestWriteRichPlain:
         rows = [
             {"host": "DC01.example.com", "path": "\\Task1", "type": "TASK"},
         ]
-        
+
         write_rich_plain(str(temp_output_dir), rows)
-        
+
         mock_good.assert_called_once()
         call_arg = mock_good.call_args[0][0]
         assert "Wrote results to" in call_arg
@@ -384,9 +387,9 @@ class TestWriteRichPlain:
         rows = [
             {"host": "DC01.example.com", "path": "", "type": "FAILURE", "reason": "Connection refused"},
         ]
-        
+
         write_rich_plain(str(temp_output_dir), rows)
-        
+
         content = (temp_output_dir / "DC01.example.com" / "tasks.txt").read_text()
         assert "FAILURE" in content
         assert "Connection refused" in content
@@ -399,9 +402,9 @@ class TestWriteRichPlain:
             {"host": "DC01.example.com", "path": "\\Task2", "type": "PRIV"},
             {"host": "WS01.example.com", "path": "\\Task3", "type": "TASK"},
         ]
-        
+
         write_rich_plain(str(temp_output_dir), rows)
-        
+
         summary = (temp_output_dir / "summary.txt").read_text()
         assert "Hosts Scanned" in summary
         assert "TIER-0" in summary

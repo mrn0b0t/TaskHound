@@ -8,6 +8,22 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def cleanup_cache():
+    """
+    Automatically clean up the global cache after each test.
+
+    This prevents ResourceWarning: unclosed database errors in tests.
+    """
+    yield  # Let the test run
+
+    # Clean up the global cache after each test
+    from taskhound.utils.cache_manager import get_cache
+    cache = get_cache()
+    if cache:
+        cache.close()
+
+
 @pytest.fixture
 def test_data_dir():
     """Return path to test data directory."""

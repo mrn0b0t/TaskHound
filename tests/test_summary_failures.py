@@ -46,6 +46,6 @@ class TestCrawlFailure:
         output = captured_output.getvalue()
 
         assert target in output
-        # Check for part of the error message (Rich table truncates with ...)
-        # The error might be truncated but should show the key parts
-        assert "Crawling failed" in output or "Failed" in output
+        # Check that we show the failure reason - could be truncated by Rich table
+        # The new table format shows the reason directly
+        assert "Access Denied" in output or "Admin check" in output or "FAILED HOSTS" in output

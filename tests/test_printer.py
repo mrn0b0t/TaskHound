@@ -297,7 +297,7 @@ class TestFormatBlockConcise:
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_concise_task_with_decrypted_creds(self, mock_resolve):
         """Test concise output shows password for TASK kind too (not just TIER-0/PRIV).
-        
+
         Even regular tasks may have useful credentials for lateral movement.
         """
         mock_resolve.return_value = ("DOMAIN\\lowpriv", "lowpriv")
@@ -586,7 +586,7 @@ class TestFormatBlockTaskKind:
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_task_with_decrypted_credentials(self, mock_resolve):
         """Test TASK kind shows decrypted credentials (not just TIER-0/PRIV).
-        
+
         Even regular tasks may have useful credentials for lateral movement
         or password reuse attacks.
         """

@@ -9,17 +9,17 @@ Tests cover:
 - smb_connect_with_laps function
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from taskhound.smb.connection import (
     _parse_hashes,
     smb_connect,
-    smb_negotiate,
-    smb_login,
     smb_connect_with_laps,
+    smb_login,
+    smb_negotiate,
 )
-
 
 # ============================================================================
 # Test: _parse_hashes
@@ -109,14 +109,14 @@ class TestSmbConnect:
         """Should connect with basic password authentication"""
         mock_smb = MagicMock()
         mock_smb_class.return_value = mock_smb
-        
+
         result = smb_connect(
             target="192.168.1.1",
             domain="EXAMPLE",
             username="admin",
             password="password123"
         )
-        
+
         assert result == mock_smb
         mock_smb.login.assert_called_once_with("admin", "password123", "EXAMPLE")
 
@@ -125,14 +125,14 @@ class TestSmbConnect:
         """Should connect with NTLM hash authentication"""
         mock_smb = MagicMock()
         mock_smb_class.return_value = mock_smb
-        
+
         result = smb_connect(
             target="192.168.1.1",
             domain="EXAMPLE",
             username="admin",
             password="aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
         )
-        
+
         assert result == mock_smb
         mock_smb.login.assert_called_once_with(
             "admin", "", "EXAMPLE",
@@ -145,7 +145,7 @@ class TestSmbConnect:
         """Should connect with Kerberos authentication"""
         mock_smb = MagicMock()
         mock_smb_class.return_value = mock_smb
-        
+
         result = smb_connect(
             target="192.168.1.1",
             domain="EXAMPLE",
@@ -154,7 +154,7 @@ class TestSmbConnect:
             kerberos=True,
             dc_ip="192.168.1.10"
         )
-        
+
         assert result == mock_smb
         mock_smb.kerberosLogin.assert_called_once()
         call_kwargs = mock_smb.kerberosLogin.call_args[1]
@@ -168,7 +168,7 @@ class TestSmbConnect:
         """Should use custom timeout"""
         mock_smb = MagicMock()
         mock_smb_class.return_value = mock_smb
-        
+
         smb_connect(
             target="192.168.1.1",
             domain="EXAMPLE",
@@ -176,7 +176,7 @@ class TestSmbConnect:
             password="pass",
             timeout=120
         )
-        
+
         call_kwargs = mock_smb_class.call_args[1]
         assert call_kwargs["timeout"] == 120
 
@@ -194,9 +194,9 @@ class TestSmbNegotiate:
         """Should create connection without authenticating"""
         mock_smb = MagicMock()
         mock_smb_class.return_value = mock_smb
-        
+
         result = smb_negotiate("192.168.1.1", timeout=30)
-        
+
         assert result == mock_smb
         mock_smb_class.assert_called_once_with(
             remoteName="192.168.1.1",
@@ -220,22 +220,22 @@ class TestSmbLogin:
     def test_password_auth(self):
         """Should authenticate with password"""
         mock_smb = MagicMock()
-        
+
         smb_login(mock_smb, domain="EXAMPLE", username="admin", password="pass123")
-        
+
         mock_smb.login.assert_called_once_with("admin", "pass123", "EXAMPLE")
 
     def test_hash_auth(self):
         """Should authenticate with hashes"""
         mock_smb = MagicMock()
-        
+
         smb_login(
             mock_smb,
             domain="EXAMPLE",
             username="admin",
             password="aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
         )
-        
+
         mock_smb.login.assert_called_once_with(
             "admin", "", "EXAMPLE",
             lmhash="aad3b435b51404eeaad3b435b51404ee",
@@ -245,7 +245,7 @@ class TestSmbLogin:
     def test_kerberos_auth(self):
         """Should authenticate with Kerberos"""
         mock_smb = MagicMock()
-        
+
         smb_login(
             mock_smb,
             domain="EXAMPLE",
@@ -254,7 +254,7 @@ class TestSmbLogin:
             kerberos=True,
             dc_ip="192.168.1.10"
         )
-        
+
         mock_smb.kerberosLogin.assert_called_once()
         call_kwargs = mock_smb.kerberosLogin.call_args[1]
         assert call_kwargs["user"] == "admin"
@@ -276,7 +276,7 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = "WS01"
         mock_negotiate.return_value = mock_smb
-        
+
         mock_laps_cache = MagicMock()
         mock_laps_cred = MagicMock()
         mock_laps_cred.encrypted = False
@@ -284,7 +284,7 @@ class TestSmbConnectWithLaps:
         mock_laps_cred.password = "LapsPassword123"
         mock_laps_cred.laps_type = "legacy"
         mock_laps_cache.get.return_value = mock_laps_cred
-        
+
         smb, hostname, laps_type, used_laps = smb_connect_with_laps(
             target="192.168.1.1",
             laps_cache=mock_laps_cache,
@@ -292,7 +292,7 @@ class TestSmbConnectWithLaps:
             fallback_username="user",
             fallback_password="pass"
         )
-        
+
         assert smb == mock_smb
         assert hostname == "WS01"
         assert laps_type == "legacy"
@@ -312,10 +312,10 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = "WS01"
         mock_negotiate.return_value = mock_smb
-        
+
         mock_laps_cache = MagicMock()
         mock_laps_cache.get.return_value = None
-        
+
         smb, hostname, laps_type, used_laps = smb_connect_with_laps(
             target="192.168.1.1",
             laps_cache=mock_laps_cache,
@@ -323,7 +323,7 @@ class TestSmbConnectWithLaps:
             fallback_username="user",
             fallback_password="pass123"
         )
-        
+
         assert smb == mock_smb
         assert hostname == "WS01"
         assert laps_type is None
@@ -344,12 +344,12 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = "WS01"
         mock_negotiate.return_value = mock_smb
-        
+
         mock_laps_cache = MagicMock()
         mock_laps_cred = MagicMock()
         mock_laps_cred.encrypted = True  # Encrypted LAPS - cannot use
         mock_laps_cache.get.return_value = mock_laps_cred
-        
+
         smb, hostname, laps_type, used_laps = smb_connect_with_laps(
             target="192.168.1.1",
             laps_cache=mock_laps_cache,
@@ -357,7 +357,7 @@ class TestSmbConnectWithLaps:
             fallback_username="user",
             fallback_password="pass"
         )
-        
+
         assert used_laps is False
         assert laps_type is None
 
@@ -368,7 +368,7 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = "WS01"
         mock_negotiate.return_value = mock_smb
-        
+
         smb, hostname, laps_type, used_laps = smb_connect_with_laps(
             target="192.168.1.1",
             laps_cache=None,
@@ -376,7 +376,7 @@ class TestSmbConnectWithLaps:
             fallback_username="user",
             fallback_password="pass"
         )
-        
+
         assert used_laps is False
 
     @patch('taskhound.smb.connection.smb_negotiate')
@@ -386,7 +386,7 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = None
         mock_negotiate.return_value = mock_smb
-        
+
         smb, hostname, laps_type, used_laps = smb_connect_with_laps(
             target="192.168.1.1",
             laps_cache=None,
@@ -394,7 +394,7 @@ class TestSmbConnectWithLaps:
             fallback_username="user",
             fallback_password="pass"
         )
-        
+
         assert hostname == "192.168.1.1"
 
     @patch('taskhound.smb.connection.smb_negotiate')
@@ -404,7 +404,7 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = "WS01"
         mock_negotiate.return_value = mock_smb
-        
+
         mock_laps_cache = MagicMock()
         mock_laps_cred = MagicMock()
         mock_laps_cred.encrypted = False
@@ -412,9 +412,9 @@ class TestSmbConnectWithLaps:
         mock_laps_cred.password = "WrongPassword"
         mock_laps_cred.laps_type = "legacy"
         mock_laps_cache.get.return_value = mock_laps_cred
-        
+
         mock_login.side_effect = Exception("Authentication failed")
-        
+
         with pytest.raises(Exception) as exc_info:
             smb_connect_with_laps(
                 target="192.168.1.1",
@@ -423,7 +423,7 @@ class TestSmbConnectWithLaps:
                 fallback_username="user",
                 fallback_password="pass"
             )
-        
+
         assert "Authentication failed" in str(exc_info.value)
 
     @patch('taskhound.smb.connection.smb_negotiate')
@@ -433,7 +433,7 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = "WS01"
         mock_negotiate.return_value = mock_smb
-        
+
         smb_connect_with_laps(
             target="192.168.1.1",
             laps_cache=None,
@@ -442,7 +442,7 @@ class TestSmbConnectWithLaps:
             fallback_password="pass",
             fallback_hashes="aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
         )
-        
+
         call_kwargs = mock_login.call_args[1]
         assert call_kwargs["password"] == "aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
 
@@ -453,7 +453,7 @@ class TestSmbConnectWithLaps:
         mock_smb = MagicMock()
         mock_smb.getServerName.return_value = "WS01"
         mock_negotiate.return_value = mock_smb
-        
+
         smb_connect_with_laps(
             target="192.168.1.1",
             laps_cache=None,
@@ -463,7 +463,7 @@ class TestSmbConnectWithLaps:
             fallback_kerberos=True,
             dc_ip="192.168.1.10"
         )
-        
+
         call_kwargs = mock_login.call_args[1]
         assert call_kwargs["kerberos"] is True
         assert call_kwargs["dc_ip"] == "192.168.1.10"

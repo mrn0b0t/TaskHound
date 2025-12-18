@@ -1,6 +1,5 @@
 """Tests for taskhound/__main__.py module."""
 
-import pytest
 from unittest.mock import patch
 
 
@@ -16,7 +15,6 @@ class TestMainModule:
     def test_main_entry_point(self, mock_main):
         """__main__.py calls main() when executed."""
         # Import triggers the if __name__ == "__main__" block in some contexts
-        import taskhound.__main__
         # Verify main is imported
         from taskhound.__main__ import main
         assert callable(main)

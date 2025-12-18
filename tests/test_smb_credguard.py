@@ -1,7 +1,7 @@
 """Additional tests for taskhound/smb/credguard.py module."""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
 from taskhound.smb.credguard import check_credential_guard
 
 
@@ -15,12 +15,12 @@ class TestCheckCredentialGuard:
         mock_smb = MagicMock()
         mock_dce = MagicMock()
         mock_transport.DCERPCTransportFactory.return_value.get_dce_rpc.return_value = mock_dce
-        
+
         # Mock registry values
         mock_rrp.hOpenLocalMachine.return_value = {"phKey": MagicMock()}
         mock_rrp.hBaseRegOpenKey.return_value = {"phkResult": MagicMock()}
         mock_rrp.hBaseRegQueryValue.return_value = {"lpData": b"\x01\x00\x00\x00"}
-        
+
         result = check_credential_guard(mock_smb, "192.168.1.100")
         assert result is True
 
@@ -31,12 +31,12 @@ class TestCheckCredentialGuard:
         mock_smb = MagicMock()
         mock_dce = MagicMock()
         mock_transport.DCERPCTransportFactory.return_value.get_dce_rpc.return_value = mock_dce
-        
+
         # Mock registry values with 0
         mock_rrp.hOpenLocalMachine.return_value = {"phKey": MagicMock()}
         mock_rrp.hBaseRegOpenKey.return_value = {"phkResult": MagicMock()}
         mock_rrp.hBaseRegQueryValue.return_value = {"lpData": b"\x00\x00\x00\x00"}
-        
+
         result = check_credential_guard(mock_smb, "192.168.1.100")
         assert result is False
 
@@ -45,7 +45,7 @@ class TestCheckCredentialGuard:
         """Returns False when an exception occurs."""
         mock_smb = MagicMock()
         mock_transport.DCERPCTransportFactory.side_effect = Exception("Connection failed")
-        
+
         result = check_credential_guard(mock_smb, "192.168.1.100")
         assert result is False
 

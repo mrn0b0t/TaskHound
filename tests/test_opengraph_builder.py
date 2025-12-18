@@ -1,13 +1,14 @@
 """
 Tests for OpenGraph builder module.
 """
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from taskhound.opengraph.builder import (
-    _create_task_object_id,
-    _create_task_node,
     _create_principal_id,
+    _create_task_node,
+    _create_task_object_id,
 )
 
 
@@ -17,7 +18,7 @@ class TestCreateTaskObjectId:
     def test_basic_creation(self):
         """Should create deterministic object ID"""
         result = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\UpdateTask")
-        
+
         assert "DC01.DOMAIN.LAB" in result
         assert "UPDATETASK" in result
         # Should have hash component (8 hex chars)
@@ -29,14 +30,14 @@ class TestCreateTaskObjectId:
         """Should produce same ID for same input"""
         id1 = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\MyTask")
         id2 = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\MyTask")
-        
+
         assert id1 == id2
 
     def test_case_insensitive(self):
         """Should be case-insensitive for hostname"""
         id1 = _create_task_object_id("dc01.domain.lab", "\\Tasks\\MyTask")
         id2 = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\MyTask")
-        
+
         # Hash portion should be the same (both get uppercased internally)
         # The hostname preserves original case in output
         parts1 = id1.split("_")
@@ -47,34 +48,34 @@ class TestCreateTaskObjectId:
         """Different paths should produce different IDs"""
         id1 = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\Task1")
         id2 = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\Task2")
-        
+
         assert id1 != id2
 
     def test_different_hosts_produce_different_ids(self):
         """Different hosts should produce different IDs"""
         id1 = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\Task1")
         id2 = _create_task_object_id("DC02.DOMAIN.LAB", "\\Tasks\\Task1")
-        
+
         assert id1 != id2
 
     def test_handles_spaces_in_task_name(self):
         """Should handle spaces in task name"""
         result = _create_task_object_id("DC01.DOMAIN.LAB", "\\Tasks\\My Task Name")
-        
+
         assert "MY_TASK_NAME" in result
 
     def test_handles_long_task_names(self):
         """Should truncate long task names"""
         long_name = "A" * 100
         result = _create_task_object_id("DC01.DOMAIN.LAB", f"\\Tasks\\{long_name}")
-        
+
         # Task name portion should be limited
         assert len(result) < 150
 
     def test_handles_nested_paths(self):
         """Should handle nested task paths"""
         result = _create_task_object_id("DC01.DOMAIN.LAB", "\\Microsoft\\Windows\\UpdateTask")
-        
+
         assert "UPDATETASK" in result
 
 
@@ -90,9 +91,9 @@ class TestCreateTaskNode:
             "runas": "DOMAIN\\admin",
             "enabled": "true"
         }
-        
+
         node = _create_task_node(task)
-        
+
         assert node is not None
         assert "ScheduledTask" in node.kinds
         assert "Base" in node.kinds
@@ -104,7 +105,7 @@ class TestCreateTaskNode:
             "path": "\\Tasks\\TestTask",
             "command": "cmd.exe"
         }
-        
+
         with pytest.raises(ValueError, match="missing 'host' field"):
             _create_task_node(task)
 
@@ -114,7 +115,7 @@ class TestCreateTaskNode:
             "host": "DC01.DOMAIN.LAB",
             "command": "cmd.exe"
         }
-        
+
         with pytest.raises(ValueError, match="missing 'path' field"):
             _create_task_node(task)
 
@@ -125,7 +126,7 @@ class TestCreateTaskNode:
             "path": "\\Tasks\\TestTask",
             "command": "cmd.exe"
         }
-        
+
         with pytest.raises(ValueError, match="missing 'host' field"):
             _create_task_node(task)
 
@@ -136,7 +137,7 @@ class TestCreateTaskNode:
             "path": "\\Tasks\\TestTask",
             "command": "cmd.exe"
         }
-        
+
         with pytest.raises(ValueError, match="Invalid hostname"):
             _create_task_node(task)
 
@@ -149,9 +150,9 @@ class TestCreateTaskNode:
             "arguments": "/c whoami",
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         # Access properties as dict
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("command") == "cmd.exe /c whoami"
@@ -165,9 +166,9 @@ class TestCreateTaskNode:
             "logon_type": None,
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("logontype") == "Unknown"
 
@@ -180,9 +181,9 @@ class TestCreateTaskNode:
             "enabled": "true",
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("enabled") is True
 
@@ -195,9 +196,9 @@ class TestCreateTaskNode:
             "enabled": "false",
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("enabled") is False
 
@@ -210,9 +211,9 @@ class TestCreateTaskNode:
             "credentials_hint": "stored_credentials",
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("credentialsstored") is True
 
@@ -225,9 +226,9 @@ class TestCreateTaskNode:
             "credentials_hint": "interactive",
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("credentialsstored") is False
 
@@ -241,9 +242,9 @@ class TestCreateTaskNode:
             "date": "2024-01-01",
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("author") == "John Doe"
         assert props.get("date") == "2024-01-01"
@@ -259,9 +260,9 @@ class TestCreateTaskNode:
             "interval": "PT1H",
             "runas": "admin"
         }
-        
+
         node = _create_task_node(task)
-        
+
         props = node.properties.to_dict() if hasattr(node.properties, 'to_dict') else dict(node.properties)
         assert props.get("triggertype") == "Calendar"
         assert props.get("startboundary") == "2024-01-01T00:00:00"
@@ -274,31 +275,31 @@ class TestCreatePrincipalId:
     def test_returns_none_for_empty_user(self):
         """Should return None for empty runas user"""
         result = _create_principal_id("", "DOMAIN.LAB", {})
-        
+
         assert result is None
 
     def test_returns_none_for_na_user(self):
         """Should return None for N/A runas user"""
         result = _create_principal_id("N/A", "DOMAIN.LAB", {})
-        
+
         assert result is None
 
     def test_filters_system_account(self):
         """Should return None for NT AUTHORITY\\SYSTEM"""
         result = _create_principal_id("NT AUTHORITY\\SYSTEM", "DOMAIN.LAB", {})
-        
+
         assert result is None
 
     def test_filters_local_service(self):
         """Should return None for NT AUTHORITY\\LOCAL SERVICE"""
         result = _create_principal_id("NT AUTHORITY\\LOCAL SERVICE", "DOMAIN.LAB", {})
-        
+
         assert result is None
 
     def test_filters_network_service(self):
         """Should return None for NT AUTHORITY\\NETWORK SERVICE"""
         result = _create_principal_id("NT AUTHORITY\\NETWORK SERVICE", "DOMAIN.LAB", {})
-        
+
         assert result is None
 
     def test_filters_system_sid(self):
@@ -306,11 +307,11 @@ class TestCreatePrincipalId:
         # Local System SID
         result = _create_principal_id("S-1-5-18", "DOMAIN.LAB", {})
         assert result is None
-        
+
         # Local Service SID
         result = _create_principal_id("S-1-5-19", "DOMAIN.LAB", {})
         assert result is None
-        
+
         # Network Service SID
         result = _create_principal_id("S-1-5-20", "DOMAIN.LAB", {})
         assert result is None
@@ -325,39 +326,39 @@ class TestCreatePrincipalId:
         """Should return domain SIDs as-is"""
         sid = "S-1-5-21-123456789-123456789-123456789-1001"
         result = _create_principal_id(sid, "DOMAIN.LAB", {})
-        
+
         assert result == sid
 
     def test_handles_upn_format_same_domain(self):
         """Should handle UPN format when domain matches"""
         result = _create_principal_id("admin@domain.lab", "DOMAIN.LAB", {})
-        
+
         assert result == "ADMIN@DOMAIN.LAB"
 
     def test_handles_netbios_format_same_domain(self):
         """Should handle NETBIOS format when domain matches"""
         task = {"host": "DC01.DOMAIN.LAB"}
         result = _create_principal_id("DOMAIN\\admin", "DOMAIN.LAB", task)
-        
+
         assert result == "ADMIN@DOMAIN.LAB"
 
     def test_handles_plain_username(self):
         """Should handle plain username without domain"""
         result = _create_principal_id("admin", "DOMAIN.LAB", {})
-        
+
         assert result == "ADMIN@DOMAIN.LAB"
 
     def test_filters_local_account(self):
         """Should filter local accounts (domain matches hostname)"""
         task = {"host": "CLIENT01.DOMAIN.LAB"}
         result = _create_principal_id("CLIENT01\\localuser", "DOMAIN.LAB", task)
-        
+
         assert result is None
 
     def test_filters_builtin_administrators(self):
         """Should filter BUILTIN\\ADMINISTRATORS"""
         result = _create_principal_id("BUILTIN\\ADMINISTRATORS", "DOMAIN.LAB", {})
-        
+
         assert result is None
 
     def test_handles_case_variations(self):
@@ -365,7 +366,7 @@ class TestCreatePrincipalId:
         # Lowercase
         result = _create_principal_id("nt authority\\system", "DOMAIN.LAB", {})
         assert result is None
-        
+
         # Mixed case
         result = _create_principal_id("NT Authority\\System", "DOMAIN.LAB", {})
         assert result is None
@@ -374,13 +375,13 @@ class TestCreatePrincipalId:
         """Should return None for cross-domain without connector"""
         task = {"host": "DC01.DOMAIN.LAB"}
         result = _create_principal_id("OTHER\\admin", "DOMAIN.LAB", task, bh_connector=None)
-        
+
         assert result is None
 
     def test_cross_domain_upn_without_connector(self):
         """Should return None for cross-domain UPN without connector"""
         result = _create_principal_id("admin@other.lab", "DOMAIN.LAB", {}, bh_connector=None)
-        
+
         assert result is None
 
     @patch('taskhound.opengraph.builder.warn')
@@ -388,30 +389,30 @@ class TestCreatePrincipalId:
         """Should log warning for cross-domain without connector"""
         task = {"host": "DC01.DOMAIN.LAB"}
         _create_principal_id("OTHER\\admin", "DOMAIN.LAB", task, bh_connector=None)
-        
+
         assert mock_warn.called
 
     def test_domain_with_fqdn_prefix(self):
         """Should handle FQDN-style domain prefix"""
         task = {"host": "DC01.DOMAIN.LAB"}
         result = _create_principal_id("DOMAIN.LAB\\admin", "DOMAIN.LAB", task)
-        
+
         assert result == "ADMIN@DOMAIN.LAB"
 
     def test_netbios_name_differs_from_fqdn(self):
         """Should correctly match when NetBIOS name differs from FQDN first part.
-        
+
         Bug scenario: domain is corp.example.com but NetBIOS name is YOURCOMPANY (not CORP).
         Without local_netbios param, YOURCOMPANY\\admin would be treated as cross-domain.
         """
         task = {"host": "DC01.CORP.EXAMPLE.COM"}
-        
+
         # Without local_netbios - would incorrectly think YOURCOMPANY is cross-domain
         # because CORP != YOURCOMPANY
         result_without = _create_principal_id("YOURCOMPANY\\admin", "CORP.EXAMPLE.COM", task, local_netbios=None)
         # This fails without a connector, so it returns None for cross-domain
         assert result_without is None
-        
+
         # With local_netbios - correctly matches YOURCOMPANY as local domain
         result_with = _create_principal_id("YOURCOMPANY\\admin", "CORP.EXAMPLE.COM", task, local_netbios="YOURCOMPANY")
         assert result_with == "ADMIN@CORP.EXAMPLE.COM"
@@ -419,11 +420,11 @@ class TestCreatePrincipalId:
     def test_netbios_case_insensitive(self):
         """NetBIOS comparison should be case-insensitive"""
         task = {"host": "DC01.DOMAIN.LAB"}
-        
+
         # lowercase netbios
         result = _create_principal_id("CORP\\admin", "DOMAIN.LAB", task, local_netbios="corp")
         assert result == "ADMIN@DOMAIN.LAB"
-        
+
         # uppercase runas domain
         result2 = _create_principal_id("corp\\admin", "DOMAIN.LAB", task, local_netbios="CORP")
         assert result2 == "ADMIN@DOMAIN.LAB"
@@ -441,10 +442,10 @@ class TestCreatePrincipalIdWithConnector:
             'objectid': 'S-1-5-21-xxx',
             'username': 'ADMIN'
         }
-        
+
         task = {"host": "DC01.DOMAIN.LAB", "path": "\\Tasks\\Test"}
         result = _create_principal_id("OTHER\\admin", "DOMAIN.LAB", task, bh_connector=mock_connector)
-        
+
         assert result == "ADMIN@OTHER.LAB"
         mock_connector.validate_and_resolve_cross_domain_user.assert_called_once()
 
@@ -455,10 +456,10 @@ class TestCreatePrincipalIdWithConnector:
         mock_connector.validate_and_resolve_cross_domain_user.return_value = {
             'error_reason': 'domain_not_found'
         }
-        
+
         task = {"host": "DC01.DOMAIN.LAB", "path": "\\Tasks\\Test"}
         result = _create_principal_id("OTHER\\admin", "DOMAIN.LAB", task, bh_connector=mock_connector)
-        
+
         assert result is None
         assert mock_warn.called
 
@@ -471,10 +472,10 @@ class TestCreatePrincipalIdWithConnector:
             'domain_fqdn': 'OTHER.LAB',
             'username': 'ADMIN'
         }
-        
+
         task = {"host": "DC01.DOMAIN.LAB", "path": "\\Tasks\\Test"}
         result = _create_principal_id("OTHER\\admin", "DOMAIN.LAB", task, bh_connector=mock_connector)
-        
+
         assert result is None
         assert mock_warn.called
 
@@ -487,8 +488,8 @@ class TestCreatePrincipalIdWithConnector:
             'objectid': 'S-1-5-21-xxx',
             'username': 'ADMIN'
         }
-        
+
         task = {"host": "DC01.DOMAIN.LAB", "path": "\\Tasks\\Test"}
         result = _create_principal_id("admin@other.lab", "DOMAIN.LAB", task, bh_connector=mock_connector)
-        
+
         assert result == "ADMIN@OTHER.LAB"

@@ -1,10 +1,11 @@
 """Additional tests for taskhound/laps/exceptions.py module."""
 
 import pytest
+
 from taskhound.laps.exceptions import (
-    LAPSError,
     LAPSConnectionError,
     LAPSEmptyCacheError,
+    LAPSError,
     LAPSParseError,
 )
 
@@ -97,7 +98,7 @@ class TestExceptionChaining:
     def test_laps_parse_error_from_json_error(self):
         """LAPSParseError can chain from JSONDecodeError."""
         import json
-        
+
         try:
             try:
                 json.loads("invalid")

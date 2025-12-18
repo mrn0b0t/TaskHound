@@ -7,10 +7,8 @@ Tests cover:
 - Priority ordering (TIER-0 > PRIV > TASK)
 """
 
-import pytest
 
 from taskhound.engine.helpers import sort_tasks_by_priority
-
 
 # ============================================================================
 # Unit Tests: sort_tasks_by_priority
@@ -62,7 +60,7 @@ class TestSortTasksByPriority:
             "  - TIER-0 details"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # TIER-0 should come first
         assert "[TIER-0]" in result[0]
         assert "[PRIV]" in result[2]
@@ -76,7 +74,7 @@ class TestSortTasksByPriority:
             "  - PRIV details"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # PRIV should come first
         assert "[PRIV]" in result[0]
         assert "[TASK]" in result[2]
@@ -92,12 +90,12 @@ class TestSortTasksByPriority:
             "  - PRIV details"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # Check order
-        tier0_index = next(i for i, l in enumerate(result) if "[TIER-0]" in l)
-        priv_index = next(i for i, l in enumerate(result) if "[PRIV]" in l)
-        task_index = next(i for i, l in enumerate(result) if "[TASK]" in l)
-        
+        tier0_index = next(i for i, line in enumerate(result) if "[TIER-0]" in line)
+        priv_index = next(i for i, line in enumerate(result) if "[PRIV]" in line)
+        task_index = next(i for i, line in enumerate(result) if "[TASK]" in line)
+
         assert tier0_index < priv_index < task_index
 
     def test_multiple_same_priority(self):
@@ -111,7 +109,7 @@ class TestSortTasksByPriority:
             "  - Important details"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # TIER-0 should be first
         assert "[TIER-0]" in result[0]
 
@@ -126,7 +124,7 @@ class TestSortTasksByPriority:
             "  Important Line"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # All original lines should be present
         assert len(result) == len(lines)
         assert "Line 1" in result[3]  # Should be after TIER-0 block
@@ -142,7 +140,7 @@ class TestSortTasksByPriority:
             "  - Mystery details"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # TIER-0 should be first, UNKNOWN last
         assert "[TIER-0]" in result[0]
         assert "[UNKNOWN]" in result[2]
@@ -155,7 +153,7 @@ class TestSortTasksByPriority:
             "  - Task details"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # Should preserve structure
         assert len(result) == len(lines)
 
@@ -174,10 +172,10 @@ class TestSortTasksByPriority:
             "  - Priority details",
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # TIER-0 should come first, unknown type should come last
-        tier0_pos = next(i for i, l in enumerate(result) if "[TIER-0]" in l)
-        unknown_pos = next(i for i, l in enumerate(result) if "[UNKNOWN]" in l)
+        tier0_pos = next(i for i, line in enumerate(result) if "[TIER-0]" in line)
+        unknown_pos = next(i for i, line in enumerate(result) if "[UNKNOWN]" in line)
         assert tier0_pos < unknown_pos
 
     def test_complex_multi_block(self):
@@ -194,11 +192,11 @@ class TestSortTasksByPriority:
             "  - Details 2"
         ]
         result = sort_tasks_by_priority(lines)
-        
+
         # Verify ordering
-        tier0_pos = next(i for i, l in enumerate(result) if "[TIER-0]" in l)
-        priv_pos = next(i for i, l in enumerate(result) if "[PRIV]" in l)
-        
+        tier0_pos = next(i for i, line in enumerate(result) if "[TIER-0]" in line)
+        priv_pos = next(i for i, line in enumerate(result) if "[PRIV]" in line)
+
         # All TASK blocks should come after TIER-0 and PRIV
         for i, line in enumerate(result):
             if "[TASK]" in line:

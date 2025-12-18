@@ -5,8 +5,6 @@
 import socket
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from taskhound.utils.dns import (
     DEFAULT_DNS_TIMEOUT,
     DEFAULT_LDAP_TIMEOUT,
@@ -69,7 +67,7 @@ class TestTestPort:
     @patch("socket.socket")
     def test_port_exception(self, mock_socket_class):
         """Should return False on exception."""
-        mock_socket_class.side_effect = socket.error("Connection failed")
+        mock_socket_class.side_effect = OSError("Connection failed")
 
         result = _test_port("192.168.1.1", 636, timeout=3)
 
@@ -138,7 +136,7 @@ class TestDiscoverDomainControllers:
 
         # For this test, just verify the fallback logic exists
         mock_gethostbyname.return_value = "10.0.0.5"
-        result = discover_domain_controllers("corp.local")
+        discover_domain_controllers("corp.local")
         # Either SRV works or falls back - we just verify no crash
 
     def test_no_dns_returns_empty(self):

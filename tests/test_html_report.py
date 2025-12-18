@@ -222,6 +222,31 @@ class TestSeverityCalculation:
 
         assert "Password outdated/invalid" in severity.factors
 
+    def test_account_disabled_factor(self):
+        """Tasks with disabled accounts should note it in factors."""
+        task = {
+            "type": "TIER-0",
+            "credentials_hint": "stored_credentials",
+            "cred_password_valid": True,  # Needed for CRITICAL
+            "reason": "[ACCOUNT DISABLED] Member of Domain Admins",
+        }
+        severity = calculate_severity(task)
+
+        assert "Account currently disabled in AD" in severity.factors
+        # Severity should remain the same (still CRITICAL with stored creds + valid password)
+        assert severity.level == "CRITICAL"
+
+    def test_account_enabled_no_factor(self):
+        """Tasks without disabled indicator should not have the factor."""
+        task = {
+            "type": "TIER-0",
+            "credentials_hint": "stored_credentials",
+            "reason": "Member of Domain Admins",
+        }
+        severity = calculate_severity(task)
+
+        assert "Account currently disabled in AD" not in severity.factors
+
 
 class TestSeverityScore:
     """Tests for the SeverityScore dataclass."""

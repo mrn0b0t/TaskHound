@@ -1,18 +1,13 @@
 # Tests for disk_loader module (mounted Windows filesystem extraction)
 
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from taskhound.engine.disk_loader import (
     GUID_PATTERN,
-    find_windows_root,
-    extract_tasks,
-    extract_masterkeys,
     extract_credentials,
+    extract_masterkeys,
+    extract_tasks,
+    find_windows_root,
     load_from_disk,
 )
 
@@ -289,7 +284,7 @@ class TestLoadFromDisk:
         # Create mock Windows filesystem
         mount = tmp_path / "mount"
         windows_root = mount
-        
+
         # Tasks - use UTF-16 LE BOM like Windows does
         tasks_dir = windows_root / "Windows" / "System32" / "Tasks"
         tasks_dir.mkdir(parents=True)
@@ -316,7 +311,7 @@ class TestLoadFromDisk:
         assert hostname == "TESTHOST"
         assert backup_path is not None
         assert Path(backup_path).exists()
-        
+
         # Verify structure
         bp = Path(backup_path)
         assert (bp / "Windows" / "System32" / "Tasks" / "TestTask").exists()

@@ -1,19 +1,20 @@
 """Tests for taskhound/smb/task_rpc.py module."""
 
-import pytest
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
+
+import pytest
 
 from taskhound.smb.task_rpc import (
+    ACCOUNT_BLOCKED_CODES,
+    PASSWORD_INVALID_CODES,
+    PASSWORD_VALID_CODES,
+    RETURN_CODE_DESCRIPTIONS,
+    TASK_RUNNABLE_CODES,
     CredentialStatus,
     TaskRunInfo,
-    PASSWORD_VALID_CODES,
-    TASK_RUNNABLE_CODES,
-    PASSWORD_INVALID_CODES,
-    ACCOUNT_BLOCKED_CODES,
-    RETURN_CODE_DESCRIPTIONS,
-    get_return_code_description,
     TaskSchedulerRPC,
+    get_return_code_description,
 )
 
 
@@ -273,18 +274,18 @@ class TestTaskSchedulerRPCContextManager:
     def test_context_manager_enter_exit(self, mock_disconnect, mock_connect):
         """Test context manager enters and exits correctly."""
         mock_connect.return_value = True
-        
+
         rpc = TaskSchedulerRPC(
             target="192.168.1.100",
             domain="DOMAIN",
             username="admin",
             password="pass",
         )
-        
+
         with rpc as client:
             assert client is rpc
             mock_connect.assert_called_once()
-        
+
         mock_disconnect.assert_called_once()
 
     @patch.object(TaskSchedulerRPC, 'connect')
@@ -292,18 +293,17 @@ class TestTaskSchedulerRPCContextManager:
     def test_context_manager_exit_on_exception(self, mock_disconnect, mock_connect):
         """Test context manager exits on exception."""
         mock_connect.return_value = True
-        
+
         rpc = TaskSchedulerRPC(
             target="192.168.1.100",
             domain="DOMAIN",
             username="admin",
             password="pass",
         )
-        
-        with pytest.raises(ValueError):
-            with rpc:
-                raise ValueError("Test error")
-        
+
+        with pytest.raises(ValueError), rpc:
+            raise ValueError("Test error")
+
         mock_disconnect.assert_called_once()
 
     @patch.object(TaskSchedulerRPC, 'connect')
@@ -316,7 +316,7 @@ class TestTaskSchedulerRPCContextManager:
             username="admin",
             password="pass",
         )
-        
+
         # Call __enter__ directly - this exercises lines 207-210
         result = rpc.__enter__()
         assert result is rpc
@@ -330,11 +330,11 @@ class TestTaskSchedulerRPCContextManager:
             username="admin",
             password="pass",
         )
-        
+
         # Call __exit__ directly - this exercises lines 212-215
         result = rpc.__exit__(None, None, None)
         assert result is False
-        
+
     def test_exit_with_exception_returns_false(self):
         """Test __exit__ returns False even with exception."""
         rpc = TaskSchedulerRPC(
@@ -343,7 +343,7 @@ class TestTaskSchedulerRPCContextManager:
             username="admin",
             password="pass",
         )
-        
+
         # Call __exit__ with exception info - ensures False is returned not None
         result = rpc.__exit__(ValueError, ValueError("test"), None)
         assert result is False
@@ -453,7 +453,7 @@ class TestTaskSchedulerRPCGetTaskRunInfo:
     def test_get_task_run_info_success(self, mock_tsch):
         """Test get_task_run_info with successful response."""
         self.rpc._dce = Mock()
-        
+
         mock_tsch.hSchRpcGetLastRunInfo.return_value = {
             'pLastRuntime': {
                 'wYear': 2024,
@@ -465,9 +465,9 @@ class TestTaskSchedulerRPCGetTaskRunInfo:
             },
             'pLastReturnCode': 0x00000000,
         }
-        
+
         result = self.rpc.get_task_run_info("\\TestTask")
-        
+
         assert result is not None
         assert result.task_path == "\\TestTask"
         assert result.last_run == datetime(2024, 1, 15, 10, 30, 0)
@@ -478,7 +478,7 @@ class TestTaskSchedulerRPCGetTaskRunInfo:
     def test_get_task_run_info_never_run(self, mock_tsch):
         """Test get_task_run_info when task never ran."""
         self.rpc._dce = Mock()
-        
+
         mock_tsch.hSchRpcGetLastRunInfo.return_value = {
             'pLastRuntime': {
                 'wYear': 0,
@@ -490,9 +490,9 @@ class TestTaskSchedulerRPCGetTaskRunInfo:
             },
             'pLastReturnCode': 0,
         }
-        
+
         result = self.rpc.get_task_run_info("\\TestTask")
-        
+
         assert result is not None
         assert result.last_run is None
         assert result.credential_status == CredentialStatus.UNKNOWN
@@ -501,13 +501,13 @@ class TestTaskSchedulerRPCGetTaskRunInfo:
     def test_get_task_run_info_exception_not_run(self, mock_tsch):
         """Test get_task_run_info with SCHED_S_TASK_HAS_NOT_RUN exception."""
         self.rpc._dce = Mock()
-        
+
         mock_tsch.hSchRpcGetLastRunInfo.side_effect = Exception(
             "SCHED_S_TASK_HAS_NOT_RUN"
         )
-        
+
         result = self.rpc.get_task_run_info("\\TestTask")
-        
+
         assert result is not None
         assert result.last_run is None
         assert result.return_code == 0x00041303
@@ -517,11 +517,11 @@ class TestTaskSchedulerRPCGetTaskRunInfo:
     def test_get_task_run_info_exception_other(self, mock_tsch):
         """Test get_task_run_info with other exception."""
         self.rpc._dce = Mock()
-        
+
         mock_tsch.hSchRpcGetLastRunInfo.side_effect = Exception("Connection failed")
-        
+
         result = self.rpc.get_task_run_info("\\TestTask")
-        
+
         assert result is None
 
 
@@ -550,11 +550,11 @@ class TestTaskSchedulerRPCValidateSpecificTasks:
             password_valid=True,
             task_hijackable=True,
         )
-        
-        results = self.rpc.validate_specific_tasks([
+
+        self.rpc.validate_specific_tasks([
             "Windows\\System32\\Tasks\\TestTask"
         ])
-        
+
         # Should have called with converted RPC path
         mock_get_info.assert_called_once_with("\\TestTask")
 
@@ -570,11 +570,11 @@ class TestTaskSchedulerRPCValidateSpecificTasks:
             password_valid=True,
             task_hijackable=True,
         )
-        
-        results = self.rpc.validate_specific_tasks([
+
+        self.rpc.validate_specific_tasks([
             "Windows/System32/Tasks/TestTask"
         ])
-        
+
         mock_get_info.assert_called_once_with("\\TestTask")
 
     @patch.object(TaskSchedulerRPC, 'get_task_run_info')
@@ -589,9 +589,9 @@ class TestTaskSchedulerRPCValidateSpecificTasks:
             password_valid=True,
             task_hijackable=True,
         )
-        
-        results = self.rpc.validate_specific_tasks(["\\TestTask"])
-        
+
+        self.rpc.validate_specific_tasks(["\\TestTask"])
+
         mock_get_info.assert_called_once_with("\\TestTask")
 
     @patch.object(TaskSchedulerRPC, 'get_task_run_info')
@@ -606,23 +606,23 @@ class TestTaskSchedulerRPCValidateSpecificTasks:
             password_valid=True,
             task_hijackable=True,
         )
-        
-        results = self.rpc.validate_specific_tasks([
+
+        self.rpc.validate_specific_tasks([
             "Windows\\System32\\Tasks\\Task1",
             "Windows\\System32\\Tasks\\Task2",
         ])
-        
+
         assert mock_get_info.call_count == 2
 
     @patch.object(TaskSchedulerRPC, 'get_task_run_info')
     def test_validate_task_returns_none(self, mock_get_info):
         """Test when get_task_run_info returns None."""
         mock_get_info.return_value = None
-        
+
         results = self.rpc.validate_specific_tasks([
             "Windows\\System32\\Tasks\\NonExistentTask"
         ])
-        
+
         # Should not add to results
         assert len(results) == 0
 
@@ -639,10 +639,10 @@ class TestTaskSchedulerRPCValidateSpecificTasks:
             task_hijackable=True,
         )
         mock_get_info.return_value = mock_info
-        
+
         original_path = "Windows\\System32\\Tasks\\TestTask"
         results = self.rpc.validate_specific_tasks([original_path])
-        
+
         # Should have only the original SMB path (no duplication with RPC path)
         assert original_path in results
         assert len(results) == 1  # Only one entry, not duplicated
@@ -668,9 +668,9 @@ class TestTaskSchedulerRPCConnect:
         mock_rpc_transport = Mock()
         mock_rpc_transport.get_dce_rpc.return_value = mock_dce
         mock_transport.DCERPCTransportFactory.return_value = mock_rpc_transport
-        
+
         result = self.rpc.connect()
-        
+
         assert result is True
         assert self.rpc._dce is mock_dce
         mock_dce.connect.assert_called_once()
@@ -680,8 +680,8 @@ class TestTaskSchedulerRPCConnect:
     def test_connect_failure(self, mock_transport):
         """Test connection failure."""
         mock_transport.DCERPCTransportFactory.side_effect = Exception("Connection refused")
-        
+
         result = self.rpc.connect()
-        
+
         assert result is False
         assert self.rpc._dce is None

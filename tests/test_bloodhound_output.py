@@ -1,15 +1,16 @@
 """Tests for taskhound/output/bloodhound.py - BloodHound upload utilities."""
 
 import os
-import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
 
 from taskhound.output.bloodhound import (
-    normalize_bloodhound_connector,
     extract_host_from_connector,
     find_model_json,
+    normalize_bloodhound_connector,
 )
 
 
@@ -103,9 +104,8 @@ class TestFindModelJson:
 
     def test_not_found_raises_error(self):
         """Raises FileNotFoundError when model.json not found anywhere."""
-        with patch.object(Path, "exists", return_value=False):
-            with pytest.raises(FileNotFoundError) as exc_info:
-                find_model_json()
+        with patch.object(Path, "exists", return_value=False), pytest.raises(FileNotFoundError) as exc_info:
+            find_model_json()
         # Error message should be helpful
         assert "model.json not found" in str(exc_info.value)
 

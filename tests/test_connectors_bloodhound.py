@@ -1,7 +1,6 @@
 """Tests for taskhound/connectors/bloodhound.py - BloodHound connector."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from taskhound.connectors.bloodhound import (
     BloodHoundConnector,

@@ -1,12 +1,11 @@
 """Tests for taskhound/dpapi/decryptor.py - DPAPI decryption classes."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from taskhound.dpapi.decryptor import (
+    DPAPIDecryptor,
     MasterkeyInfo,
     ScheduledTaskCredential,
-    DPAPIDecryptor,
 )
 
 
@@ -83,9 +82,8 @@ class TestScheduledTaskCredential:
     def test_dump_method_exists(self):
         """dump() method exists and is callable."""
         cred = ScheduledTaskCredential(task_name="Test", blob_path="/path")
-        with patch("taskhound.dpapi.decryptor.good"):
-            with patch("taskhound.dpapi.decryptor.info"):
-                cred.dump()  # Should not raise
+        with patch("taskhound.dpapi.decryptor.good"), patch("taskhound.dpapi.decryptor.info"):
+            cred.dump()  # Should not raise
 
     def test_dump_quiet_method_exists(self):
         """dump_quiet() method exists and is callable."""
@@ -152,9 +150,8 @@ class TestCredentialOutput:
     def test_dump_prints_task_name(self):
         """dump() includes task name in output."""
         cred = ScheduledTaskCredential(task_name="ImportantTask", blob_path="/path")
-        with patch("taskhound.dpapi.decryptor.good") as mock_good:
-            with patch("taskhound.dpapi.decryptor.info") as mock_info:
-                cred.dump()
+        with patch("taskhound.dpapi.decryptor.good"), patch("taskhound.dpapi.decryptor.info") as mock_info:
+            cred.dump()
         # Check info was called with task name
         info_calls = [str(c) for c in mock_info.call_args_list]
         assert any("ImportantTask" in str(c) for c in info_calls)

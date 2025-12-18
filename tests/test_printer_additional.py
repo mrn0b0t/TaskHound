@@ -1,13 +1,12 @@
 """
 Additional tests to boost coverage for printer module.
 """
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from taskhound.output.printer import (
+    _check_gmsa_account,
     format_block,
     format_trigger_info,
-    _check_gmsa_account,
 )
 
 
@@ -84,7 +83,7 @@ class TestFormatBlockEnabled:
     def test_enabled_true_capitalized(self, mock_resolve):
         """Should capitalize True for enabled field."""
         mock_resolve.return_value = ("DOMAIN\\User", "User")
-        
+
         lines = format_block(
             kind="TASK",
             rel_path="Tasks\\Test",
@@ -94,7 +93,7 @@ class TestFormatBlockEnabled:
             date="2023-01-01",
             enabled="true",
         )
-        
+
         text = "\n".join(lines)
         assert "Enabled            : True" in text
 
@@ -102,7 +101,7 @@ class TestFormatBlockEnabled:
     def test_enabled_false_capitalized(self, mock_resolve):
         """Should capitalize False for enabled field."""
         mock_resolve.return_value = ("DOMAIN\\User", "User")
-        
+
         lines = format_block(
             kind="TASK",
             rel_path="Tasks\\Test",
@@ -112,7 +111,7 @@ class TestFormatBlockEnabled:
             date="2023-01-01",
             enabled="false",
         )
-        
+
         text = "\n".join(lines)
         assert "Enabled            : False" in text
 
@@ -120,7 +119,7 @@ class TestFormatBlockEnabled:
     def test_enabled_other_value_unchanged(self, mock_resolve):
         """Should keep other enabled values unchanged."""
         mock_resolve.return_value = ("DOMAIN\\User", "User")
-        
+
         lines = format_block(
             kind="TASK",
             rel_path="Tasks\\Test",
@@ -130,7 +129,7 @@ class TestFormatBlockEnabled:
             date="2023-01-01",
             enabled="Disabled",
         )
-        
+
         text = "\n".join(lines)
         assert "Enabled            : Disabled" in text
 
@@ -142,7 +141,7 @@ class TestFormatBlockCredValidationDetails:
     def test_shows_last_run_time(self, mock_resolve):
         """Should show last run time in cred validation."""
         mock_resolve.return_value = ("DOMAIN\\User", "User")
-        
+
         lines = format_block(
             kind="PRIV",
             rel_path="Tasks\\Test",
@@ -157,7 +156,7 @@ class TestFormatBlockCredValidationDetails:
                 "cred_last_run": "2023-06-15 10:30:00",
             },
         )
-        
+
         text = "\n".join(lines)
         assert "Last Run           : 2023-06-15 10:30:00" in text
 
@@ -165,7 +164,7 @@ class TestFormatBlockCredValidationDetails:
     def test_shows_return_code_with_description(self, mock_resolve):
         """Should show return code with description."""
         mock_resolve.return_value = ("DOMAIN\\User", "User")
-        
+
         lines = format_block(
             kind="PRIV",
             rel_path="Tasks\\Test",
@@ -178,7 +177,7 @@ class TestFormatBlockCredValidationDetails:
                 "cred_return_code": "0x00041303",
             },
         )
-        
+
         text = "\n".join(lines)
         assert "Return Code        : 0x00041303" in text
         assert "Task has not run" in text

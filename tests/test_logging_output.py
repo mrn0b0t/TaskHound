@@ -34,8 +34,7 @@ class TestLoggingOutput(unittest.TestCase):
 
         output = self.capturedOutput.getvalue()
         self.assertIn("[Collecting] target ...", output)
-        self.assertIn("[Collecting] target [+]", output)
-        self.assertIn("[TaskCount] 0 Tasks, N/A Privileged", output)
+        self.assertIn("[Collected] target: 0 Tasks, N/A Privileged", output)
         # Should NOT contain verbose logs
         self.assertNotIn("Connected via SMB", output)
 
@@ -67,9 +66,9 @@ class TestLoggingOutput(unittest.TestCase):
 
         self.assertIn("host1", output)
         self.assertIn("host2", output)
-        # Rich table uses [+] for success and [-] for failure
-        self.assertIn("[+]", output)
-        self.assertIn("[-]", output)
+        # New format uses separate tables for successes and failures
+        self.assertIn("TASK SUMMARY", output)
+        self.assertIn("FAILED HOSTS", output)
         self.assertIn("Unreachable", output)
 
     def test_verbosity_flags(self):

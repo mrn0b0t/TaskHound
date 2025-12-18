@@ -1,8 +1,6 @@
 """
 Tests for LAPS decryption module.
 """
-import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
 
 from taskhound.laps.decryption import (
     LAPSDecryptionContext,
@@ -18,7 +16,7 @@ class TestLAPSDecryptionContextInit:
             domain="DOMAIN.LAB",
             username="admin"
         )
-        
+
         assert ctx.domain == "DOMAIN.LAB"
         assert ctx.username == "admin"
         assert ctx.password is None
@@ -30,7 +28,7 @@ class TestLAPSDecryptionContextInit:
             username="admin",
             password="P@ssw0rd!"
         )
-        
+
         assert ctx.password == "P@ssw0rd!"
 
     def test_creation_with_hashes(self):
@@ -41,7 +39,7 @@ class TestLAPSDecryptionContextInit:
             lmhash="aad3b435b51404eeaad3b435b51404ee",
             nthash="31d6cfe0d16ae931b73c59d7e0c089c0"
         )
-        
+
         assert ctx.lmhash == "aad3b435b51404eeaad3b435b51404ee"
         assert ctx.nthash == "31d6cfe0d16ae931b73c59d7e0c089c0"
 
@@ -53,7 +51,7 @@ class TestLAPSDecryptionContextInit:
             kerberos=True,
             kdc_host="dc01.domain.lab"
         )
-        
+
         assert ctx.kerberos is True
         assert ctx.kdc_host == "dc01.domain.lab"
 
@@ -63,7 +61,7 @@ class TestLAPSDecryptionContextInit:
             domain="DOMAIN.LAB",
             username="admin"
         )
-        
+
         assert ctx.lmhash == ""
         assert ctx.nthash == ""
         assert ctx.kerberos is False
@@ -76,7 +74,7 @@ class TestLAPSDecryptionContextInit:
             domain="DOMAIN.LAB",
             username="admin"
         )
-        
+
         assert ctx._gke_cache == {}
 
 
@@ -90,7 +88,7 @@ class TestLAPSDecryptionContextFromCredentials:
             username="admin",
             password="P@ssw0rd!"
         )
-        
+
         assert ctx.domain == "DOMAIN.LAB"
         assert ctx.username == "admin"
         assert ctx.password == "P@ssw0rd!"
@@ -102,7 +100,7 @@ class TestLAPSDecryptionContextFromCredentials:
             username="admin",
             hashes="aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
         )
-        
+
         assert ctx.lmhash == "aad3b435b51404eeaad3b435b51404ee"
         assert ctx.nthash == "31d6cfe0d16ae931b73c59d7e0c089c0"
 
@@ -113,7 +111,7 @@ class TestLAPSDecryptionContextFromCredentials:
             username="admin",
             hashes="31d6cfe0d16ae931b73c59d7e0c089c0"
         )
-        
+
         assert ctx.lmhash == ""
         assert ctx.nthash == "31d6cfe0d16ae931b73c59d7e0c089c0"
 
@@ -125,7 +123,7 @@ class TestLAPSDecryptionContextFromCredentials:
             password="P@ssw0rd!",
             hashes=None
         )
-        
+
         assert ctx.lmhash == ""
         assert ctx.nthash == ""
 
@@ -138,7 +136,7 @@ class TestLAPSDecryptionContextFromCredentials:
             kerberos=True,
             kdc_host="dc01.domain.lab"
         )
-        
+
         assert ctx.kerberos is True
         assert ctx.kdc_host == "dc01.domain.lab"
 
@@ -150,7 +148,7 @@ class TestLAPSDecryptionContextFromCredentials:
             password="P@ssw0rd!",
             dns_server="192.168.1.1"
         )
-        
+
         assert ctx.dns_server == "192.168.1.1"
 
 
@@ -163,7 +161,7 @@ class TestLAPSDecryptionContextCaching:
             domain="DOMAIN.LAB",
             username="admin"
         )
-        
+
         assert len(ctx._gke_cache) == 0
 
     def test_cache_can_store_values(self):
@@ -172,11 +170,11 @@ class TestLAPSDecryptionContextCaching:
             domain="DOMAIN.LAB",
             username="admin"
         )
-        
+
         key = b"test_key_id"
         value = {"test": "data"}
         ctx._gke_cache[key] = value
-        
+
         assert ctx._gke_cache[key] == value
 
     def test_separate_instances_have_separate_caches(self):
@@ -189,7 +187,7 @@ class TestLAPSDecryptionContextCaching:
             domain="DOMAIN2.LAB",
             username="admin2"
         )
-        
+
         ctx1._gke_cache[b"key1"] = "value1"
-        
+
         assert b"key1" not in ctx2._gke_cache

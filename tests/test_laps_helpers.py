@@ -6,17 +6,14 @@ Tests cover:
 - print_laps_summary function
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 from taskhound.laps.helpers import (
     get_laps_credential_for_host,
     print_laps_summary,
 )
 from taskhound.laps.models import LAPSCache, LAPSCredential, LAPSFailure
-from taskhound.laps.exceptions import LAPS_ERRORS
-
 
 # ============================================================================
 # Test: get_laps_credential_for_host
@@ -33,9 +30,9 @@ class TestGetLapsCredentialForHost:
         mock_cred.encrypted = False
         mock_cred.is_expired.return_value = False
         mock_cache.get.return_value = mock_cred
-        
+
         cred, failure = get_laps_credential_for_host(mock_cache, "WS01")
-        
+
         assert cred == mock_cred
         assert failure is None
 
@@ -43,9 +40,9 @@ class TestGetLapsCredentialForHost:
         """Should return failure when host not in cache"""
         mock_cache = MagicMock(spec=LAPSCache)
         mock_cache.get.return_value = None
-        
+
         cred, failure = get_laps_credential_for_host(mock_cache, "WS01")
-        
+
         assert cred is None
         assert failure is not None
         assert failure.failure_type == "not_found"
@@ -58,9 +55,9 @@ class TestGetLapsCredentialForHost:
         mock_cred.encrypted = True
         mock_cred.laps_type = "mslaps"
         mock_cache.get.return_value = mock_cred
-        
+
         cred, failure = get_laps_credential_for_host(mock_cache, "WS01")
-        
+
         assert cred is None
         assert failure is not None
         assert failure.failure_type == "encrypted"
@@ -74,10 +71,10 @@ class TestGetLapsCredentialForHost:
         mock_cred.is_expired.return_value = True
         mock_cred.expiration = datetime.now() - timedelta(hours=1)
         mock_cache.get.return_value = mock_cred
-        
+
         with patch('taskhound.laps.helpers.warn') as mock_warn:
             cred, failure = get_laps_credential_for_host(mock_cache, "WS01")
-        
+
         assert cred == mock_cred
         assert failure is None
         mock_warn.assert_called_once()
@@ -87,9 +84,9 @@ class TestGetLapsCredentialForHost:
         """Should pass hostname to cache.get"""
         mock_cache = MagicMock(spec=LAPSCache)
         mock_cache.get.return_value = None
-        
+
         get_laps_credential_for_host(mock_cache, "TESTHOST.example.com")
-        
+
         mock_cache.get.assert_called_once_with("TESTHOST.example.com")
 
 
@@ -110,9 +107,9 @@ class TestPrintLapsSummary:
             "legacy": 3,
             "encrypted": 2
         }
-        
+
         print_laps_summary(mock_cache, successes=8, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "10" in captured.out
         assert "Total LAPS entries" in captured.out
@@ -126,9 +123,9 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 0
         }
-        
+
         print_laps_summary(mock_cache, successes=5, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "Windows LAPS" in captured.out
         assert "5" in captured.out
@@ -142,9 +139,9 @@ class TestPrintLapsSummary:
             "legacy": 7,
             "encrypted": 0
         }
-        
+
         print_laps_summary(mock_cache, successes=7, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "Legacy LAPS" in captured.out
         assert "7" in captured.out
@@ -158,9 +155,9 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 3
         }
-        
+
         print_laps_summary(mock_cache, successes=0, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "Encrypted" in captured.out
         assert "skipped" in captured.out
@@ -174,9 +171,9 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 0
         }
-        
+
         print_laps_summary(mock_cache, successes=5, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "Successful" in captured.out
         assert "5" in captured.out
@@ -190,15 +187,15 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 0
         }
-        
+
         failures = [
             LAPSFailure(hostname="WS01", failure_type="not_found", message="Not found"),
             LAPSFailure(hostname="WS02", failure_type="not_found", message="Not found"),
             LAPSFailure(hostname="WS03", failure_type="auth_failed", message="Auth failed"),
         ]
-        
+
         print_laps_summary(mock_cache, successes=7, failures=failures)
-        
+
         captured = capsys.readouterr()
         assert "No password in cache" in captured.out
         assert "2" in captured.out  # 2 not_found failures
@@ -213,9 +210,9 @@ class TestPrintLapsSummary:
             "legacy": 10,
             "encrypted": 0
         }
-        
+
         print_laps_summary(mock_cache, successes=10, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "Windows LAPS" not in captured.out
 
@@ -228,9 +225,9 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 0
         }
-        
+
         print_laps_summary(mock_cache, successes=10, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "Legacy LAPS" not in captured.out
 
@@ -243,9 +240,9 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 0
         }
-        
+
         print_laps_summary(mock_cache, successes=10, failures=[])
-        
+
         captured = capsys.readouterr()
         assert "skipped" not in captured.out.lower()
 
@@ -258,13 +255,13 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 0
         }
-        
+
         failures = [
             LAPSFailure(hostname="WS01", failure_type="remote_uac", message="Remote UAC"),
         ]
-        
+
         print_laps_summary(mock_cache, successes=4, failures=failures)
-        
+
         captured = capsys.readouterr()
         assert "Remote UAC" in captured.out
 
@@ -277,12 +274,12 @@ class TestPrintLapsSummary:
             "legacy": 0,
             "encrypted": 5
         }
-        
+
         failures = [
             LAPSFailure(hostname="WS01", failure_type="encrypted", message="Encrypted"),
         ]
-        
+
         print_laps_summary(mock_cache, successes=0, failures=failures)
-        
+
         captured = capsys.readouterr()
         assert "unsupported" in captured.out.lower()

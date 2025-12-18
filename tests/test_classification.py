@@ -86,7 +86,7 @@ class TestAnalyzePasswordAge:
         hv.analyze_password_age.return_value = ("UNKNOWN", None)
 
         meta = {"date": "2024-01-01T00:00:00"}
-        result = _analyze_password_age(hv, "user@domain.local", meta, "\\Task")
+        _analyze_password_age(hv, "user@domain.local", meta, "\\Task")
 
     def test_warns_when_using_fallback_date(self):
         """Should warn when using start_boundary fallback for date."""
@@ -409,15 +409,15 @@ class TestAnalyzePasswordAgeWithPwdCache:
     def test_pwd_cache_fallback_when_no_bloodhound(self):
         """Should use pwd_cache when BloodHound not available."""
         from datetime import datetime
-        
+
         pwd_cache = {
             "testuser": datetime(2024, 1, 1, 10, 0, 0),
         }
         meta = {"date": "2024-06-01T00:00:00"}
-        
+
         with patch("taskhound.parsers.highvalue._analyze_password_freshness") as mock_analyze:
             mock_analyze.return_value = ("GOOD", "Password changed after task creation")
-            
+
             result = _analyze_password_age(
                 hv=None,
                 runas="DOMAIN\\testuser",
@@ -425,22 +425,22 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 rel_path="\\Task",
                 pwd_cache=pwd_cache,
             )
-            
+
             assert result == "GOOD: Password changed after task creation"
             mock_analyze.assert_called_once()
 
     def test_pwd_cache_normalizes_domain_username(self):
         """Should normalize DOMAIN\\user to just user for cache lookup."""
         from datetime import datetime
-        
+
         pwd_cache = {
             "serviceacct": datetime(2024, 3, 15, 12, 0, 0),
         }
         meta = {"date": "2024-01-01T00:00:00"}
-        
+
         with patch("taskhound.parsers.highvalue._analyze_password_freshness") as mock_analyze:
             mock_analyze.return_value = ("BAD", "Password older than task")
-            
+
             result = _analyze_password_age(
                 hv=None,
                 runas="CONTOSO\\ServiceAcct",  # Different case
@@ -448,21 +448,21 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 rel_path="\\Task",
                 pwd_cache=pwd_cache,
             )
-            
+
             assert result == "BAD: Password older than task"
 
     def test_pwd_cache_handles_simple_username(self):
         """Should handle username without domain prefix."""
         from datetime import datetime
-        
+
         pwd_cache = {
             "localuser": datetime(2024, 5, 1, 8, 0, 0),
         }
         meta = {"date": "2024-04-01T00:00:00"}
-        
+
         with patch("taskhound.parsers.highvalue._analyze_password_freshness") as mock_analyze:
             mock_analyze.return_value = ("GOOD", "Password fresh")
-            
+
             result = _analyze_password_age(
                 hv=None,
                 runas="localuser",
@@ -470,18 +470,18 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 rel_path="\\Task",
                 pwd_cache=pwd_cache,
             )
-            
+
             assert result == "GOOD: Password fresh"
 
     def test_pwd_cache_returns_none_when_user_not_found(self):
         """Should return None when user not in pwd_cache."""
         from datetime import datetime
-        
+
         pwd_cache = {
             "otheruser": datetime(2024, 1, 1, 10, 0, 0),
         }
         meta = {"date": "2024-06-01T00:00:00"}
-        
+
         result = _analyze_password_age(
             hv=None,
             runas="unknownuser",
@@ -489,18 +489,18 @@ class TestAnalyzePasswordAgeWithPwdCache:
             rel_path="\\Task",
             pwd_cache=pwd_cache,
         )
-        
+
         assert result is None
 
     def test_pwd_cache_returns_none_when_no_task_date(self):
         """Should return None when no task date available."""
         from datetime import datetime
-        
+
         pwd_cache = {
             "testuser": datetime(2024, 1, 1, 10, 0, 0),
         }
         meta = {}  # No date
-        
+
         result = _analyze_password_age(
             hv=None,
             runas="testuser",
@@ -508,13 +508,13 @@ class TestAnalyzePasswordAgeWithPwdCache:
             rel_path="\\Task",
             pwd_cache=pwd_cache,
         )
-        
+
         assert result is None
 
     def test_pwd_cache_returns_none_when_cache_is_none(self):
         """Should return None when pwd_cache is None."""
         meta = {"date": "2024-06-01T00:00:00"}
-        
+
         result = _analyze_password_age(
             hv=None,
             runas="testuser",
@@ -522,21 +522,21 @@ class TestAnalyzePasswordAgeWithPwdCache:
             rel_path="\\Task",
             pwd_cache=None,
         )
-        
+
         assert result is None
 
     def test_pwd_cache_handles_exception_gracefully(self):
         """Should handle exceptions and return None."""
         from datetime import datetime
-        
+
         pwd_cache = {
             "testuser": datetime(2024, 1, 1, 10, 0, 0),
         }
         meta = {"date": "2024-06-01T00:00:00"}
-        
+
         with patch("taskhound.parsers.highvalue._analyze_password_freshness") as mock_analyze:
             mock_analyze.side_effect = Exception("Analysis failed")
-            
+
             result = _analyze_password_age(
                 hv=None,
                 runas="testuser",
@@ -544,22 +544,22 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 rel_path="\\Task",
                 pwd_cache=pwd_cache,
             )
-            
+
             assert result is None
 
     def test_pwd_cache_skipped_when_bloodhound_has_data(self):
         """Should not use pwd_cache when BloodHound returns valid analysis."""
         from datetime import datetime
-        
+
         hv = MagicMock()
         hv.loaded = True
         hv.analyze_password_age.return_value = ("HIGH", "BloodHound analysis")
-        
+
         pwd_cache = {
             "testuser": datetime(2024, 1, 1, 10, 0, 0),
         }
         meta = {"date": "2024-06-01T00:00:00"}
-        
+
         result = _analyze_password_age(
             hv=hv,
             runas="testuser",
@@ -567,26 +567,26 @@ class TestAnalyzePasswordAgeWithPwdCache:
             rel_path="\\Task",
             pwd_cache=pwd_cache,
         )
-        
+
         # Should use BloodHound result, not pwd_cache
         assert result == "HIGH: BloodHound analysis"
 
     def test_pwd_cache_used_when_bloodhound_returns_unknown(self):
         """Should fall back to pwd_cache when BloodHound returns UNKNOWN."""
         from datetime import datetime
-        
+
         hv = MagicMock()
         hv.loaded = True
         hv.analyze_password_age.return_value = ("UNKNOWN", None)
-        
+
         pwd_cache = {
             "testuser": datetime(2024, 1, 1, 10, 0, 0),
         }
         meta = {"date": "2024-06-01T00:00:00"}
-        
+
         with patch("taskhound.parsers.highvalue._analyze_password_freshness") as mock_analyze:
             mock_analyze.return_value = ("GOOD", "Cache-based analysis")
-            
+
             result = _analyze_password_age(
                 hv=hv,
                 runas="testuser",
@@ -594,7 +594,7 @@ class TestAnalyzePasswordAgeWithPwdCache:
                 rel_path="\\Task",
                 pwd_cache=pwd_cache,
             )
-            
+
             assert result == "GOOD: Cache-based analysis"
 
 
@@ -604,11 +604,11 @@ class TestClassifyTaskWithPwdCache:
     def test_pwd_cache_passed_to_password_analysis(self):
         """Should pass pwd_cache to password analysis for regular tasks."""
         from datetime import datetime
-        
+
         pwd_cache = {
             "regularuser": datetime(2024, 1, 1, 10, 0, 0),
         }
-        
+
         row = TaskRow(
             host="host1.domain.local",
             path="\\RegularTask",
@@ -616,11 +616,11 @@ class TestClassifyTaskWithPwdCache:
             credentials_hint="stored_credentials",
         )
         meta = {"date": "2024-06-01T00:00:00"}
-        
+
         with patch("taskhound.classification._analyze_password_age") as mock_analyze:
             mock_analyze.return_value = "Password analysis result"
-            
-            result = classify_task(
+
+            classify_task(
                 row=row,
                 meta=meta,
                 runas="regularuser",
@@ -630,7 +630,7 @@ class TestClassifyTaskWithPwdCache:
                 include_local=False,
                 pwd_cache=pwd_cache,
             )
-            
+
             # Verify pwd_cache was passed
             mock_analyze.assert_called_once()
             call_kwargs = mock_analyze.call_args

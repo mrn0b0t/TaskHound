@@ -1,11 +1,7 @@
 """Tests for taskhound/opengraph/writer.py module."""
 
-import pytest
-import os
 import tempfile
-import json
-from unittest.mock import patch, MagicMock, Mock
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from taskhound.opengraph.writer import (
     generate_opengraph_files,
@@ -17,13 +13,12 @@ class TestGenerateOpengraphFiles:
 
     def test_empty_tasks_list(self):
         """Test with empty tasks list."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    generate_opengraph_files(
-                        output_dir=tmpdir,
-                        tasks=[],
-                    )
+        with tempfile.TemporaryDirectory() as tmpdir, patch("taskhound.opengraph.writer.warn"):
+            with patch("taskhound.opengraph.writer.info"):
+                generate_opengraph_files(
+                    output_dir=tmpdir,
+                    tasks=[],
+                )
             # Should not crash with empty list
 
     def test_filters_failure_rows(self):
@@ -33,18 +28,17 @@ class TestGenerateOpengraphFiles:
                 {"type": "FAILURE", "host": "FAILED_HOST"},
                 {"type": "TASK", "host": "VALID_HOST", "runas": "DOMAIN\\user"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_with_taskrow_objects(self):
         """Test conversion of TaskRow objects to dicts."""
         from taskhound.models.task import TaskRow
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a mock TaskRow
             task_row = TaskRow(
@@ -53,14 +47,13 @@ class TestGenerateOpengraphFiles:
                 author="DOMAIN\\admin",
                 runas="DOMAIN\\service",
             )
-            
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=[task_row],
-                        )
+
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=[task_row],
+                    )
 
     def test_extracts_domain_from_fqdn(self):
         """Test domain extraction from FQDN hostnames."""
@@ -68,13 +61,12 @@ class TestGenerateOpengraphFiles:
             tasks = [
                 {"host": "SERVER.CORP.LOCAL", "runas": "service", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_handles_na_runas(self):
         """Test handling of N/A runas values."""
@@ -82,34 +74,32 @@ class TestGenerateOpengraphFiles:
             tasks = [
                 {"host": "SERVER.DOMAIN.LOCAL", "runas": "N/A", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_with_bloodhound_connector(self):
         """Test with BloodHound connector for resolution."""
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_connector = MagicMock()
             mock_connector.users_data = {}
-            
+
             tasks = [
                 {"host": "SERVER.DOMAIN.LOCAL", "runas": "DOMAIN\\user", "task_name": "Test"},
             ]
-            
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        with patch("taskhound.opengraph.writer.resolve_object_ids_chunked") as mock_resolve:
-                            mock_resolve.return_value = ({}, {})
-                            generate_opengraph_files(
-                                output_dir=tmpdir,
-                                tasks=tasks,
-                                bh_connector=mock_connector,
-                            )
+
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    with patch("taskhound.opengraph.writer.resolve_object_ids_chunked") as mock_resolve:
+                        mock_resolve.return_value = ({}, {})
+                        generate_opengraph_files(
+                            output_dir=tmpdir,
+                            tasks=tasks,
+                            bh_connector=mock_connector,
+                        )
 
     def test_with_computer_sids_mapping(self):
         """Test with pre-computed computer SIDs."""
@@ -118,15 +108,14 @@ class TestGenerateOpengraphFiles:
                 {"host": "SERVER.DOMAIN.LOCAL", "runas": "DOMAIN\\user", "task_name": "Test"},
             ]
             computer_sids = {"SERVER.DOMAIN.LOCAL": "S-1-5-21-123456789-1234567890-1234567890-1001"}
-            
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                            computer_sids=computer_sids,
-                        )
+
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                        computer_sids=computer_sids,
+                    )
 
     def test_allow_orphans_flag(self):
         """Test allow_orphans flag behavior."""
@@ -134,15 +123,14 @@ class TestGenerateOpengraphFiles:
             tasks = [
                 {"host": "ORPHAN.DOMAIN.LOCAL", "runas": "orphan_user", "task_name": "Test"},
             ]
-            
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                            allow_orphans=True,
-                        )
+
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                        allow_orphans=True,
+                    )
 
 
 class TestDomainExtraction:
@@ -155,13 +143,12 @@ class TestDomainExtraction:
             tasks = [
                 {"host": "DC01.CORP.LOCAL", "runas": "admin", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_short_hostname(self):
         """Test with short hostname (no domain)."""
@@ -169,13 +156,12 @@ class TestDomainExtraction:
             tasks = [
                 {"host": "SERVER", "runas": "localuser", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_multi_level_domain(self):
         """Test with multi-level domain."""
@@ -183,13 +169,12 @@ class TestDomainExtraction:
             tasks = [
                 {"host": "SERVER.CHILD.CORP.LOCAL", "runas": "admin", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
 
 class TestEdgeCases:
@@ -201,13 +186,12 @@ class TestEdgeCases:
             tasks = [
                 {"host": "UNKNOWN_HOST", "runas": "user", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_empty_hostname(self):
         """Test handling of empty hostname."""
@@ -215,13 +199,12 @@ class TestEdgeCases:
             tasks = [
                 {"host": "", "runas": "user", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_empty_runas(self):
         """Test handling of empty runas."""
@@ -229,13 +212,12 @@ class TestEdgeCases:
             tasks = [
                 {"host": "SERVER.DOMAIN.LOCAL", "runas": "", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )
 
     def test_whitespace_in_values(self):
         """Test handling of whitespace in values."""
@@ -243,10 +225,9 @@ class TestEdgeCases:
             tasks = [
                 {"host": "  SERVER.DOMAIN.LOCAL  ", "runas": "  user  ", "task_name": "Test"},
             ]
-            with patch("taskhound.opengraph.writer.warn"):
-                with patch("taskhound.opengraph.writer.info"):
-                    with patch("taskhound.opengraph.writer.debug"):
-                        generate_opengraph_files(
-                            output_dir=tmpdir,
-                            tasks=tasks,
-                        )
+            with patch("taskhound.opengraph.writer.warn"), patch("taskhound.opengraph.writer.info"):
+                with patch("taskhound.opengraph.writer.debug"):
+                    generate_opengraph_files(
+                        output_dir=tmpdir,
+                        tasks=tasks,
+                    )

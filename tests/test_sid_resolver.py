@@ -1,15 +1,16 @@
 """
 Tests for SID resolver utilities.
 """
-import pytest
 import struct
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+import pytest
 
 from taskhound.utils.sid_resolver import (
-    is_sid,
-    sid_to_binary,
     binary_to_sid,
+    is_sid,
     resolve_sid_from_bloodhound,
+    sid_to_binary,
 )
 
 
@@ -19,7 +20,7 @@ class TestIsSid:
     def test_valid_domain_sid(self):
         """Should recognize valid domain SID"""
         sid = "S-1-5-21-123456789-123456789-123456789-1001"
-        
+
         assert is_sid(sid) is True
 
     def test_valid_builtin_sid(self):
@@ -67,9 +68,9 @@ class TestSidToBinary:
     def test_converts_simple_sid(self):
         """Should convert simple SID to binary"""
         sid = "S-1-5-18"  # Local System
-        
+
         result = sid_to_binary(sid)
-        
+
         assert result is not None
         assert isinstance(result, bytes)
         assert len(result) >= 8  # Minimum SID size
@@ -77,9 +78,9 @@ class TestSidToBinary:
     def test_converts_domain_sid(self):
         """Should convert domain SID to binary"""
         sid = "S-1-5-21-123456789-987654321-111111111-500"
-        
+
         result = sid_to_binary(sid)
-        
+
         assert result is not None
         # 5 sub-authorities (21, 123456789, 987654321, 111111111, 500)
         # Revision (1) + SubAuth count (1) + Authority (6) + 5 sub-authorities (20) = 28
@@ -98,10 +99,10 @@ class TestSidToBinary:
     def test_roundtrip_conversion(self):
         """Should survive roundtrip conversion"""
         original_sid = "S-1-5-21-123456789-987654321-111111111-1001"
-        
+
         binary = sid_to_binary(original_sid)
         recovered = binary_to_sid(binary)
-        
+
         assert recovered == original_sid
 
 
@@ -116,9 +117,9 @@ class TestBinaryToSid:
         binary += struct.pack("B", 1)  # SubAuth count
         binary += struct.pack(">Q", 5)[2:]  # Authority (6 bytes)
         binary += struct.pack("<I", 18)  # SubAuth
-        
+
         result = binary_to_sid(binary)
-        
+
         assert result == "S-1-5-18"
 
     def test_returns_none_for_empty_bytes(self):
@@ -141,9 +142,9 @@ class TestBinaryToSid:
         binary += struct.pack("B", 5)  # SubAuth count (claims 5)
         binary += struct.pack(">Q", 5)[2:]  # Authority (6 bytes)
         binary += struct.pack("<I", 18)  # Only 1 SubAuth provided
-        
+
         result = binary_to_sid(binary)
-        
+
         assert result is None
 
 
@@ -153,16 +154,16 @@ class TestResolveFromBloodhound:
     def test_returns_none_when_no_loader(self):
         """Should return None when hv_loader is None"""
         result = resolve_sid_from_bloodhound("S-1-5-21-xxx", None)
-        
+
         assert result is None
 
     def test_returns_none_when_loader_not_loaded(self):
         """Should return None when loader exists but not loaded"""
         mock_loader = MagicMock()
         mock_loader.loaded = False
-        
+
         result = resolve_sid_from_bloodhound("S-1-5-21-xxx", mock_loader)
-        
+
         assert result is None
 
     def test_returns_username_when_found(self):
@@ -175,11 +176,11 @@ class TestResolveFromBloodhound:
                 "domain": "DOMAIN.LAB"
             }
         }
-        
+
         # The function may return user data, None, or processed value
         # depending on implementation - testing the lookup path
-        result = resolve_sid_from_bloodhound("S-1-5-21-123456789-1001", mock_loader)
-        
+        resolve_sid_from_bloodhound("S-1-5-21-123456789-1001", mock_loader)
+
         # Function accesses hv_sids, so the mock should have been called
         # Result depends on implementation details
         # Main test is that it doesn't raise an exception
@@ -190,9 +191,9 @@ class TestResolveFromBloodhound:
         mock_loader = MagicMock()
         mock_loader.loaded = True
         mock_loader.hv_sids = {}
-        
+
         result = resolve_sid_from_bloodhound("S-1-5-21-unknown", mock_loader)
-        
+
         assert result is None
 
 
@@ -213,7 +214,7 @@ class TestSidBinaryRoundtrip:
         """SID should survive binary roundtrip"""
         binary = sid_to_binary(sid)
         recovered = binary_to_sid(binary)
-        
+
         assert recovered == sid
 
 
@@ -230,13 +231,13 @@ class TestIsSidEdgeCases:
         """Should handle SID with many sub-authorities"""
         # Windows supports up to 15 sub-authorities
         sid = "S-1-5-" + "-".join(str(i) for i in range(15))
-        
+
         assert is_sid(sid) is True
 
     def test_handles_large_sub_authority_values(self):
         """Should handle large sub-authority values"""
         sid = "S-1-5-21-4294967295-4294967295-4294967295-4294967295"
-        
+
         assert is_sid(sid) is True
 
 
@@ -247,17 +248,17 @@ class TestSidToBinaryEdgeCases:
         """Should handle large authority values"""
         # SECURITY_NT_AUTHORITY is 5, but other values exist
         sid = "S-1-5-21-123456789"
-        
+
         result = sid_to_binary(sid)
-        
+
         assert result is not None
 
     def test_handles_zero_subauthority(self):
         """Should handle zero as sub-authority"""
         sid = "S-1-5-0"
-        
+
         result = sid_to_binary(sid)
-        
+
         assert result is not None
         assert binary_to_sid(result) == sid
 
@@ -268,27 +269,27 @@ class TestGetDomainSidPrefix:
     def test_extracts_domain_prefix_from_user_sid(self):
         """Should extract domain prefix from user SID (remove RID)"""
         from taskhound.utils.sid_resolver import get_domain_sid_prefix
-        
+
         sid = "S-1-5-21-123456789-987654321-111222333-1001"
-        
+
         result = get_domain_sid_prefix(sid)
-        
+
         assert result == "S-1-5-21-123456789-987654321-111222333"
 
     def test_extracts_domain_prefix_from_computer_sid(self):
         """Should extract domain prefix from computer account SID"""
         from taskhound.utils.sid_resolver import get_domain_sid_prefix
-        
+
         sid = "S-1-5-21-3570960105-1792075822-554663251-1002"
-        
+
         result = get_domain_sid_prefix(sid)
-        
+
         assert result == "S-1-5-21-3570960105-1792075822-554663251"
 
     def test_returns_none_for_builtin_sid(self):
         """Should return None for builtin SIDs (not domain SIDs)"""
         from taskhound.utils.sid_resolver import get_domain_sid_prefix
-        
+
         # Local System
         assert get_domain_sid_prefix("S-1-5-18") is None
         # Builtin Administrators
@@ -297,13 +298,13 @@ class TestGetDomainSidPrefix:
     def test_returns_none_for_empty_string(self):
         """Should return None for empty string"""
         from taskhound.utils.sid_resolver import get_domain_sid_prefix
-        
+
         assert get_domain_sid_prefix("") is None
 
     def test_returns_none_for_none(self):
         """Should return None for None"""
         from taskhound.utils.sid_resolver import get_domain_sid_prefix
-        
+
         assert get_domain_sid_prefix(None) is None
 
 
@@ -313,36 +314,36 @@ class TestIsForeignDomainSid:
     def test_detects_foreign_domain_sid(self):
         """Should detect SID from different domain"""
         from taskhound.utils.sid_resolver import is_foreign_domain_sid
-        
+
         local_prefix = "S-1-5-21-123456789-987654321-111222333"
         foreign_sid = "S-1-5-21-999888777-666555444-333222111-1001"
-        
+
         assert is_foreign_domain_sid(foreign_sid, local_prefix) is True
 
     def test_detects_same_domain_sid(self):
         """Should return False for SID from same domain"""
         from taskhound.utils.sid_resolver import is_foreign_domain_sid
-        
+
         local_prefix = "S-1-5-21-123456789-987654321-111222333"
         same_domain_sid = "S-1-5-21-123456789-987654321-111222333-500"
-        
+
         assert is_foreign_domain_sid(same_domain_sid, local_prefix) is False
 
     def test_returns_false_for_builtin_sid(self):
         """Should return False for builtin SIDs (not domain SIDs)"""
         from taskhound.utils.sid_resolver import is_foreign_domain_sid
-        
+
         local_prefix = "S-1-5-21-123456789-987654321-111222333"
-        
+
         # Local System - not a domain SID
         assert is_foreign_domain_sid("S-1-5-18", local_prefix) is False
 
     def test_returns_false_when_no_local_prefix(self):
         """Should return False when local domain prefix is unknown"""
         from taskhound.utils.sid_resolver import is_foreign_domain_sid
-        
+
         foreign_sid = "S-1-5-21-999888777-666555444-333222111-1001"
-        
+
         assert is_foreign_domain_sid(foreign_sid, None) is False
 
 
@@ -352,78 +353,78 @@ class TestLDAPDomainValidation:
     def test_resolve_name_to_sid_via_ldap_rejects_empty_domain(self):
         """Should return None for empty domain (prevents invalidDNSyntax error)"""
         from taskhound.utils.sid_resolver import resolve_name_to_sid_via_ldap
-        
+
         # Empty domain should return None immediately without attempting LDAP
         result = resolve_name_to_sid_via_ldap(
             name="testcomputer",
             domain="",
             is_computer=True,
         )
-        
+
         assert result is None
 
     def test_resolve_name_to_sid_via_ldap_rejects_domain_without_dots(self):
         """Should return None for domain without dots (not FQDN)"""
         from taskhound.utils.sid_resolver import resolve_name_to_sid_via_ldap
-        
+
         # Single-label domain (no dots) should return None
         result = resolve_name_to_sid_via_ldap(
             name="testcomputer",
             domain="TESTDOMAIN",
             is_computer=True,
         )
-        
+
         assert result is None
 
     def test_resolve_sid_via_ldap_rejects_empty_domain(self):
         """Should return None for empty domain in SID resolution"""
         from taskhound.utils.sid_resolver import resolve_sid_via_ldap
-        
+
         result = resolve_sid_via_ldap(
             sid="S-1-5-21-123456789-987654321-111111111-1001",
             domain="",
             username="testuser",
             password="testpass",
         )
-        
+
         assert result is None
 
     def test_resolve_sid_via_ldap_rejects_domain_without_dots(self):
         """Should return None for domain without dots in SID resolution"""
         from taskhound.utils.sid_resolver import resolve_sid_via_ldap
-        
+
         result = resolve_sid_via_ldap(
             sid="S-1-5-21-123456789-987654321-111111111-1001",
             domain="NODOTS",
             username="testuser",
             password="testpass",
         )
-        
+
         assert result is None
 
     def test_batch_get_user_attributes_rejects_empty_domain(self):
         """Should return empty dict for empty domain in batch query"""
         from taskhound.utils.sid_resolver import batch_get_user_attributes
-        
+
         result = batch_get_user_attributes(
             usernames=["testuser"],
             domain="",
         )
-        
+
         assert result == {}
 
     def test_fetch_tier0_members_rejects_empty_domain(self):
         """Should return empty dict for empty domain in Tier-0 preflight"""
         from taskhound.utils.sid_resolver import fetch_tier0_members
-        
+
         result = fetch_tier0_members(domain="")
-        
+
         assert result == {}
 
     def test_fetch_tier0_members_rejects_domain_without_dots(self):
         """Should return empty dict for domain without dots"""
         from taskhound.utils.sid_resolver import fetch_tier0_members
-        
+
         result = fetch_tier0_members(domain="SINGLELABEL")
-        
+
         assert result == {}

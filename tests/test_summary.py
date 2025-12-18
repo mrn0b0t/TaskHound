@@ -4,9 +4,7 @@ Tests for taskhound.output.summary module.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from taskhound.output.summary import print_summary_table, print_decrypted_credentials
+from taskhound.output.summary import print_decrypted_credentials, print_summary_table
 
 
 class TestPrintSummaryTable:

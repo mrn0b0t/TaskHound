@@ -1,16 +1,14 @@
 """Tests for taskhound/engine/offline.py - offline task processing."""
 
 import os
-import pytest
 import tempfile
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from taskhound.engine.offline import (
-    process_offline_directory,
-    _process_offline_host,
     _process_offline_dpapi_decryption,
+    _process_offline_host,
+    process_offline_directory,
 )
-
 
 # Sample valid task XML for testing
 VALID_TASK_XML = b"""<?xml version="1.0" encoding="UTF-16"?>
@@ -57,16 +55,15 @@ class TestProcessOfflineDirectory:
 
     def test_empty_directory(self):
         """Returns empty list for empty directory."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("taskhound.engine.offline.warn") as mock_warn:
-                result = process_offline_directory(
-                    offline_dir=tmpdir,
-                    hv=None,
-                    show_unsaved_creds=False,
-                    include_local=False,
-                    all_rows=[],
-                    debug=False,
-                )
+        with tempfile.TemporaryDirectory() as tmpdir, patch("taskhound.engine.offline.warn") as mock_warn:
+            result = process_offline_directory(
+                offline_dir=tmpdir,
+                hv=None,
+                show_unsaved_creds=False,
+                include_local=False,
+                all_rows=[],
+                debug=False,
+            )
         assert result == []
         mock_warn.assert_called()
 
@@ -102,16 +99,15 @@ class TestProcessOfflineDirectory:
                 f.write(VALID_TASK_XML)
 
             all_rows = []
-            with patch("taskhound.engine.offline.good"):
-                with patch("taskhound.engine.offline.info"):
-                    result = process_offline_directory(
-                        offline_dir=tmpdir,
-                        hv=None,
-                        show_unsaved_creds=True,
-                        include_local=True,
-                        all_rows=all_rows,
-                        debug=False,
-                    )
+            with patch("taskhound.engine.offline.good"), patch("taskhound.engine.offline.info"):
+                process_offline_directory(
+                    offline_dir=tmpdir,
+                    hv=None,
+                    show_unsaved_creds=True,
+                    include_local=True,
+                    all_rows=all_rows,
+                    debug=False,
+                )
 
             # Should have processed something
             assert len(all_rows) >= 0  # May or may not include depending on filters
@@ -128,7 +124,7 @@ class TestProcessOfflineDirectory:
 
             all_rows = []
             with patch("taskhound.engine.offline.warn"):
-                result = process_offline_directory(
+                process_offline_directory(
                     offline_dir=tmpdir,
                     hv=None,
                     show_unsaved_creds=True,
@@ -154,7 +150,7 @@ class TestProcessOfflineDirectory:
                         # Return tuple (out_lines, decrypted_creds)
                         mock_dpapi.return_value = ([], [])
                         mock_host.return_value = []
-                        result = process_offline_directory(
+                        process_offline_directory(
                             offline_dir=tmpdir,
                             hv=None,
                             show_unsaved_creds=True,
@@ -173,17 +169,16 @@ class TestProcessOfflineHost:
 
     def test_no_xml_files(self):
         """Returns empty list when no XML files found."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("taskhound.engine.offline.warn"):
-                result = _process_offline_host(
-                    hostname="DC01",
-                    host_dir=tmpdir,
-                    hv=None,
-                    show_unsaved_creds=True,
-                    include_local=True,
-                    all_rows=[],
-                    debug=False,
-                )
+        with tempfile.TemporaryDirectory() as tmpdir, patch("taskhound.engine.offline.warn"):
+            result = _process_offline_host(
+                hostname="DC01",
+                host_dir=tmpdir,
+                hv=None,
+                show_unsaved_creds=True,
+                include_local=True,
+                all_rows=[],
+                debug=False,
+            )
         assert result == []
 
     def test_skips_hidden_files(self):
@@ -196,7 +191,7 @@ class TestProcessOfflineHost:
 
             all_rows = []
             with patch("taskhound.engine.offline.warn"):
-                result = _process_offline_host(
+                _process_offline_host(
                     hostname="DC01",
                     host_dir=tmpdir,
                     hv=None,
@@ -269,7 +264,7 @@ class TestProcessOfflineHost:
             all_rows = []
             with patch("taskhound.engine.offline.good"):
                 with patch("builtins.open", side_effect=PermissionError("Access denied")):
-                    result = _process_offline_host(
+                    _process_offline_host(
                         hostname="DC01",
                         host_dir=tmpdir,
                         hv=None,
@@ -331,7 +326,7 @@ class TestProcessOfflineDPAPIDecryption:
             with patch("taskhound.dpapi.looter.decrypt_offline_dpapi_files") as mock_decrypt:
                 with patch("taskhound.engine.offline.info"):
                     mock_decrypt.return_value = []
-                    result = _process_offline_dpapi_decryption(
+                    _process_offline_dpapi_decryption(
                         hostname="DC01",
                         host_dir=tmpdir,
                         dpapi_key="test_key",
@@ -351,7 +346,7 @@ class TestProcessOfflineDPAPIDecryption:
             with patch("taskhound.dpapi.looter.decrypt_offline_dpapi_files") as mock_decrypt:
                 with patch("taskhound.engine.offline.info"):
                     mock_decrypt.return_value = []
-                    result = _process_offline_dpapi_decryption(
+                    _process_offline_dpapi_decryption(
                         hostname="DC01",
                         host_dir=tmpdir,
                         dpapi_key="test_key",
@@ -374,7 +369,7 @@ class TestProcessOfflineDPAPIDecryption:
             with patch("taskhound.dpapi.looter.decrypt_offline_dpapi_files") as mock_decrypt:
                 with patch("taskhound.engine.offline.info"):
                     mock_decrypt.return_value = []
-                    result = _process_offline_dpapi_decryption(
+                    _process_offline_dpapi_decryption(
                         hostname=hostname,
                         host_dir=tmpdir,
                         dpapi_key="test_key",
@@ -447,7 +442,7 @@ class TestProcessOfflineDPAPIDecryption:
                 with patch("taskhound.engine.offline.warn"):
                     with patch("traceback.print_exc") as mock_traceback:
                         mock_decrypt.side_effect = Exception("Test error")
-                        result = _process_offline_dpapi_decryption(
+                        _process_offline_dpapi_decryption(
                             hostname="DC01",
                             host_dir=tmpdir,
                             dpapi_key="test_key",
@@ -483,17 +478,16 @@ class TestOfflineClassification:
                 f.write(xml_no_runas)
 
             all_rows = []
-            with patch("taskhound.engine.offline.warn"):
-                with patch("taskhound.engine.offline.good"):
-                    result = _process_offline_host(
-                        hostname="DC01",
-                        host_dir=tmpdir,
-                        hv=None,
-                        show_unsaved_creds=True,
-                        include_local=True,
-                        all_rows=all_rows,
-                        debug=False,
-                    )
+            with patch("taskhound.engine.offline.warn"), patch("taskhound.engine.offline.good"):
+                _process_offline_host(
+                    hostname="DC01",
+                    host_dir=tmpdir,
+                    hv=None,
+                    show_unsaved_creds=True,
+                    include_local=True,
+                    all_rows=all_rows,
+                    debug=False,
+                )
 
             # Task without runas should be skipped
             assert len(all_rows) == 0
@@ -528,7 +522,7 @@ class TestOfflineClassification:
 
             all_rows = []
             with patch("taskhound.engine.offline.good"):
-                result = _process_offline_host(
+                _process_offline_host(
                     hostname="DC01",
                     host_dir=tmpdir,
                     hv=None,
@@ -572,7 +566,7 @@ class TestOfflineClassification:
 
             all_rows = []
             with patch("taskhound.engine.offline.good"):
-                result = _process_offline_host(
+                _process_offline_host(
                     hostname="DC01",
                     host_dir=tmpdir,
                     hv=None,

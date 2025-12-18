@@ -3,15 +3,14 @@ Additional SID resolver tests for coverage improvement.
 
 Tests for BloodHound API resolution, SMB LSARPC resolution, and LDAP resolution paths.
 """
-import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 from taskhound.utils.sid_resolver import (
-    resolve_sid_via_bloodhound_api,
-    resolve_sid_from_bloodhound,
-    resolve_sid,
     format_runas_with_sid_resolution,
     looks_like_domain_user,
+    resolve_sid,
+    resolve_sid_from_bloodhound,
+    resolve_sid_via_bloodhound_api,
 )
 
 
@@ -21,7 +20,7 @@ class TestResolveViaBloodhoundApi:
     def test_returns_none_when_no_connector(self):
         """Should return None when bh_connector is None."""
         result = resolve_sid_via_bloodhound_api("S-1-5-21-xxx", None)
-        
+
         assert result is None
 
     def test_queries_bloodhound_with_cypher(self):
@@ -32,12 +31,12 @@ class TestResolveViaBloodhoundApi:
                 "data": [{"name": "ADMIN@DOMAIN.LOCAL"}]
             }
         }
-        
+
         result = resolve_sid_via_bloodhound_api(
             "S-1-5-21-123456789-1001",
             mock_connector
         )
-        
+
         assert result == "ADMIN@DOMAIN.LOCAL"
         mock_connector.run_cypher_query.assert_called_once()
         # Verify the query contains the SID
@@ -48,12 +47,12 @@ class TestResolveViaBloodhoundApi:
         """Should return None when BloodHound returns no data."""
         mock_connector = MagicMock()
         mock_connector.run_cypher_query.return_value = None
-        
+
         result = resolve_sid_via_bloodhound_api(
             "S-1-5-21-unknown",
             mock_connector
         )
-        
+
         assert result is None
 
     def test_returns_none_on_empty_data_array(self):
@@ -62,24 +61,24 @@ class TestResolveViaBloodhoundApi:
         mock_connector.run_cypher_query.return_value = {
             "data": {"data": []}
         }
-        
+
         result = resolve_sid_via_bloodhound_api(
             "S-1-5-21-unknown",
             mock_connector
         )
-        
+
         assert result is None
 
     def test_handles_api_exception(self):
         """Should handle exceptions from BloodHound API."""
         mock_connector = MagicMock()
         mock_connector.run_cypher_query.side_effect = Exception("API Error")
-        
+
         result = resolve_sid_via_bloodhound_api(
             "S-1-5-21-error",
             mock_connector
         )
-        
+
         assert result is None
 
 
@@ -96,9 +95,9 @@ class TestResolveFromBloodhoundExtended:
                 "name": "Administrator Full Name"
             }
         }
-        
+
         result = resolve_sid_from_bloodhound("S-1-5-21-123-1001", mock_loader)
-        
+
         assert result == "admin"
 
     def test_falls_back_to_name(self):
@@ -110,9 +109,9 @@ class TestResolveFromBloodhoundExtended:
                 "name": "SERVICE_ACCOUNT"
             }
         }
-        
+
         result = resolve_sid_from_bloodhound("S-1-5-21-123-1002", mock_loader)
-        
+
         assert result == "SERVICE_ACCOUNT"
 
     def test_strips_quotes_from_username(self):
@@ -124,9 +123,9 @@ class TestResolveFromBloodhoundExtended:
                 "samaccountname": '"quoteduser"'
             }
         }
-        
+
         result = resolve_sid_from_bloodhound("S-1-5-21-123-1003", mock_loader)
-        
+
         assert result == "quoteduser"
 
 
@@ -164,19 +163,19 @@ class TestLooksLikeDomainUser:
     def test_rejects_none(self):
         """Should reject None."""
         assert looks_like_domain_user(None) is False
-    
+
     def test_accepts_domain_user_with_backslash(self):
         """Should accept normal domain user."""
         assert looks_like_domain_user("CORP\\jsmith") is True
-        
+
     def test_rejects_dot_local_domain(self):
         """Should reject local accounts with dot domain."""
         assert looks_like_domain_user(".\\localadmin") is False
-    
+
     def test_recognizes_domain_sid(self):
         """Should recognize domain SID format."""
         assert looks_like_domain_user("S-1-5-21-123456789-987654321-111111111-1001") is True
-    
+
     def test_rejects_local_system_sid(self):
         """Should reject well-known local SIDs."""
         assert looks_like_domain_user("S-1-5-18") is False  # SYSTEM
@@ -197,9 +196,9 @@ class TestResolveSid:
             "DOMAIN\\cacheduser" if cat == "sids" and key == "S-1-5-21-123-456-789-1001" else None
         )
         mock_cache.return_value = mock_cache_instance
-        
+
         result, resolved = resolve_sid("S-1-5-21-123-456-789-1001")
-        
+
         # Should format as "username (SID)"
         assert "cacheduser" in result
         assert "S-1-5-21-123-456-789-1001" in result
@@ -214,9 +213,9 @@ class TestResolveSid:
             3 if cat == "sid_failures" else None
         )
         mock_cache.return_value = mock_cache_instance
-        
+
         result, resolved = resolve_sid("S-1-5-21-123-456-789-1002")
-        
+
         assert "Unresolvable" in result
 
     @patch("taskhound.utils.sid_resolver.get_cache")
@@ -227,19 +226,19 @@ class TestResolveSid:
         mock_cache_instance.get.return_value = None
         mock_cache.return_value = mock_cache_instance
         mock_bh.return_value = "bhuser"
-        
+
         mock_loader = MagicMock()
         mock_loader.loaded = True
-        
+
         result, resolved = resolve_sid("S-1-5-21-123-456-789-1003", hv_loader=mock_loader)
-        
+
         mock_bh.assert_called_once()
         assert resolved == "bhuser"
 
     def test_handles_non_sid_input(self):
         """Should handle non-SID input gracefully."""
         result, resolved = resolve_sid("DOMAIN\\user")
-        
+
         # Should return the input as-is since it's not a SID
         assert result == "DOMAIN\\user"
 
@@ -254,7 +253,7 @@ class TestFormatRunasWithSidResolution:
             None, None, None, False,
             None, None, None, None, None, False
         )
-        
+
         assert result == "DOMAIN\\admin"
         assert resolved is None
 
@@ -262,13 +261,13 @@ class TestFormatRunasWithSidResolution:
     def test_resolves_sid(self, mock_resolve):
         """Should resolve SID to username."""
         mock_resolve.return_value = ("resolveduser (S-1-5-21-xxx)", "resolveduser")
-        
+
         result, resolved = format_runas_with_sid_resolution(
             "S-1-5-21-123456789-1001",
             None, None, None, False,
             None, None, None, None, None, False
         )
-        
+
         mock_resolve.assert_called_once()
         assert resolved == "resolveduser"
 
@@ -279,7 +278,7 @@ class TestResolveSidEdgeCases:
     def test_handles_malformed_sid(self):
         """Should handle malformed SID gracefully."""
         result, resolved = resolve_sid("S-1-invalid")
-        
+
         # Should return original since it fails is_sid check
         assert result == "S-1-invalid"
 
@@ -295,12 +294,12 @@ class TestResolveSidEdgeCases:
         mock_cache_instance = MagicMock()
         mock_cache_instance.get.return_value = None
         mock_cache.return_value = mock_cache_instance
-        
+
         mock_bh.return_value = None
         mock_api.return_value = None
         mock_smb.return_value = None
         mock_ldap.return_value = None
-        
+
         resolve_sid(
             "S-1-5-21-123-456-789-1004",
             no_ldap=False,
@@ -308,10 +307,10 @@ class TestResolveSidEdgeCases:
             username="user",
             password="pass"
         )
-        
+
         # Should have called set on sid_failures with incremented value
         # Check that set was called with sid_failures category
-        calls = [call for call in mock_cache_instance.set.call_args_list 
+        calls = [call for call in mock_cache_instance.set.call_args_list
                  if call[0][0] == "sid_failures"]
         assert len(calls) >= 1
 
@@ -322,14 +321,14 @@ class TestResolveSidEdgeCases:
         mock_cache_instance = MagicMock()
         mock_cache_instance.get.return_value = None
         mock_cache.return_value = mock_cache_instance
-        
+
         mock_bh.return_value = "DOMAIN\\found"
         mock_loader = MagicMock()
         mock_loader.loaded = True
-        
+
         resolve_sid("S-1-5-21-123-456-789-1005", hv_loader=mock_loader)
-        
+
         # Check that set was called with sids category
-        calls = [call for call in mock_cache_instance.set.call_args_list 
+        calls = [call for call in mock_cache_instance.set.call_args_list
                  if call[0][0] == "sids"]
         assert len(calls) >= 1

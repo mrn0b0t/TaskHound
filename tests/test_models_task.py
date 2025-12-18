@@ -1,7 +1,5 @@
 """Additional tests for taskhound/models/task.py module."""
 
-import pytest
-from dataclasses import asdict
 from taskhound.models.task import TaskRow, TaskType
 
 
@@ -104,8 +102,8 @@ class TestTaskRowToDict:
         assert result["type"] == "TIER-0"
 
 
-class TestTaskRowToDict:
-    """Tests for TaskRow.to_dict method."""
+class TestTaskRowToDictRoundtrip:
+    """Tests for TaskRow.to_dict roundtrip."""
 
     def test_to_dict_roundtrip_using_dict(self):
         """to_dict can be used to recreate TaskRow via **kwargs."""

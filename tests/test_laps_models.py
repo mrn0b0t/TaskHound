@@ -7,16 +7,14 @@ Tests cover:
 - LAPSFailure dataclass
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from taskhound.laps.models import (
-    LAPSCredential,
     LAPSCache,
+    LAPSCredential,
     LAPSFailure,
 )
-
 
 # ============================================================================
 # Test: LAPSCredential
@@ -34,7 +32,7 @@ class TestLAPSCredential:
             laps_type="legacy",
             computer_name="WS01$"
         )
-        
+
         assert cred.password == "P@ssw0rd123"
         assert cred.username == "Administrator"
         assert cred.laps_type == "legacy"
@@ -53,7 +51,7 @@ class TestLAPSCredential:
             expiration=expiration,
             encrypted=False
         )
-        
+
         assert cred.dns_hostname == "WS01.example.com"
         assert cred.expiration == expiration
 
@@ -67,7 +65,7 @@ class TestLAPSCredential:
             computer_name="WS01$",
             expiration=expiration
         )
-        
+
         assert cred.is_expired() is False
 
     def test_is_expired_past(self):
@@ -80,7 +78,7 @@ class TestLAPSCredential:
             computer_name="WS01$",
             expiration=expiration
         )
-        
+
         assert cred.is_expired() is True
 
     def test_is_expired_none(self):
@@ -91,7 +89,7 @@ class TestLAPSCredential:
             laps_type="legacy",
             computer_name="WS01$"
         )
-        
+
         assert cred.is_expired() is False
 
     def test_to_cache_dict(self):
@@ -105,9 +103,9 @@ class TestLAPSCredential:
             dns_hostname="WS01.example.com",
             expiration=expiration
         )
-        
+
         result = cred.to_cache_dict()
-        
+
         assert result["password"] == "P@ss"
         assert result["username"] == "admin"
         assert result["laps_type"] == "mslaps"
@@ -126,9 +124,9 @@ class TestLAPSCredential:
             "expiration": "2024-01-15T12:00:00+00:00",
             "encrypted": False
         }
-        
+
         cred = LAPSCredential.from_cache_dict(data)
-        
+
         assert cred.password == "P@ss123"
         assert cred.username == "Administrator"
         assert cred.laps_type == "legacy"
@@ -143,9 +141,9 @@ class TestLAPSCredential:
             "laps_type": "legacy",
             "computer_name": "WS01$"
         }
-        
+
         cred = LAPSCredential.from_cache_dict(data)
-        
+
         assert cred.dns_hostname is None
         assert cred.expiration is None
         assert cred.encrypted is False
@@ -162,7 +160,7 @@ class TestLAPSCache:
     def test_empty_cache(self):
         """Should start with empty cache"""
         cache = LAPSCache()
-        
+
         assert len(cache._cache) == 0
         assert cache.legacy_count == 0
         assert cache.mslaps_count == 0
@@ -178,9 +176,9 @@ class TestLAPSCache:
             laps_type="legacy",
             computer_name="WS01$"
         )
-        
+
         cache.add(cred, persist=False)
-        
+
         assert cache.legacy_count == 1
         assert "WS01" in cache._cache
 
@@ -195,9 +193,9 @@ class TestLAPSCache:
             laps_type="mslaps",
             computer_name="WS02$"
         )
-        
+
         cache.add(cred, persist=False)
-        
+
         assert cache.mslaps_count == 1
 
     @patch('taskhound.laps.models.get_cache')
@@ -212,9 +210,9 @@ class TestLAPSCache:
             computer_name="WS03$",
             encrypted=True
         )
-        
+
         cache.add(cred, persist=False)
-        
+
         assert cache.encrypted_count == 1
 
     def test_get_by_short_name(self):
@@ -227,9 +225,9 @@ class TestLAPSCache:
             computer_name="WS01$"
         )
         cache._cache["WS01"] = cred
-        
+
         result = cache.get("WS01")
-        
+
         assert result == cred
 
     def test_get_case_insensitive(self):
@@ -242,17 +240,17 @@ class TestLAPSCache:
             computer_name="WS01$"
         )
         cache._cache["WS01"] = cred
-        
+
         result = cache.get("ws01")
-        
+
         assert result == cred
 
     def test_get_nonexistent(self):
         """Should return None for nonexistent key"""
         cache = LAPSCache()
-        
+
         result = cache.get("NONEXISTENT")
-        
+
         assert result is None
 
     @patch('taskhound.laps.models.get_cache')
@@ -260,7 +258,7 @@ class TestLAPSCache:
         """Should return statistics dict"""
         mock_get_cache.return_value = None
         cache = LAPSCache()
-        
+
         # Add credentials to populate counts
         for i in range(5):
             cred = LAPSCredential(
@@ -270,7 +268,7 @@ class TestLAPSCache:
                 computer_name=f"WS{i:02d}$"
             )
             cache.add(cred, persist=False)
-        
+
         for i in range(3):
             cred = LAPSCredential(
                 password="P@ss",
@@ -279,34 +277,34 @@ class TestLAPSCache:
                 computer_name=f"SRV{i:02d}$"
             )
             cache.add(cred, persist=False)
-        
+
         stats = cache.get_statistics()
-        
+
         assert stats["legacy"] == 5
         assert stats["mslaps"] == 3
 
     def test_normalize_key_uppercase(self):
         """Should normalize key to uppercase"""
         result = LAPSCache._normalize_key("ws01")
-        
+
         assert result == "WS01"
 
     def test_normalize_key_strips_dollar(self):
         """Should strip trailing $"""
         result = LAPSCache._normalize_key("WS01$")
-        
+
         assert result == "WS01"
 
     def test_normalize_key_with_domain(self):
         """Should include domain in key"""
         result = LAPSCache._normalize_key("ws01", "EXAMPLE")
-        
+
         assert result == "EXAMPLE\\WS01"
 
     def test_normalize_key_extracts_from_fqdn(self):
         """Should extract short name from FQDN"""
         result = LAPSCache._normalize_key("ws01.example.com")
-        
+
         assert result == "WS01"
 
     def test_normalize_key_with_existing_domain_prefix(self):
@@ -571,7 +569,7 @@ class TestLAPSFailure:
             failure_type="not_found",
             message="Host not found in LAPS cache"
         )
-        
+
         assert failure.hostname == "WS01"
         assert failure.failure_type == "not_found"
         assert failure.message == "Host not found in LAPS cache"
@@ -584,13 +582,13 @@ class TestLAPSFailure:
             message="Password is encrypted",
             laps_type_tried="mslaps"
         )
-        
+
         assert failure.laps_type_tried == "mslaps"
 
     def test_failure_types(self):
         """Should accept various failure types"""
         failure_types = ["not_found", "encrypted", "auth_failed", "remote_uac"]
-        
+
         for ft in failure_types:
             failure = LAPSFailure(
                 hostname="WS01",

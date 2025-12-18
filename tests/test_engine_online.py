@@ -6,10 +6,8 @@ Focus areas:
 - process_target() parameter handling (mocked SMB)
 """
 
-import pytest
 from dataclasses import dataclass
 from typing import Optional
-from unittest.mock import MagicMock, patch
 
 from taskhound.engine.online import _match_decrypted_password
 
@@ -123,8 +121,8 @@ class TestMatchDecryptedPasswordWithSID:
         creds = [MockCredential(username="highpriv", password="P@ssw0rd")]
         # Raw SID with no resolution
         result = _match_decrypted_password(
-            "S-1-5-21-3211413907-14631080-1147255650-1102", 
-            creds, 
+            "S-1-5-21-3211413907-14631080-1147255650-1102",
+            creds,
             resolved_runas=None
         )
         assert result is None
@@ -272,7 +270,7 @@ class TestMatchDecryptedPasswordRealWorldScenarios:
             MockCredential(username="BADSUCCESSOR\\highpriv", password="HighPrivPass"),
             MockCredential(username="Administrator", password="AdminPass"),
         ]
-        
+
         assert _match_decrypted_password("lowpriv", creds) == "LowPrivPass"
         assert _match_decrypted_password("highpriv", creds) == "HighPrivPass"
         assert _match_decrypted_password("Administrator", creds) == "AdminPass"
