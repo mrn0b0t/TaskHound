@@ -122,6 +122,9 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
     Uses impacket's secretsdump functionality to extract DPAPI keys from
     the SAM, SYSTEM, and SECURITY registry hives.
 
+    Note: Registry hives are copied to a temp directory because impacket
+    requires read-write access, but mounted filesystems are often read-only.
+
     Args:
         windows_root: Path to the Windows root directory
         debug: Enable debug output
@@ -129,6 +132,8 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
     Returns:
         DPAPI user key as hex string (e.g., "0x1234...") or None if extraction fails
     """
+    import tempfile
+
     registry_path = windows_root / REGISTRY_PATH
     system_path = registry_path / "SYSTEM"
     security_path = registry_path / "SECURITY"
@@ -143,19 +148,31 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
             info(f"SECURITY hive not found: {security_path}")
         return None
 
+    # Copy hives to temp directory (impacket requires read-write access)
+    temp_dir = None
     try:
+        temp_dir = tempfile.mkdtemp(prefix="taskhound_registry_")
+        temp_system = Path(temp_dir) / "SYSTEM"
+        temp_security = Path(temp_dir) / "SECURITY"
+
+        if debug:
+            info(f"Copying registry hives to temp directory: {temp_dir}")
+
+        shutil.copy2(system_path, temp_system)
+        shutil.copy2(security_path, temp_security)
+
         from impacket.examples.secretsdump import LocalOperations, LSASecrets
         from impacket.dpapi import DPAPI_SYSTEM
 
         # Get boot key from SYSTEM hive
-        local_ops = LocalOperations(str(system_path))
+        local_ops = LocalOperations(str(temp_system))
         boot_key = local_ops.getBootKey()
 
         if debug:
             info(f"Extracted boot key from SYSTEM hive")
 
         # Extract LSA secrets from SECURITY hive
-        lsa_secrets = LSASecrets(str(security_path), boot_key, isRemote=False)
+        lsa_secrets = LSASecrets(str(temp_security), boot_key, isRemote=False)
 
         dpapi_key = None
 
@@ -177,7 +194,7 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
         # Actually, let's just parse it ourselves since we have the boot key
         from impacket.winregistry import winregistry
 
-        reg = winregistry.Registry(str(security_path), isRemote=False)
+        reg = winregistry.Registry(str(temp_security), isRemote=False)
 
         # Open the Policy\Secrets key
         try:
@@ -195,7 +212,7 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
                     value = reg.getValue(subkey)
                     if value is not None:
                         # Decrypt the secret using LSA
-                        lsa = LSASecrets(str(security_path), boot_key, isRemote=False)
+                        lsa = LSASecrets(str(temp_security), boot_key, isRemote=False)
                         # Get decrypted secret
                         decrypted = lsa.decryptSecret(secrets_key, value[1])
                         if decrypted:
@@ -219,7 +236,7 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
         sys.stdout = captured = io.StringIO()
 
         try:
-            lsa_secrets = LSASecrets(str(security_path), boot_key, isRemote=False)
+            lsa_secrets = LSASecrets(str(temp_security), boot_key, isRemote=False)
             lsa_secrets.dumpSecrets()
         finally:
             sys.stdout = old_stdout
@@ -248,6 +265,15 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
             import traceback
             traceback.print_exc()
         return None
+    finally:
+        # Clean up temp directory
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                if debug:
+                    info(f"Cleaned up temp directory: {temp_dir}")
+            except Exception:
+                pass  # Best effort cleanup
 
 
 def extract_tasks(windows_root: Path, output_dir: Path, verbose: bool = False, debug: bool = False) -> int:
