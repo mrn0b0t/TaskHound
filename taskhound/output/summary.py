@@ -4,6 +4,75 @@ from ..utils.console import console
 from ..utils.console import print_summary_table as rich_summary_table
 
 
+def _clean_failure_reason(reason: str) -> str:
+    """
+    Clean up verbose error messages for summary display.
+
+    Converts technical error strings into human-readable summaries.
+    """
+    if not reason:
+        return "Unknown error"
+
+    reason_lower = reason.lower()
+
+    # Connection errors
+    if "connection refused" in reason_lower or "errno 61" in reason_lower:
+        return "Connection refused"
+    if "connection error" in reason_lower:
+        return "Connection error"
+    if "connection timed out" in reason_lower or "timed out" in reason_lower:
+        return "Connection timed out"
+    if "name or service not known" in reason_lower or "getaddrinfo failed" in reason_lower:
+        return "DNS resolution failed"
+    if "network unreachable" in reason_lower:
+        return "Network unreachable"
+    if "no route to host" in reason_lower:
+        return "No route to host"
+
+    # SMB/Auth errors
+    if "status_logon_failure" in reason_lower:
+        return "Authentication failed"
+    if "status_account_disabled" in reason_lower:
+        return "Account disabled"
+    if "status_account_locked_out" in reason_lower:
+        return "Account locked out"
+    if "status_password_expired" in reason_lower:
+        return "Password expired"
+    if "status_access_denied" in reason_lower:
+        return "Access denied"
+    if "0xc0000072" in reason_lower:  # STATUS_ACCOUNT_DISABLED
+        return "Account disabled"
+    if "0xc000006d" in reason_lower:  # STATUS_LOGON_FAILURE
+        return "Authentication failed"
+    if "0xc000006e" in reason_lower:  # STATUS_ACCOUNT_RESTRICTION
+        return "Account restriction"
+
+    # LAPS errors
+    if "laps auth failed" in reason_lower:
+        return "LAPS auth failed"
+    if "remote uac" in reason_lower:
+        return "Remote UAC blocked"
+    if "no laps password" in reason_lower:
+        return "No LAPS password"
+
+    # Other common errors
+    if "c$ admin share not found" in reason_lower:
+        return "C$ share not found"
+    if "admin check failed" in reason_lower:
+        return "Admin check failed"
+
+    # Return cleaned up version - remove stack trace details
+    # Look for common patterns and extract the key part
+    if ": " in reason:
+        # Take the first meaningful part before technical details
+        parts = reason.split(": ", 1)
+        if len(parts[0]) < 40:
+            return parts[0]
+
+    # Fallback: return reason as-is (will be truncated by display)
+    return reason
+
+
 def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data: bool = False):
     """Print a nicely formatted summary table showing task counts per host."""
     if not all_rows:
@@ -24,7 +93,7 @@ def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data
 
         if task_type == "FAILURE":
             host_stats[host]["status"] = "[-]"
-            host_stats[host]["failure_reason"] = reason
+            host_stats[host]["failure_reason"] = _clean_failure_reason(reason)
         elif task_type == "TIER-0":
             host_stats[host]["tier0"] += 1
         elif task_type == "PRIV":
@@ -50,7 +119,6 @@ def print_decrypted_credentials(all_rows: List[Any]) -> int:
         Number of decrypted credentials found
     """
     from rich.table import Table
-    from rich.panel import Panel
 
     # Collect all rows with decrypted passwords
     creds_found = []
