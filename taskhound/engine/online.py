@@ -32,10 +32,10 @@ from ..smb.connection import (
     smb_login,
     smb_negotiate,
 )
-from ..utils.helpers import is_ipv4
 from ..smb.credguard import check_credential_guard
 from ..smb.task_rpc import CredentialStatus, TaskRunInfo, TaskSchedulerRPC
 from ..smb.tasks import crawl_tasks, smb_listdir
+from ..utils.helpers import is_ipv4
 from ..utils.logging import debug as log_debug
 from ..utils.logging import good, info, status, warn
 from ..utils.sid_resolver import (
@@ -220,11 +220,19 @@ def process_target(
 
             if laps_failure:
                 # No LAPS password for this host - skip target
-                warn(laps_failure.message)
+                warn(laps_failure.message, verbose_only=True)
                 status(f"[Collecting] {target} [-] (No LAPS password)")
+                # Map failure types to human-readable messages
+                laps_failure_labels = {
+                    "not_found": "LAPS: No password in cache",
+                    "encrypted": "LAPS: Encrypted (unsupported)",
+                    "auth_failed": "LAPS: Auth failed",
+                    "remote_uac": "LAPS: Remote UAC blocked",
+                }
+                failure_reason = laps_failure_labels.get(laps_failure.failure_type, f"LAPS: {laps_failure.failure_type}")
                 all_rows.append(TaskRow.failure(
                     discovered_hostname,
-                    f"LAPS: {laps_failure.failure_type}",
+                    failure_reason,
                     target_ip=target,
                 ))
                 with contextlib.suppress(Exception):
@@ -248,7 +256,8 @@ def process_target(
                 # LAPS auth failed
                 if debug:
                     traceback.print_exc()
-                warn(LAPS_ERRORS["auth_failed"].format(hostname=discovered_hostname))
+                warn(LAPS_ERRORS["auth_failed"].format(hostname=discovered_hostname), verbose_only=True)
+                status(f"[Collecting] {target} [-] (LAPS auth failed)")
                 laps_failure = LAPSFailure(
                     hostname=discovered_hostname,
                     failure_type="auth_failed",
@@ -293,7 +302,7 @@ def process_target(
         if cache and server_fqdn != "UNKNOWN_HOST":
             was_first, previous_target = cache.try_mark_host_processed(server_fqdn, target)
             if not was_first:
-                warn(f"{target}: Skipping - already processed as {previous_target} (dual-homed host: {server_fqdn})")
+                warn(f"{target}: Skipping - already processed as {previous_target} (dual-homed host: {server_fqdn})", verbose_only=True)
                 status(f"[Collecting] {target} [SKIP] (duplicate of {previous_target})")
                 # Add SKIPPED row so async_runner can detect this was a dual-homed skip
                 all_rows.append(TaskRow.skipped(
@@ -307,13 +316,14 @@ def process_target(
                         smb.close()
                 return [], None
 
-        # Extract the computer account SID via SAMR RPC (with LDAP fallback)
-        # This enables SID-validated BloodHound lookups
-        # Skipped in OPSEC mode to avoid noisy SAMR/LDAP calls
+        # Extract the computer account SID using unified resolution
+        # Fallback chain: Cache → BloodHound data → LDAP
+        # Skipped in OPSEC mode to avoid noisy LDAP calls
         server_sid = None
         if not opsec:
             server_sid = get_server_sid(
-                smb, dc_ip=dc_ip, username=username, password=password, hashes=hashes, kerberos=kerberos
+                smb, dc_ip=dc_ip, username=username, password=password, hashes=hashes, kerberos=kerberos,
+                hv_loader=hv
             )
             if debug:
                 if server_sid:
@@ -343,9 +353,9 @@ def process_target(
             f"SMB connection failed: {msg}",
         ))
         if "STATUS_MORE_PROCESSING_REQUIRED" in msg:
-            warn(f"{target}: Kerberos auth failed (SPN not found?). Try using FQDNs or switch to NTLM (-k off).")
+            warn(f"{target}: Kerberos auth failed (SPN not found?). Try using FQDNs or switch to NTLM (-k off).", verbose_only=True)
         else:
-            warn(f"{target}: SMB connection failed: {e}")
+            warn(f"{target}: SMB connection failed: {e}", verbose_only=True)
         return out_lines, laps_result
 
     # Quick local admin presence check
@@ -357,11 +367,13 @@ def process_target(
         if debug:
             traceback.print_exc()
 
+        error_msg = str(e)
+
         # Check if this is Remote UAC blocking LAPS
-        if laps_used and "STATUS_ACCESS_DENIED" in str(e):
-            warn(LAPS_ERRORS["remote_uac_short"].format(hostname=discovered_hostname or target))
-            info("Remote UAC (LocalAccountTokenFilterPolicy=0) is filtering the local admin token")
-            info("This is common on workstations. Servers typically don't have this issue.")
+        if laps_used and "STATUS_ACCESS_DENIED" in error_msg:
+            warn(LAPS_ERRORS["remote_uac_short"].format(hostname=discovered_hostname or target), verbose_only=True)
+            info("Remote UAC (LocalAccountTokenFilterPolicy=0) is filtering the local admin token", verbose_only=True)
+            info("This is common on workstations. Servers typically don't have this issue.", verbose_only=True)
             status(f"[Collecting] {target} [-] (Remote UAC)")
             laps_failure = LAPSFailure(
                 hostname=discovered_hostname or target,
@@ -376,8 +388,38 @@ def process_target(
                 target_ip=target,
             ))
             return out_lines, laps_failure
+
+        # Check if C$ admin share doesn't exist (DCs, hardened servers, non-Windows)
+        elif "STATUS_BAD_NETWORK_NAME" in error_msg:
+            warn(f"{target}: C$ admin share not found (may be disabled or non-Windows host)", verbose_only=True)
+            status(f"[Collecting] {target} [-] (No C$ share)")
+            all_rows.append(TaskRow.failure(
+                discovered_hostname or target,
+                "C$ admin share not found",
+                target_ip=target,
+            ))
+            return out_lines, laps_result
+
+        # General access denied (not LAPS-specific)
+        elif "STATUS_ACCESS_DENIED" in error_msg:
+            warn(f"{target}: Access denied to C$ share", verbose_only=True)
+            status(f"[Collecting] {target} [-] (Access Denied)")
+            all_rows.append(TaskRow.failure(
+                discovered_hostname or target,
+                "Access Denied to C$ share",
+                target_ip=target,
+            ))
+            return out_lines, laps_result
+
         else:
-            warn(f"{target}: Local admin check failed")
+            warn(f"{target}: Local admin check failed: {e}", verbose_only=True)
+            status(f"[Collecting] {target} [-] (Admin check failed)")
+            all_rows.append(TaskRow.failure(
+                discovered_hostname or target,
+                f"Admin check failed: {e}",
+                target_ip=target,
+            ))
+            return out_lines, laps_result
 
     if not include_ms:
         info(f"{target}: Crawling Scheduled Tasks (skipping \\Microsoft for speed)")
@@ -394,7 +436,7 @@ def process_target(
             target,
             "Access Denied (Failed to crawl tasks)",
         ))
-        warn(f"{target}: Failed to Crawl Tasks. Skipping... (Are you Local Admin?)")
+        warn(f"{target}: Failed to Crawl Tasks. Skipping... (Are you Local Admin?)", verbose_only=True)
         return out_lines, laps_result
     except Exception as e:
         if debug:
@@ -404,7 +446,7 @@ def process_target(
             target,
             f"Crawling failed: {e}",
         ))
-        warn(f"{target}: Unexpected error while crawling tasks: {e}")
+        warn(f"{target}: Unexpected error while crawling tasks: {e}", verbose_only=True)
         return out_lines, laps_result
 
     # First pass: identify tasks with Password logon type for credential validation
@@ -725,7 +767,7 @@ def process_target(
                 # Derive local domain SID prefix from computer SID for foreign domain detection
                 from ..utils.sid_resolver import get_domain_sid_prefix
                 local_domain_prefix = get_domain_sid_prefix(server_sid) if server_sid else None
-                
+
                 _, row.resolved_runas = format_runas_with_sid_resolution(
                     runas,
                     hv_loader=hv,
@@ -864,12 +906,11 @@ def process_target(
     laps_msg = f" (LAPS: {laps_type_used})" if laps_used else ""
 
     priv_display = priv_count if (hv and hv.loaded) else 'N/A'
-    status(f"[Collecting] {target} [+]")
     # Show filtered count (domain tasks) vs total (all tasks including SYSTEM)
     if filtered_count < total:
-        status(f"[TaskCount] {filtered_count} domain tasks ({total} total), {priv_display} Privileged")
+        status(f"[Collected] {target}: {filtered_count} domain tasks ({total} total), {priv_display} Privileged")
     else:
-        status(f"[TaskCount] {total} Tasks, {priv_display} Privileged")
+        status(f"[Collected] {target}: {total} Tasks, {priv_display} Privileged")
     good(f"{target}: Found {filtered_count} tasks (of {total} total), privileged {priv_display}{backup_msg}{laps_msg}")
 
     # Combine credential loot output with task listing output

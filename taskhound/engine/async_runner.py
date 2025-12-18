@@ -35,6 +35,7 @@ from ..utils.console import (
     good,
     info,
     print_scan_complete,
+    status,
     warn,
 )
 
@@ -226,6 +227,13 @@ class AsyncTaskHound:
             with self._output_lock:
                 warn(f"{target}: Processing failed: {e}")
 
+        finally:
+            # Clean up thread-local cache connection to avoid ResourceWarning
+            from ..utils.cache_manager import get_cache
+            cache = get_cache()
+            if cache:
+                cache.close_thread_connection()
+
         result.elapsed_ms = (time.perf_counter() - start_time) * 1000
 
         # Update progress
@@ -288,7 +296,7 @@ class AsyncTaskHound:
         results: List[TargetResult] = []
         start_time = time.perf_counter()
 
-        info(f"Starting parallel scan: {len(targets)} targets, {self.config.workers} workers")
+        status(f"[*] Starting parallel scan: {len(targets)} targets, {self.config.workers} workers")
         if self.config.rate_limit:
             info(f"Rate limit: {self.config.rate_limit} targets/second")
 
