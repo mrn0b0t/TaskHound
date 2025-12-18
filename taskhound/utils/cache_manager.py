@@ -12,6 +12,7 @@ Thread-safety:
 - SQLite uses WAL mode for concurrent reads/writes across threads
 """
 
+import atexit
 import contextlib
 import json
 import sqlite3
@@ -381,6 +382,23 @@ class CacheManager:
             except Exception as e:
                 warn(f"Cache invalidation error: {e}")
 
+    def close_thread_connection(self):
+        """
+        Close the SQLite connection for the current thread.
+
+        Call this when a worker thread finishes to properly clean up
+        its thread-local connection and avoid ResourceWarning.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+            self._local.conn = None
+            # Remove from tracked connections
+            with self._session_lock:
+                if conn in self._connections:
+                    self._connections.remove(conn)
+
     def close(self):
         """Close all database connections (one per thread)."""
         with self._session_lock:
@@ -388,8 +406,13 @@ class CacheManager:
                 with contextlib.suppress(Exception):
                     conn.close()
             self._connections.clear()
-        # Clear thread-local connection reference
+        # Clear thread-local connection reference for this thread
         self._local.conn = None
+
+    def __del__(self):
+        """Destructor to ensure connections are closed."""
+        with contextlib.suppress(Exception):
+            self.close()
 
     # ==========================================
     # Host Deduplication (Session-only)
@@ -451,6 +474,19 @@ class CacheManager:
 
 # Global cache instance
 _cache: Optional[CacheManager] = None
+
+
+def _cleanup_cache():
+    """Cleanup function called at program exit."""
+    global _cache
+    if _cache is not None:
+        with contextlib.suppress(Exception):
+            _cache.close()
+        _cache = None
+
+
+# Register cleanup at module import time
+atexit.register(_cleanup_cache)
 
 
 def get_cache() -> Optional[CacheManager]:
