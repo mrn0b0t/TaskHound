@@ -47,13 +47,18 @@ def _clean_failure_reason(reason: str) -> str:
     if "0xc000006e" in reason_lower:  # STATUS_ACCOUNT_RESTRICTION
         return "Account restriction"
 
-    # LAPS errors
-    if "laps auth failed" in reason_lower:
-        return "LAPS auth failed"
-    if "remote uac" in reason_lower:
-        return "Remote UAC blocked"
-    if "no laps password" in reason_lower:
+    # LAPS errors - match the labels from online.py
+    if "laps: no password" in reason_lower or "no laps password" in reason_lower:
         return "No LAPS password"
+    if "laps: encrypted" in reason_lower:
+        return "LAPS encrypted"
+    if "laps: auth failed" in reason_lower or "laps auth failed" in reason_lower:
+        return "LAPS auth failed"
+    if "laps: remote uac" in reason_lower or "remote uac" in reason_lower:
+        return "Remote UAC blocked"
+    if reason_lower.startswith("laps:"):
+        # Generic LAPS error - return the message part
+        return reason.split(": ", 1)[1] if ": " in reason else reason
 
     # Other common errors
     if "c$ admin share not found" in reason_lower:
