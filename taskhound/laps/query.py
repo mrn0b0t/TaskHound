@@ -11,7 +11,7 @@ from ..utils.ldap import (
 from ..utils.ldap import (
     get_ldap_connection,
 )
-from ..utils.logging import debug, good, info, warn
+from ..utils.logging import debug, good, info, status, warn
 from .decryption import LAPSDecryptionContext
 from .exceptions import LAPSConnectionError, LAPSEmptyCacheError, LAPSParseError
 from .models import LAPSCache, LAPSCredential
@@ -67,11 +67,7 @@ def get_laps_passwords(
         cached = LAPSCache.load_from_persistent_cache(domain)
         if cached and len(cached) > 0:
             stats = cached.get_statistics()
-            good(f"LAPS: Loaded {stats['total']} credentials from cache")
-            if stats["mslaps"] > 0:
-                info(f"LAPS:   - Windows LAPS: {stats['mslaps']}")
-            if stats["legacy"] > 0:
-                info(f"LAPS:   - Legacy LAPS: {stats['legacy']}")
+            status(f"[LAPS] {stats['total']} credentials from cache (Windows: {stats['mslaps']}, Legacy: {stats['legacy']})")
             return cached
         else:
             debug("LAPS: No valid cached credentials found, querying AD...")
@@ -223,7 +219,8 @@ def query_laps_passwords(
 
     # Log statistics
     stats = cache.get_statistics()
-    good(f"LAPS: Found {stats['total']} computers with LAPS passwords")
+    status(f"[LAPS] {stats['total']} credentials from LDAP (Windows: {stats['mslaps']}, Legacy: {stats['legacy']})")
+    good(f"LAPS: Found {stats['total']} computers with LAPS passwords", verbose_only=True)
     if stats["mslaps"] > 0:
         info(f"LAPS:   - Windows LAPS (plaintext): {stats['mslaps']}")
     if decrypted_count > 0:
@@ -231,7 +228,7 @@ def query_laps_passwords(
     if stats["legacy"] > 0:
         info(f"LAPS:   - Legacy LAPS: {stats['legacy']}")
     if stats["encrypted"] > 0:
-        warn(f"LAPS:   - Encrypted (failed): {stats['encrypted']}")
+        warn(f"LAPS:   - Encrypted (failed): {stats['encrypted']}", verbose_only=True)
 
     # Save to persistent cache for future runs
     if save_to_cache:

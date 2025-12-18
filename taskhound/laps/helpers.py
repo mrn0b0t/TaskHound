@@ -43,7 +43,7 @@ def get_laps_credential_for_host(
         return None, failure
 
     if cred.is_expired():
-        warn(f"LAPS: Password for {hostname} may be expired (expiration: {cred.expiration})")
+        warn(f"LAPS: Password for {hostname} may be expired (expiration: {cred.expiration})", verbose_only=True)
         # Still return the credential - it might work if rotation hasn't happened yet
 
     return cred, None
