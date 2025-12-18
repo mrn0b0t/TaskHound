@@ -267,11 +267,13 @@ def enumerate_domain_computers(
     aes_key: Optional[str] = None,
     ldap_filter: Optional[str] = None,
     use_tcp: bool = False,
+    include_dcs: bool = False,
 ) -> list[str]:
     """
     Enumerate all computer objects from Active Directory via LDAP.
 
     Returns a list of computer hostnames (dNSHostName or sAMAccountName without $).
+    By default, excludes Domain Controllers (userAccountControl bit 0x2000 = 8192).
 
     Args:
         dc_ip: Domain controller IP address (optional - will auto-discover if not provided)
@@ -283,6 +285,7 @@ def enumerate_domain_computers(
         aes_key: AES key for Kerberos
         ldap_filter: Optional additional LDAP filter (e.g., "(operatingSystem=*Server*)")
         use_tcp: Force DNS queries over TCP
+        include_dcs: Include Domain Controllers (default: False, DCs excluded)
 
     Returns:
         List of computer hostnames
@@ -307,6 +310,13 @@ def enumerate_domain_computers(
     # Build search filter
     # Base filter: all computer objects
     base_filter = "(objectClass=computer)"
+
+    # Exclude Domain Controllers by default (userAccountControl bit 0x2000 = 8192)
+    # LDAP OID 1.2.840.113556.1.4.803 = bitwise AND matching rule
+    if not include_dcs:
+        dc_exclusion_filter = "(!(userAccountControl:1.2.840.113556.1.4.803:=8192))"
+        base_filter = f"(&{base_filter}{dc_exclusion_filter})"
+        debug("LDAP: Excluding Domain Controllers from enumeration")
 
     # Combine with custom filter if provided
     if ldap_filter:
@@ -357,6 +367,104 @@ def enumerate_domain_computers(
 
     debug(f"LDAP: Found {len(computers)} computer objects")
     return computers
+
+
+def get_netbios_domain_name(
+    dc_ip: Optional[str],
+    domain: str,
+    username: str,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+    aes_key: Optional[str] = None,
+    use_tcp: bool = False,
+    ldap_conn: Optional["ldap_impacket.LDAPConnection"] = None,
+) -> Optional[str]:
+    """
+    Query the NetBIOS domain name from Active Directory.
+
+    The NetBIOS name is stored in CN=Partitions,CN=Configuration,DC=domain,DC=tld
+    as the nETBIOSName attribute. This is different from the first part of the FQDN
+    (e.g., domain corp.example.com might have NetBIOS name YOURCOMPANY).
+
+    Args:
+        dc_ip: Domain controller IP address
+        domain: Domain name (FQDN format, e.g., "domain.local")
+        username: Username for authentication
+        password: Password (plaintext)
+        hashes: NTLM hashes in LM:NT or NT format
+        kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos
+        use_tcp: Force DNS queries over TCP
+        ldap_conn: Existing LDAP connection (optional - will create new one if not provided)
+
+    Returns:
+        NetBIOS domain name (e.g., "CONTOSO"), or None if not found
+    """
+    from impacket.ldap.ldapasn1 import SearchResultEntry
+
+    # Build base DN for Configuration partition
+    base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
+    config_dn = f"CN=Partitions,CN=Configuration,{base_dn}"
+
+    # Use existing connection or create new one
+    conn = ldap_conn
+    should_close = False
+    if not conn:
+        try:
+            conn = get_ldap_connection(
+                dc_ip=dc_ip,
+                domain=domain,
+                username=username,
+                password=password,
+                hashes=hashes,
+                kerberos=kerberos,
+                aes_key=aes_key,
+                use_tcp=use_tcp,
+            )
+            should_close = True
+        except LDAPConnectionError as e:
+            debug(f"LDAP: Failed to connect for NetBIOS lookup: {e}")
+            return None
+
+    try:
+        # Search for the crossRef object that has nETBIOSName
+        # Filter: (&(objectClass=crossRef)(nETBIOSName=*)(dnsRoot={domain}))
+        search_filter = f"(&(objectClass=crossRef)(nETBIOSName=*)(dnsRoot={domain}))"
+
+        debug(f"LDAP: Querying NetBIOS name from {config_dn}")
+
+        results = conn.search(
+            searchBase=config_dn,
+            searchFilter=search_filter,
+            attributes=["nETBIOSName"],
+            sizeLimit=1,
+        )
+
+        for result in results:
+            if not isinstance(result, SearchResultEntry):
+                continue
+
+            for attr in result["attributes"]:
+                attr_type = str(attr["type"])
+                if attr_type.lower() == "netbiosname" and attr["vals"]:
+                    netbios_name = str(attr["vals"][0]).upper()
+                    debug(f"LDAP: Found NetBIOS name: {netbios_name} for domain {domain}")
+                    return netbios_name
+
+        debug(f"LDAP: No NetBIOS name found for domain {domain}")
+        return None
+
+    except Exception as e:
+        debug(f"LDAP: NetBIOS name query failed: {e}")
+        return None
+    finally:
+        # Don't close if we were passed an existing connection
+        if should_close and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 class LDAPConnectionError(Exception):

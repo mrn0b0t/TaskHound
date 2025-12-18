@@ -249,7 +249,6 @@ def process_target(
                 if debug:
                     traceback.print_exc()
                 warn(LAPS_ERRORS["auth_failed"].format(hostname=discovered_hostname))
-                status(f"[Collecting] {target} [-] (LAPS auth failed)")
                 laps_failure = LAPSFailure(
                     hostname=discovered_hostname,
                     failure_type="auth_failed",

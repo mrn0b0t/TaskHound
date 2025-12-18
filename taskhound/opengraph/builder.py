@@ -145,7 +145,7 @@ def _create_task_node(task: Dict) -> Node:
     return node
 
 
-def _create_principal_id(runas_user: str, local_domain: str, task: Dict, bh_connector=None) -> Optional[str]:
+def _create_principal_id(runas_user: str, local_domain: str, task: Dict, bh_connector=None, local_netbios: Optional[str] = None) -> Optional[str]:
     """
     Create BloodHound-compatible principal ID from RunAs user.
 
@@ -163,6 +163,7 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict, bh_conn
     :param local_domain: FQDN domain of the computer (e.g., DOMAIN.LAB)
     :param task: Full task dict for logging context
     :param bh_connector: Optional BloodHoundConnector for cross-domain validation
+    :param local_netbios: NetBIOS domain name (e.g., "CONTOSO"). If not provided, derives from FQDN first part
     :return: Principal ID in BloodHound format (USER@DOMAIN.LAB) or None if should skip
     """
     # Skip empty/invalid
@@ -262,8 +263,12 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict, bh_conn
         domain_prefix = domain_prefix.strip().upper()
         user = user.strip().upper()
 
-        # Extract first part of FQDN for comparison (e.g., DOMAIN.LAB -> DOMAIN)
-        local_domain_short = local_domain.split(".")[0].upper() if "." in local_domain else local_domain.upper()
+        # Use provided NetBIOS name, or derive from FQDN first part as fallback
+        # The NetBIOS name can differ from FQDN first part (e.g., corp.example.com -> YOURCOMPANY)
+        if local_netbios:
+            local_domain_short = local_netbios.upper()
+        else:
+            local_domain_short = local_domain.split(".")[0].upper() if "." in local_domain else local_domain.upper()
 
         # Extract first part of domain_prefix for comparison (may be FQDN like THESIMPSONS.SPRINGFIELD.LOCAL)
         domain_prefix_short = domain_prefix.split(".")[0] if "." in domain_prefix else domain_prefix
@@ -335,12 +340,15 @@ def _create_relationship_edges(
     computer_map: Dict[str, Tuple[str, str]],
     user_map: Dict[str, Tuple[str, str]],
     bh_connector=None,
-    allow_orphans: bool = False
+    allow_orphans: bool = False,
+    netbios_name: Optional[str] = None,
 ) -> Tuple[List[Edge], Dict[str, int]]:
     """
     Creates edges for a task:
     1. (Computer)-[HasTask]->(ScheduledTask)
     2. (ScheduledTask)-[RunsAs]->(User)
+    
+    :param netbios_name: NetBIOS domain name for accurate domain comparison
     """
     edges = []
     skipped = {"computers": 0, "users": 0}
@@ -433,7 +441,7 @@ def _create_relationship_edges(
 
     # 2. Create (ScheduledTask)-[RunsAs]->(Principal) edge
     # Use helper function to create principal ID with proper filtering
-    principal_id = _create_principal_id(runas_user, fqdn_domain, task, bh_connector)
+    principal_id = _create_principal_id(runas_user, fqdn_domain, task, bh_connector, local_netbios=netbios_name)
 
     if principal_id:
         # Prefer id (objectid/SID) matching, fall back to name matching

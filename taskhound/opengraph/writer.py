@@ -21,7 +21,8 @@ def generate_opengraph_files(
     bh_connector=None,
     ldap_config: Optional[Dict] = None,
     allow_orphans: bool = False,
-    computer_sids: Optional[Dict[str, str]] = None
+    computer_sids: Optional[Dict[str, str]] = None,
+    netbios_name: Optional[str] = None,
 ) -> None:
     """
     Generates OpenGraph compatible JSON files for BloodHound.
@@ -39,6 +40,7 @@ def generate_opengraph_files(
     :param ldap_config: Optional LDAP config for fallback resolution
     :param allow_orphans: If True, create edges even when nodes are missing from BloodHound
     :param computer_sids: Optional mapping of FQDN→SID from SMB connections (preferred!)
+    :param netbios_name: NetBIOS domain name (e.g., "CONTOSO") - used for accurate domain comparison
     """
     # Convert TaskRow objects to dicts if needed
     task_dicts: List[Dict[str, Any]] = []
@@ -83,7 +85,7 @@ def generate_opengraph_files(
         if runas and runas != "N/A":
             # Use helper to normalize principal ID
             fqdn_domain = _extract_domain(hostname)
-            principal_id = _create_principal_id(runas, fqdn_domain, task, bh_connector)
+            principal_id = _create_principal_id(runas, fqdn_domain, task, bh_connector, local_netbios=netbios_name)
             if principal_id:
                 user_names.add(principal_id)
 
@@ -183,7 +185,8 @@ def generate_opengraph_files(
                 computer_map,
                 user_map,
                 bh_connector,
-                allow_orphans
+                allow_orphans,
+                netbios_name=netbios_name,
             )
 
             for edge in edges:

@@ -221,7 +221,9 @@ def main():
         if getattr(args, "auto_targets", False):
             from .utils.ldap import LDAPConnectionError, enumerate_domain_computers
 
-            info("Auto-targets: Querying LDAP for domain computer objects...")
+            include_dcs = getattr(args, "include_dcs", False)
+            dc_msg = " (including DCs)" if include_dcs else " (excluding DCs)"
+            info(f"Auto-targets: Querying LDAP for domain computer objects{dc_msg}...")
             try:
                 kerberos_enabled = args.kerberos or getattr(args, "aes_key", None) is not None
                 ldap_computers = enumerate_domain_computers(
@@ -234,6 +236,7 @@ def main():
                     aes_key=getattr(args, "aes_key", None),
                     ldap_filter=getattr(args, "ldap_filter", None),
                     use_tcp=getattr(args, "dns_tcp", False),
+                    include_dcs=include_dcs,
                 )
                 if ldap_computers:
                     good(f"Auto-targets: Found {len(ldap_computers)} computer objects in domain")
@@ -433,6 +436,26 @@ def main():
         else:
             info("LDAP fallback disabled - missing credentials")
 
+        # Query NetBIOS domain name for accurate cross-domain detection
+        netbios_name = None
+        if ldap_config:
+            from .utils.ldap import get_netbios_domain_name
+
+            netbios_name = get_netbios_domain_name(
+                dc_ip=args.dc_ip,
+                domain=args.domain,
+                username=ldap_user,
+                password=ldap_password,
+                hashes=args.hashes,
+                kerberos=args.kerberos,
+                aes_key=getattr(args, "aes_key", None),
+                use_tcp=getattr(args, "dns_tcp", False),
+            )
+            if netbios_name:
+                debug(f"NetBIOS domain name: {netbios_name}")
+            else:
+                debug(f"Could not query NetBIOS name, falling back to FQDN first part")
+
         # Create connector if credentials exist
         bh_connector = None
         if bh_config.has_credentials():
@@ -456,6 +479,7 @@ def main():
             bh_connector=bh_connector,
             ldap_config=ldap_config,
             allow_orphans=getattr(args, "bh_allow_orphans", False),
+            netbios_name=netbios_name,
         )
 
         # Upload to BloodHound if not disabled and we have credentials

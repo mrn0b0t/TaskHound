@@ -414,6 +414,12 @@ def build_parser() -> argparse.ArgumentParser:
         "Examples: '(operatingSystem=*Server*)' for servers only, "
         "'(!(userAccountControl:1.2.840.113556.1.4.803:=2))' for enabled computers only.",
     )
+    target.add_argument(
+        "--include-dcs",
+        action="store_true",
+        help="Include Domain Controllers when using --auto-targets. By default, DCs are excluded "
+        "to reduce noise and avoid security concerns from scanning the DC directly.",
+    )
 
     # High value / scanning options
     scan = ap.add_argument_group("Scanning options")

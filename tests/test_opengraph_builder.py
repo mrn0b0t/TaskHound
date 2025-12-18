@@ -398,6 +398,36 @@ class TestCreatePrincipalId:
         
         assert result == "ADMIN@DOMAIN.LAB"
 
+    def test_netbios_name_differs_from_fqdn(self):
+        """Should correctly match when NetBIOS name differs from FQDN first part.
+        
+        Bug scenario: domain is corp.example.com but NetBIOS name is YOURCOMPANY (not CORP).
+        Without local_netbios param, YOURCOMPANY\\admin would be treated as cross-domain.
+        """
+        task = {"host": "DC01.CORP.EXAMPLE.COM"}
+        
+        # Without local_netbios - would incorrectly think YOURCOMPANY is cross-domain
+        # because CORP != YOURCOMPANY
+        result_without = _create_principal_id("YOURCOMPANY\\admin", "CORP.EXAMPLE.COM", task, local_netbios=None)
+        # This fails without a connector, so it returns None for cross-domain
+        assert result_without is None
+        
+        # With local_netbios - correctly matches YOURCOMPANY as local domain
+        result_with = _create_principal_id("YOURCOMPANY\\admin", "CORP.EXAMPLE.COM", task, local_netbios="YOURCOMPANY")
+        assert result_with == "ADMIN@CORP.EXAMPLE.COM"
+
+    def test_netbios_case_insensitive(self):
+        """NetBIOS comparison should be case-insensitive"""
+        task = {"host": "DC01.DOMAIN.LAB"}
+        
+        # lowercase netbios
+        result = _create_principal_id("CORP\\admin", "DOMAIN.LAB", task, local_netbios="corp")
+        assert result == "ADMIN@DOMAIN.LAB"
+        
+        # uppercase runas domain
+        result2 = _create_principal_id("corp\\admin", "DOMAIN.LAB", task, local_netbios="CORP")
+        assert result2 == "ADMIN@DOMAIN.LAB"
+
 
 class TestCreatePrincipalIdWithConnector:
     """Tests for _create_principal_id with BloodHound connector"""

@@ -75,6 +75,14 @@ loot/
 backup/
 /opengraph/
 
+# TaskHound output files (contain sensitive scan results)
+taskhound_*.json
+taskhound_*.html
+
+# HTML reports (may contain sensitive scan results)
+*.html
+htmlcov/
+
 # Export files
 *_output.csv
 *_output.json
