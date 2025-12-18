@@ -1,11 +1,10 @@
 # =============================================================================
 # SENSITIVE FILES - DO NOT COMMIT!
 # =============================================================================
-# Configuration and output files with credentials/sensitive data
+# Configuration files with credentials
 config/*.bak
-tests/live_test_config.json
-tests/LIVE_TESTS.md
-.github/copilot-instructions.md
+.env
+.env.local
 
 # Kerberos credential caches
 *.ccache
@@ -18,14 +17,51 @@ targets_*.txt
 # Internal planning documents
 planning/
 
-
 # Real/production test data
+tests/live_test_config.json
+tests/LIVE_TESTS.md
 tests/test_data/*_real.json
 tests/test_data/*_live.json
 
-# Environment files
-.env
-.env.local
+# Copilot instructions (may contain sensitive context)
+.github/copilot-instructions.md
+
+# =============================================================================
+# TOOL OUTPUT & TEMPORARY FILES
+# =============================================================================
+# TaskHound output directories (but not source code modules)
+dpapi_loot/
+out/
+/output/
+loot/
+backup/
+/opengraph/
+
+# TaskHound output files (contain sensitive scan results)
+taskhound_*.json
+*.html
+
+# Export files
+*_output.csv
+*_output.json
+*_output.txt
+
+# Temporary test files
+test_*.json
+test_*.csv
+test_*.txt
+
+# Log files
+*.log
+*.log.*
+
+# Debug scripts
+debug_*.py
+live_debug/
+test_*debug*.py
+test_*analysis*.py
+test_*case*.py
+create_debug_engine.py
 
 # =============================================================================
 # PYTHON BUILD & CACHE
@@ -55,6 +91,7 @@ ENV/
 # Pytest
 .pytest_cache/
 .tox/
+.hypothesis/
 
 # Coverage reports
 .coverage
@@ -62,48 +99,6 @@ ENV/
 htmlcov/
 coverage.xml
 *.cover
-.hypothesis/
-
-# =============================================================================
-# TOOL OUTPUT & TEMPORARY FILES
-# =============================================================================
-# TaskHound output directories (but not source code modules)
-dpapi_loot/
-out/
-/output/
-loot/
-backup/
-/opengraph/
-
-# TaskHound output files (contain sensitive scan results)
-taskhound_*.json
-taskhound_*.html
-
-# HTML reports (may contain sensitive scan results)
-*.html
-htmlcov/
-
-# Export files
-*_output.csv
-*_output.json
-*_output.txt
-
-# Temporary test files
-test_*.json
-test_*.csv
-test_*.txt
-
-# Log files
-*.log
-*.log.*
-
-# Debug scripts
-debug_*.py
-live_debug/
-test_*debug*.py
-test_*analysis*.py
-test_*case*.py
-create_debug_engine.py
 
 # =============================================================================
 # IDE & EDITOR
