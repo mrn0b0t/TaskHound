@@ -159,6 +159,15 @@ def classify_task(
             should_include=False,
         )
 
+    # Helper to add account status indicator
+    def _add_account_status(reason: str) -> str:
+        """Add [ACCOUNT DISABLED] indicator if account is disabled in AD."""
+        if hv and hv.loaded:
+            enabled = hv.is_account_enabled(runas)
+            if enabled is False:  # Explicitly False, not None
+                return f"[ACCOUNT DISABLED] {reason}"
+        return reason
+
     # Check for Tier 0 first, then high-value
     # Priority: BloodHound data > LDAP tier0_cache
     if hv and hv.loaded:
@@ -172,6 +181,9 @@ def classify_task(
                 reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
             else:
                 password_analysis = _analyze_password_age(hv, runas, meta, rel_path, pwd_cache)
+
+            # Add account status indicator
+            reason = _add_account_status(reason)
 
             # Update row in place
             row.type = TaskType.TIER0.value
@@ -194,6 +206,9 @@ def classify_task(
                 reason = f"{reason} (no saved credentials — DPAPI dump not applicable; manipulation requires an interactive session)"
             else:
                 password_analysis = _analyze_password_age(hv, runas, meta, rel_path, pwd_cache)
+
+            # Add account status indicator
+            reason = _add_account_status(reason)
 
             # Update row in place
             row.type = TaskType.PRIV.value

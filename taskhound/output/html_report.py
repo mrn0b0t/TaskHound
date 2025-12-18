@@ -85,6 +85,10 @@ def calculate_severity(row: Any) -> SeverityScore:
     cred_status = str(_get_row_value(row, "cred_status", "")).lower()
     cred_guard = _get_row_value(row, "credential_guard", None)
 
+    # Check if account is disabled (indicated in reason field)
+    reason = str(_get_row_value(row, "reason", ""))
+    account_disabled = "[ACCOUNT DISABLED]" in reason
+
     # Determine credential state
     is_valid = cred_valid is True
     is_outdated = cred_status == "invalid" or cred_valid is False
@@ -97,6 +101,10 @@ def calculate_severity(row: Any) -> SeverityScore:
         factors.append("Privileged account")
     elif task_type == "TASK":
         factors.append("Standard task")
+
+    # Add account disabled indicator (before credential factors)
+    if account_disabled:
+        factors.append("Account currently disabled in AD")
 
     if has_stored_creds:
         factors.append("Credentials stored (DPAPI)")
@@ -235,8 +243,10 @@ def calculate_statistics(rows: list[Any]) -> AuditStatistics:
         if host:
             hosts_seen.add(host)
 
-        # Track accounts (skip SIDs)
-        runas = _get_row_value(row, "runas", "") or _get_row_value(row, "resolved_runas", "")
+        # Track accounts - prefer resolved name over SID
+        runas_raw = _get_row_value(row, "runas", "")
+        resolved_runas = _get_row_value(row, "resolved_runas", "")
+        runas = resolved_runas if resolved_runas else runas_raw
         if runas and not runas.startswith("S-1-"):
             unique_accounts.add(runas)
 
@@ -1209,7 +1219,15 @@ def _generate_detailed_findings(rows: list[Any], findings: list[tuple[SeveritySc
             severity = task_data["severity"]
 
             task_path = _get_row_value(row, "path", "Unknown") or "Unknown"
-            runas = _get_row_value(row, "runas", "") or _get_row_value(row, "resolved_runas", "") or "N/A"
+            # Prefer resolved username, show "username (SID)" when available
+            runas_raw = _get_row_value(row, "runas", "") or ""
+            resolved_runas = _get_row_value(row, "resolved_runas", "") or ""
+            if resolved_runas and runas_raw.startswith("S-1-"):
+                runas = f"{resolved_runas} ({runas_raw})"
+            elif resolved_runas:
+                runas = resolved_runas
+            else:
+                runas = runas_raw or "N/A"
             task_type = str(_get_row_value(row, "type", "") or "").upper()
             decrypted = _get_row_value(row, "decrypted_password", "") or ""
 
