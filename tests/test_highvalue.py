@@ -625,11 +625,25 @@ class TestCheckTier0:
         assert is_tier0 is True
         assert "TIER0 Group Membership" in reasons
 
-    def test_admin_sd_holder(self, loaded_loader):
-        """Detects Tier 0 via AdminSDHolder (admincount=1)."""
+    def test_admin_sd_holder_alone_not_tier0(self, loaded_loader):
+        """AdminSDHolder alone is NOT sufficient for Tier 0 - may be historical."""
         is_tier0, reasons = loaded_loader.check_tier0("admin_sd_holder")
+        assert is_tier0 is False  # AdminSDHolder alone is NOT Tier 0
+        assert reasons == []
+
+    def test_admin_sd_holder_with_group_membership(self, loaded_loader):
+        """AdminSDHolder + actual Tier 0 group = Tier 0."""
+        # Add a user with both AdminSDHolder and Domain Admins membership
+        loaded_loader.hv_users["admin_with_groups"] = {
+            "sid": "S-1-5-21-1234-5678-9012-1004",
+            "groups": ["S-1-5-21-1234-5678-9012-512"],  # Domain Admins
+            "group_names": ["Domain Admins"],
+            "admincount": "1",  # AdminSDHolder protected
+        }
+        is_tier0, reasons = loaded_loader.check_tier0("admin_with_groups")
         assert is_tier0 is True
-        assert "AdminSDHolder" in reasons
+        assert "TIER0 Group Membership" in reasons
+        assert "AdminSDHolder" in reasons  # Additional context
 
     def test_regular_user_not_tier0(self, loaded_loader):
         """Regular user is not Tier 0."""
