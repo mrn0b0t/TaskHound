@@ -55,10 +55,9 @@ def find_windows_root(mount_path: str) -> Optional[Path]:
     # Check one level down (partition/volume mounts)
     try:
         for subdir in mount_path.iterdir():
-            if subdir.is_dir():
-                if (subdir / "Windows").exists():
-                    info(f"Found Windows root at: {subdir}")
-                    return subdir
+            if subdir.is_dir() and (subdir / "Windows").exists():
+                info(f"Found Windows root at: {subdir}")
+                return subdir
     except PermissionError:
         pass
 
@@ -466,10 +465,7 @@ def load_from_disk(
         backup_path = Path(tempfile.mkdtemp(prefix=f"taskhound_{hostname}_"))
         info(f"Ephemeral mode: using temp directory {backup_path}")
     else:
-        if backup_dir:
-            backup_path = Path(backup_dir) / hostname
-        else:
-            backup_path = Path("dpapi_loot") / hostname
+        backup_path = Path(backup_dir) / hostname if backup_dir else Path("dpapi_loot") / hostname
         backup_path.mkdir(parents=True, exist_ok=True)
         good(f"Creating backup at: {backup_path}")
 

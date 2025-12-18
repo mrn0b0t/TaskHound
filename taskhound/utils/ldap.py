@@ -3,6 +3,7 @@
 # This module provides shared LDAP connection and query utilities
 # used across TaskHound modules (LAPS, SID resolver, etc.)
 
+import contextlib
 import socket
 from typing import Optional, Tuple
 
@@ -461,10 +462,8 @@ def get_netbios_domain_name(
     finally:
         # Don't close if we were passed an existing connection
         if should_close and conn:
-            try:
+            with contextlib.suppress(Exception):
                 conn.close()
-            except Exception:
-                pass
 
 
 class LDAPConnectionError(Exception):

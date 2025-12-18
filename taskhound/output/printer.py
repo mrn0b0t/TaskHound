@@ -2,12 +2,12 @@ from typing import Any, Dict, List, Optional
 
 from rich.table import Table
 
-from . import COLORS
 from ..parsers.highvalue import HighValueLoader
 from ..utils import logging as log_utils
 from ..utils.console import console
 from ..utils.date_parser import parse_iso_date
 from ..utils.sid_resolver import format_runas_with_sid_resolution
+from . import COLORS
 
 
 def print_task_table(
@@ -43,10 +43,7 @@ def print_task_table(
         tag = "[TASK]"
 
     # Build the title with tag, hostname (if provided), and path
-    if hostname:
-        title = f"[{header_style}]{tag}[/] {hostname} - {rel_path}"
-    else:
-        title = f"[{header_style}]{tag}[/] {rel_path}"
+    title = f"[{header_style}]{tag}[/] {hostname} - {rel_path}" if hostname else f"[{header_style}]{tag}[/] {rel_path}"
 
     # Create a simple two-column table
     table = Table(
@@ -428,10 +425,7 @@ def format_block(
 
     # Return text format for file output (backward compatibility)
     # Label width is 18 chars + 1 space before colon = 19 chars total before ":"
-    if hostname:
-        base = [f"\n{header} {hostname} - {rel_path}"]
-    else:
-        base = [f"\n{header} {rel_path}"]
+    base = [f"\n{header} {hostname} - {rel_path}"] if hostname else [f"\n{header} {rel_path}"]
     for label, value in rows:
         base.append(f"        {label:<18} : {value}")
 

@@ -347,7 +347,7 @@ def _create_relationship_edges(
     Creates edges for a task:
     1. (Computer)-[HasTask]->(ScheduledTask)
     2. (ScheduledTask)-[RunsAs]->(User)
-    
+
     :param netbios_name: NetBIOS domain name for accurate domain comparison
     """
     edges = []

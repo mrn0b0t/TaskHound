@@ -44,13 +44,13 @@ def parse_ntlm_hashes(hashes: str) -> Tuple[str, str]:
 
 def expand_cidr(cidr: str) -> List[str]:
     """Expand a CIDR notation to a list of IP addresses.
-    
+
     Args:
         cidr: CIDR notation string (e.g., '192.168.1.0/24')
-        
+
     Returns:
         List of IP address strings (excludes network and broadcast for /31+)
-        
+
     Raises:
         ValueError: If the CIDR notation is invalid
     """
@@ -62,7 +62,7 @@ def expand_cidr(cidr: str) -> List[str]:
             return [str(ip) for ip in network.hosts()] or [str(network.network_address)]
         return [str(ip) for ip in network.hosts()]
     except ValueError as e:
-        raise ValueError(f"Invalid CIDR notation '{cidr}': {e}")
+        raise ValueError(f"Invalid CIDR notation '{cidr}': {e}") from e
 
 
 def is_cidr(target: str) -> bool:
@@ -78,14 +78,14 @@ def is_cidr(target: str) -> bool:
 
 def normalize_targets(targets: List[str], domain: str) -> List[str]:
     """Normalize a list of targets: expand CIDRs, keep IPs, append domain for short hostnames.
-    
+
     Args:
         targets: List of target strings (IPs, hostnames, FQDNs, or CIDR notation)
         domain: Domain to append to short hostnames
-        
+
     Returns:
         Normalized list of targets with CIDRs expanded to individual IPs
-        
+
     Empty lines are ignored. This mirrors the behavior expected by the CLI
     where users may pass bare hostnames that need to be FQDN-ified.
     """

@@ -2,14 +2,14 @@ import csv
 import json
 import os
 from io import StringIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from . import COLORS
 from ..utils.logging import good
+from . import COLORS
 
 
 def _rows_to_dicts(rows: List[Any]) -> List[Dict]:
@@ -65,10 +65,7 @@ def _format_task_table(row_dict: Dict[str, Any]) -> Table:
 
     runas = row_dict.get("runas", "")
     resolved = row_dict.get("resolved_runas")
-    if resolved and runas.startswith("S-1-5-"):
-        display_runas = f"{resolved} ({runas})"
-    else:
-        display_runas = runas
+    display_runas = f"{resolved} ({runas})" if resolved and runas.startswith("S-1-5-") else runas
     if display_runas:
         table.add_row("RunAs", display_runas)
 
@@ -175,7 +172,7 @@ def _write_summary_file(outdir: str, hosts: Dict[str, List[Dict]], force_color: 
     total_failures = 0
     decrypted_creds = []
 
-    for host, rows in hosts.items():
+    for _host, rows in hosts.items():
         for r in rows:
             task_type = r.get("type", "TASK")
             if task_type == "TIER-0":
