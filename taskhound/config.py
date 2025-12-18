@@ -401,6 +401,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Force DNS queries over TCP instead of UDP. Required when using SOCKS proxies or proxychains "
         "(UDP doesn't traverse SOCKS). Combine with --dc-ip for reliable DNS resolution through tunnels.",
     )
+    target.add_argument(
+        "--auto-targets",
+        action="store_true",
+        help="Auto-discover targets by querying LDAP for all domain computer objects. "
+        "Requires domain credentials (--username, --password) and DC connectivity (--dc-ip or auto-discovery). "
+        "Can be combined with -t/--targets-file to add additional targets.",
+    )
+    target.add_argument(
+        "--ldap-filter",
+        help="Custom LDAP filter for --auto-targets (default: all computers). "
+        "Examples: '(operatingSystem=*Server*)' for servers only, "
+        "'(!(userAccountControl:1.2.840.113556.1.4.803:=2))' for enabled computers only.",
+    )
 
     # High value / scanning options
     scan = ap.add_argument_group("Scanning options")
@@ -826,8 +839,16 @@ def validate_args(args):
     if not args.domain:
         print("[!] Domain (-d/--domain) is required for online mode")
         sys.exit(1)
-    if not (args.target or args.targets_file):
-        print("[!] Either --target or --targets-file is required for online mode")
+
+    # Auto-targets or explicit targets required
+    auto_targets = getattr(args, "auto_targets", False)
+    if not (args.target or args.targets_file or auto_targets):
+        print("[!] Either --target, --targets-file, or --auto-targets is required for online mode")
+        sys.exit(1)
+
+    # --ldap-filter requires --auto-targets
+    if getattr(args, "ldap_filter", None) and not auto_targets:
+        print("[!] --ldap-filter requires --auto-targets")
         sys.exit(1)
 
     # Authentication method validation - require either password, hash, AES key, or Kerberos

@@ -216,6 +216,35 @@ def main():
         # Online mode: process targets via SMB
         # Build targets list
         targets = []
+
+        # Auto-discover targets from LDAP if requested
+        if getattr(args, "auto_targets", False):
+            from .utils.ldap import LDAPConnectionError, enumerate_domain_computers
+
+            info("Auto-targets: Querying LDAP for domain computer objects...")
+            try:
+                kerberos_enabled = args.kerberos or getattr(args, "aes_key", None) is not None
+                ldap_computers = enumerate_domain_computers(
+                    dc_ip=args.dc_ip,
+                    domain=args.domain,
+                    username=args.username,
+                    password=args.password,
+                    hashes=args.hashes,
+                    kerberos=kerberos_enabled,
+                    aes_key=getattr(args, "aes_key", None),
+                    ldap_filter=getattr(args, "ldap_filter", None),
+                    use_tcp=getattr(args, "dns_tcp", False),
+                )
+                if ldap_computers:
+                    good(f"Auto-targets: Found {len(ldap_computers)} computer objects in domain")
+                    targets.extend(ldap_computers)
+                else:
+                    warn("Auto-targets: No computer objects found in LDAP")
+            except LDAPConnectionError as e:
+                print(f"[!] Auto-targets failed: {e}")
+                sys.exit(1)
+
+        # Add explicit targets from CLI
         if args.target:
             # Support comma-separated targets: -t 192.168.1.1,192.168.1.2,192.168.1.3
             for t in args.target.split(","):

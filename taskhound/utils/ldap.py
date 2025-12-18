@@ -257,6 +257,108 @@ def get_ldap_connection(
     raise LDAPConnectionError(f"LDAP connection failed: {last_error}")
 
 
+def enumerate_domain_computers(
+    dc_ip: Optional[str],
+    domain: str,
+    username: str,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+    aes_key: Optional[str] = None,
+    ldap_filter: Optional[str] = None,
+    use_tcp: bool = False,
+) -> list[str]:
+    """
+    Enumerate all computer objects from Active Directory via LDAP.
+
+    Returns a list of computer hostnames (dNSHostName or sAMAccountName without $).
+
+    Args:
+        dc_ip: Domain controller IP address (optional - will auto-discover if not provided)
+        domain: Domain name (FQDN format, e.g., "domain.local")
+        username: Username for authentication
+        password: Password (plaintext)
+        hashes: NTLM hashes in LM:NT or NT format
+        kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos
+        ldap_filter: Optional additional LDAP filter (e.g., "(operatingSystem=*Server*)")
+        use_tcp: Force DNS queries over TCP
+
+    Returns:
+        List of computer hostnames
+
+    Raises:
+        LDAPConnectionError: If connection fails
+    """
+    from impacket.ldap.ldapasn1 import SearchResultEntry
+
+    # Connect to LDAP
+    ldap_conn = get_ldap_connection(
+        dc_ip=dc_ip,
+        domain=domain,
+        username=username,
+        password=password,
+        hashes=hashes,
+        kerberos=kerberos,
+        aes_key=aes_key,
+        use_tcp=use_tcp,
+    )
+
+    # Build search filter
+    # Base filter: all computer objects
+    base_filter = "(objectClass=computer)"
+
+    # Combine with custom filter if provided
+    if ldap_filter:
+        # Wrap user filter in AND with base filter
+        search_filter = f"(&{base_filter}{ldap_filter})"
+    else:
+        search_filter = base_filter
+
+    debug(f"LDAP: Enumerating computers with filter: {search_filter}")
+
+    # Search for computers - request dNSHostName and sAMAccountName
+    try:
+        results = ldap_conn.search(
+            searchFilter=search_filter,
+            attributes=["dNSHostName", "sAMAccountName"],
+            sizeLimit=0,  # No limit
+        )
+    except Exception as e:
+        raise LDAPConnectionError(f"LDAP search failed: {e}") from e
+
+    computers = []
+    for result in results:
+        if not isinstance(result, SearchResultEntry):
+            continue
+
+        # Extract attributes
+        dns_hostname = None
+        sam_name = None
+
+        for attr in result["attributes"]:
+            attr_type = str(attr["type"])
+            if attr["vals"]:
+                attr_value = str(attr["vals"][0])
+
+                if attr_type.lower() == "dnshostname":
+                    dns_hostname = attr_value
+                elif attr_type.lower() == "samaccountname":
+                    sam_name = attr_value
+
+        # Prefer dNSHostName (FQDN), fall back to sAMAccountName (strip trailing $)
+        if dns_hostname:
+            computers.append(dns_hostname)
+        elif sam_name:
+            # Strip trailing $ from computer account name
+            hostname = sam_name.rstrip("$")
+            # Append domain to make it resolvable
+            computers.append(f"{hostname}.{domain}")
+
+    debug(f"LDAP: Found {len(computers)} computer objects")
+    return computers
+
+
 class LDAPConnectionError(Exception):
     """Failed to connect to domain controller via LDAP"""
 
