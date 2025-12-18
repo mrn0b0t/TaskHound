@@ -409,6 +409,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--offline",
         help="Offline mode: parse previously collected XML files from directory (no authentication required)",
     )
+    scan.add_argument(
+        "--offline-disk",
+        help="Offline disk mode: collect and analyze from mounted Windows filesystem (VHDX, forensic image). "
+        "Point to the mount root (e.g., /mnt/vhdx). Creates TaskHound-compatible backup by default (use --no-backup to disable).",
+    )
+    scan.add_argument(
+        "--disk-hostname",
+        help="Override hostname detection for --offline-disk mode (default: auto-detect from SYSTEM registry)",
+    )
     scan.add_argument("--bh-data", help="Path to High Value Target export (csv/json from Neo4j)")
 
     # BloodHound live connection options
@@ -608,6 +617,11 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--json", help="Write all results to a JSON file")
     out.add_argument("--csv", help="Write all results to a CSV file")
     out.add_argument("--backup", help="Directory to save raw XML task files (per target)")
+    out.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Disable automatic backup when using --offline-disk (ephemeral analysis, nothing saved)",
+    )
     out.add_argument("--no-summary", action="store_true", help="Disable summary table at the end of the run")
 
     # Audit Mode options
@@ -788,6 +802,22 @@ def validate_args(args):
             print(f"[!] Offline path must be a directory: {args.offline}")
             sys.exit(1)
         # Skip authentication validation for offline mode
+        return
+
+    # Offline disk mode validation (mounted Windows filesystem)
+    if args.offline_disk:
+        if not os.path.exists(args.offline_disk):
+            print(f"[!] Offline disk mount point does not exist: {args.offline_disk}")
+            sys.exit(1)
+        if not os.path.isdir(args.offline_disk):
+            print(f"[!] Offline disk path must be a directory: {args.offline_disk}")
+            sys.exit(1)
+        # Cannot combine with --offline
+        if args.offline:
+            print("[!] ERROR: Cannot use both --offline and --offline-disk")
+            print("[!] Use --offline for TaskHound backup dirs, --offline-disk for mounted Windows filesystems")
+            sys.exit(1)
+        # Skip authentication validation for offline disk mode
         return
 
     # Online mode validation - require authentication parameters

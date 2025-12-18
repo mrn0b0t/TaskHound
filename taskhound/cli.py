@@ -156,7 +156,50 @@ def main():
     # Process based on mode
     all_rows: List[Dict] = []
 
-    if args.offline:
+    if getattr(args, "offline_disk", None):
+        # Offline disk mode: extract from mounted Windows filesystem, then process
+        from .engine.disk_loader import load_from_disk, find_windows_root, extract_dpapi_key_from_registry
+
+        hostname, backup_path = load_from_disk(
+            mount_path=args.offline_disk,
+            backup_dir=getattr(args, "backup", None),
+            hostname=getattr(args, "disk_hostname", None),
+            no_backup=getattr(args, "no_backup", False),
+            verbose=args.verbose,
+            debug=args.debug,
+        )
+
+        if hostname is None or backup_path is None:
+            print("[!] Failed to extract data from mounted disk")
+            sys.exit(1)
+
+        # Auto-extract DPAPI key from registry if not provided
+        dpapi_key = args.dpapi_key
+        if not dpapi_key:
+            windows_root = find_windows_root(args.offline_disk)
+            if windows_root:
+                print("[*] No --dpapi-key provided, attempting to extract from registry hives...")
+                dpapi_key = extract_dpapi_key_from_registry(windows_root, args.debug)
+                if dpapi_key:
+                    print(f"[+] Auto-extracted DPAPI key: {dpapi_key[:20]}...")
+                else:
+                    print("[!] Could not extract DPAPI key from registry")
+                    print("[!] DPAPI decryption will be skipped. Provide --dpapi-key manually if needed.")
+
+        # Now process the extracted backup as offline directory
+        lines = process_offline_directory(
+            offline_dir=backup_path,
+            hv=hv,
+            show_unsaved_creds=args.unsaved_creds,
+            include_local=args.include_local,
+            all_rows=all_rows,
+            debug=args.debug,
+            no_ldap=args.no_ldap,
+            dpapi_key=dpapi_key,
+            concise=not args.verbose,
+        )
+
+    elif args.offline:
         # Offline mode: process XML files from directory
         lines = process_offline_directory(
             offline_dir=args.offline,
