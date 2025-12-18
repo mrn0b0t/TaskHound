@@ -158,7 +158,7 @@ def main():
 
     if getattr(args, "offline_disk", None):
         # Offline disk mode: extract from mounted Windows filesystem, then process
-        from .engine.disk_loader import load_from_disk, find_windows_root, extract_dpapi_key_from_registry
+        from .engine.disk_loader import extract_dpapi_key_from_registry, find_windows_root, load_from_disk
 
         hostname, backup_path = load_from_disk(
             mount_path=args.offline_disk,

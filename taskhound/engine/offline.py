@@ -61,13 +61,19 @@ def process_offline_directory(
     # Check if offline_dir itself is a dpapi_loot structure (for direct decryption)
     has_masterkeys = os.path.exists(os.path.join(offline_dir, "masterkeys"))
     has_credentials = os.path.exists(os.path.join(offline_dir, "credentials"))
+    has_tasks_dir = os.path.exists(os.path.join(offline_dir, "Windows", "System32", "Tasks"))
 
-    if has_masterkeys and has_credentials and dpapi_key:
-        # This is a direct dpapi_loot directory, process it directly
+    # If this looks like a single-host dpapi_loot structure, process it directly
+    # This handles both: with DPAPI key (decrypt creds) and without (just process tasks)
+    if has_masterkeys or has_tasks_dir:
+        # This is a direct dpapi_loot directory for a single host
         hostname = os.path.basename(offline_dir)
-        info(f"Detected DPAPI loot directory structure for {hostname}")
-        dpapi_lines, decrypted_creds = _process_offline_dpapi_decryption(hostname, offline_dir, dpapi_key, debug)
-        out_lines.extend(dpapi_lines)
+        info(f"Detected single-host backup structure for {hostname}")
+
+        decrypted_creds = []
+        if has_masterkeys and has_credentials and dpapi_key:
+            dpapi_lines, decrypted_creds = _process_offline_dpapi_decryption(hostname, offline_dir, dpapi_key, debug)
+            out_lines.extend(dpapi_lines)
 
         # Also process any XML files in this directory, passing decrypted creds for matching
         lines = _process_offline_host(

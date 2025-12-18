@@ -9,15 +9,17 @@
 # Automatically extracts DPAPI key from registry hives if --dpapi-key not provided.
 # Creates backup in ./dpapi_loot/<hostname>/ by default.
 
+import io
 import os
 import re
 import shutil
-from binascii import hexlify
+import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
-from ..utils.logging import good, info, warn, status
+from ..utils.logging import good, info, status, warn
 
 # Windows paths relative to system root
 TASKS_PATH = "Windows/System32/Tasks"
@@ -132,8 +134,6 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
     Returns:
         DPAPI user key as hex string (e.g., "0x1234...") or None if extraction fails
     """
-    import tempfile
-
     registry_path = windows_root / REGISTRY_PATH
     system_path = registry_path / "SYSTEM"
     security_path = registry_path / "SECURITY"
@@ -162,76 +162,15 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
         shutil.copy2(security_path, temp_security)
 
         from impacket.examples.secretsdump import LocalOperations, LSASecrets
-        from impacket.dpapi import DPAPI_SYSTEM
 
         # Get boot key from SYSTEM hive
         local_ops = LocalOperations(str(temp_system))
         boot_key = local_ops.getBootKey()
 
         if debug:
-            info(f"Extracted boot key from SYSTEM hive")
+            info("Extracted boot key from SYSTEM hive")
 
-        # Extract LSA secrets from SECURITY hive
-        lsa_secrets = LSASecrets(str(temp_security), boot_key, isRemote=False)
-
-        dpapi_key = None
-
-        def secret_callback(secret_type, secret):
-            nonlocal dpapi_key
-            if secret_type.upper().startswith('DPAPI_SYSTEM'):
-                # Parse the DPAPI_SYSTEM structure
-                dpapi = DPAPI_SYSTEM(secret)
-                # We want the UserKey for SYSTEM account masterkey decryption
-                dpapi_key = "0x" + hexlify(dpapi['UserKey']).decode('latin-1')
-
-        # Dump secrets with our callback
-        lsa_secrets.dumpSecrets()
-
-        # LSASecrets stores secrets internally, we need to access them
-        # The dumpSecrets() method prints to stdout, so we need to intercept
-        # Let's try a different approach - access the internal data
-
-        # Actually, let's just parse it ourselves since we have the boot key
-        from impacket.winregistry import winregistry
-
-        reg = winregistry.Registry(str(temp_security), isRemote=False)
-
-        # Open the Policy\Secrets key
-        try:
-            secrets_key = reg.findKey("Policy\\Secrets")
-        except Exception:
-            if debug:
-                info("Could not find Policy\\Secrets key in SECURITY hive")
-            return None
-
-        # Look for DPAPI_SYSTEM
-        for subkey_name in reg.enumKey(secrets_key):
-            if "DPAPI" in subkey_name.upper():
-                try:
-                    subkey = reg.findKey(f"Policy\\Secrets\\{subkey_name}\\CurrVal")
-                    value = reg.getValue(subkey)
-                    if value is not None:
-                        # Decrypt the secret using LSA
-                        lsa = LSASecrets(str(temp_security), boot_key, isRemote=False)
-                        # Get decrypted secret
-                        decrypted = lsa.decryptSecret(secrets_key, value[1])
-                        if decrypted:
-                            dpapi = DPAPI_SYSTEM(decrypted)
-                            dpapi_key = "0x" + hexlify(dpapi['UserKey']).decode('latin-1')
-                            break
-                except Exception as e:
-                    if debug:
-                        info(f"Error processing {subkey_name}: {e}")
-                    continue
-
-        if dpapi_key:
-            good(f"Extracted DPAPI user key from registry hives")
-            return dpapi_key
-
-        # Fallback: use LSASecrets dump and capture output
-        import io
-        import sys
-
+        # Capture stdout - LSASecrets.dumpSecrets() prints the keys
         old_stdout = sys.stdout
         sys.stdout = captured = io.StringIO()
 
@@ -242,17 +181,25 @@ def extract_dpapi_key_from_registry(windows_root: Path, debug: bool = False) -> 
             sys.stdout = old_stdout
 
         output = captured.getvalue()
+
+        # Parse output for DPAPI user key
+        dpapi_key = None
         for line in output.split('\n'):
             if 'dpapi_userkey:' in line.lower():
                 # Format: dpapi_userkey:0x...
-                parts = line.split(':')
+                parts = line.split('dpapi_userkey:', 1)
                 if len(parts) >= 2:
                     dpapi_key = parts[1].strip()
-                    good(f"Extracted DPAPI user key from registry hives")
-                    return dpapi_key
+                    break
+
+        if dpapi_key:
+            good("Extracted DPAPI user key from registry hives")
+            return dpapi_key
 
         if debug:
             info("DPAPI_SYSTEM secret not found in SECURITY hive")
+            if output:
+                info(f"LSA secrets output: {output[:500]}")
         return None
 
     except ImportError as e:
@@ -415,7 +362,7 @@ def extract_masterkeys(windows_root: Path, output_dir: Path, verbose: bool = Fal
             try:
                 shutil.copy2(item, masterkeys_dest / item.name)
                 if verbose:
-                    info(f"Extracted Preferred file")
+                    info("Extracted Preferred file")
             except (PermissionError, OSError):
                 pass  # Not critical
 
@@ -516,7 +463,6 @@ def load_from_disk(
     # Determine output directory
     if no_backup:
         # Create temp directory for ephemeral analysis
-        import tempfile
         backup_path = Path(tempfile.mkdtemp(prefix=f"taskhound_{hostname}_"))
         info(f"Ephemeral mode: using temp directory {backup_path}")
     else:
@@ -531,10 +477,10 @@ def load_from_disk(
     status(f"Extracting scheduled tasks from {windows_root}...")
     task_count = extract_tasks(windows_root, backup_path, verbose, debug)
 
-    status(f"Extracting DPAPI masterkeys...")
+    status("Extracting DPAPI masterkeys...")
     masterkey_count = extract_masterkeys(windows_root, backup_path, verbose, debug)
 
-    status(f"Extracting SYSTEM credentials...")
+    status("Extracting SYSTEM credentials...")
     credential_count = extract_credentials(windows_root, backup_path, verbose, debug)
 
     # Summary
@@ -552,8 +498,8 @@ def load_from_disk(
     if not no_backup:
         metadata_file = backup_path / "extraction_info.txt"
         with open(metadata_file, "w") as f:
-            f.write(f"TaskHound Disk Extraction\n")
-            f.write(f"========================\n\n")
+            f.write("TaskHound Disk Extraction\n")
+            f.write("========================\n\n")
             f.write(f"Source:      {mount_path}\n")
             f.write(f"Windows:     {windows_root}\n")
             f.write(f"Hostname:    {hostname}\n")
