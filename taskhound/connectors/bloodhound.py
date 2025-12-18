@@ -20,7 +20,7 @@ except ImportError:
     GraphDatabase = None
 from ..utils.bh_auth import BloodHoundAuthenticator
 from ..utils.helpers import sanitize_json_string
-from ..utils.logging import good, status, warn
+from ..utils.logging import debug, good, status, warn
 
 
 def _safe_get_sam(data: dict, key: str) -> str:
@@ -477,6 +477,84 @@ class BloodHoundConnector:
         except Exception as e:
             warn(f"Error searching for {node_type} {name}: {e}")
             return None
+
+    def get_all_computers(self) -> Dict[str, str]:
+        """
+        Get all computer objects from BloodHound and return hostname -> SID mapping.
+
+        Works with both BHCE (API) and Legacy BloodHound (Neo4j).
+
+        Returns:
+            Dict mapping uppercase hostname (without domain suffix) to SID
+            Example: {"DC01": "S-1-5-21-...-1001", "FILESERVER": "S-1-5-21-...-1002"}
+        """
+        computers: Dict[str, str] = {}
+
+        # Same Cypher query works for both BHCE and Legacy
+        query = "MATCH (c:Computer) RETURN c"
+
+        try:
+            if self.bh_type == "bhce":
+                data = self.run_cypher_query(query)
+
+                if data:
+                    nodes = data.get("data", {}).get("nodes", {})
+
+                    for _, node_data in nodes.items():
+                        object_id = node_data.get("objectId", "")
+                        label = node_data.get("label", "")
+
+                        if not object_id or not label:
+                            continue
+
+                        # Extract hostname from label (e.g., "DC01.CORP.LOCAL@CORP.LOCAL" -> "DC01")
+                        hostname = label.split("@")[0] if "@" in label else label
+
+                        # Strip domain suffix
+                        if "." in hostname:
+                            hostname = hostname.split(".")[0]
+
+                        hostname = hostname.upper()
+                        if hostname:
+                            computers[hostname] = object_id.upper()
+
+            elif self.bh_type == "legacy":
+                if GraphDatabase is None:
+                    warn("neo4j library not installed - required for Legacy BloodHound")
+                    return computers
+
+                uri = f"bolt://{self.ip}:7687"
+                driver = GraphDatabase.driver(uri, auth=(self.username, self.password))
+
+                with driver.session() as session:
+                    result = session.run(query)
+                    for record in result:
+                        node = record["c"]
+                        properties = dict(node) if node else {}
+
+                        object_id = properties.get("objectid", "")
+                        name = properties.get("name", "")
+
+                        if not object_id or not name:
+                            continue
+
+                        # Extract hostname from name (e.g., "DC01.CORP.LOCAL" -> "DC01")
+                        hostname = name
+                        if "." in hostname:
+                            hostname = hostname.split(".")[0]
+
+                        hostname = hostname.upper()
+                        if hostname:
+                            computers[hostname] = object_id.upper()
+
+                driver.close()
+
+            debug(f"BloodHound: Loaded {len(computers)} computer SIDs")
+            return computers
+
+        except Exception as e:
+            warn(f"Error querying computers from BloodHound: {e}")
+            return computers
 
     def query_domain_by_netbios(self, netbios_name: str) -> Optional[Dict[str, str]]:
         """

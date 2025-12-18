@@ -66,6 +66,7 @@ class HighValueLoader:
     #     path: source file path
     #     hv_users: mapping from samaccountname -> metadata (currently only sid)
     #     hv_sids: mapping from sid -> metadata (currently only sam)
+    #     hv_computers: mapping from hostname (uppercase) -> SID
     #     loaded: True if load() succeeded
     #     format_type: "legacy", "bhce", or "unknown"
 
@@ -73,6 +74,7 @@ class HighValueLoader:
         self.path = path
         self.hv_users: Dict[str, Dict[str, Any]] = {}
         self.hv_sids: Dict[str, Dict[str, Any]] = {}
+        self.hv_computers: Dict[str, str] = {}  # hostname -> SID mapping for computers
         self.loaded = False
         self.format_type = "unknown"
 
@@ -354,9 +356,7 @@ class HighValueLoader:
             if not isinstance(node_data, dict):
                 continue
 
-            # Only process Users for now (could extend to Groups later)
-            if node_data.get("kind") != "User":
-                continue
+            node_kind = node_data.get("kind")
 
             # Extract core fields
             object_id = node_data.get("objectId", "").strip()
@@ -364,6 +364,24 @@ class HighValueLoader:
             properties = node_data.get("properties", {})
 
             if not object_id or not label:
+                continue
+
+            # Process Computer nodes - store hostname -> SID mapping
+            if node_kind == "Computer":
+                # Extract hostname from label (e.g., "DC01.CORP.LOCAL@CORP.LOCAL" -> "DC01")
+                hostname = label.split("@")[0] if "@" in label else label
+
+                # Strip domain suffix to get just hostname
+                if "." in hostname:
+                    hostname = hostname.split(".")[0]
+
+                hostname = hostname.upper()
+                if hostname:
+                    self.hv_computers[hostname] = object_id.upper()
+                continue  # Don't process computers as users
+
+            # Only process Users for high-value detection
+            if node_kind != "User":
                 continue
 
             # Extract samaccountname from label (e.g., "HIGHPRIV@BADSUCCESSOR.LAB" -> "highpriv")
@@ -490,6 +508,43 @@ class HighValueLoader:
                 self._process_user_data(row)
         return True
 
+    def is_account_enabled(self, runas: str) -> Optional[bool]:
+        """
+        Check if a user account is enabled in Active Directory.
+
+        Args:
+            runas: The account to check (SID, DOMAIN\\user, or plain username)
+
+        Returns:
+            True if enabled, False if disabled, None if unknown/not found
+        """
+        if not runas:
+            return None
+
+        val = runas.strip()
+        user_data = None
+
+        # Look up user data
+        if val.upper().startswith("S-1-5-"):
+            user_data = self.hv_sids.get(val.upper())
+        else:
+            sam = val.split("\\", 1)[1].lower() if "\\" in val else val.lower()
+            user_data = self.hv_users.get(sam)
+
+        if not user_data:
+            return None
+
+        enabled = user_data.get("enabled")
+        if enabled is None:
+            return None
+
+        # Handle various formats (bool, string "true"/"false", etc.)
+        if isinstance(enabled, bool):
+            return enabled
+        if isinstance(enabled, str):
+            return enabled.lower() in ("true", "1", "yes")
+        return bool(enabled)
+
     def check_highvalue(self, runas: str) -> bool:
         # Return True if the given RunAs value matches a known high-value account.
         #
@@ -589,13 +644,12 @@ class HighValueLoader:
             # User has no actual Tier-0 group memberships
             # They may have AdminSDHolder (historical) or BHCE tags (auto-assigned)
             # These should be classified as PRIV, not TIER-0
-            bhce_tier0_detected = False
             if self.format_type == "bhce" and user_data.get("istierzero"):
-                bhce_tier0_detected = True
+                pass
 
             system_tags = user_data.get("system_tags", "")
             if system_tags and "admin_tier_0" in system_tags:
-                bhce_tier0_detected = True
+                pass
 
             # DO NOT add to tier0_reasons - this makes them PRIV instead of TIER-0
             # AdminSDHolder alone or BHCE tags alone are NOT sufficient for TIER-0

@@ -15,7 +15,7 @@ from impacket.ldap import ldapasn1 as ldapasn1_impacket
 from ..parsers.highvalue import HighValueLoader
 from ..utils.cache_manager import get_cache
 from ..utils.ldap import LDAPConnectionError, get_ldap_connection
-from ..utils.logging import debug, info, warn
+from ..utils.logging import debug, info, status, warn
 
 
 def resolve_sid_via_smb(sid: str, smb_connection) -> Optional[str]:
@@ -106,24 +106,24 @@ def is_sid(value: str) -> bool:
 def get_domain_sid_prefix(sid: str) -> Optional[str]:
     """
     Extract domain SID prefix from a full SID.
-    
+
     Domain SIDs have the format: S-1-5-21-{domain1}-{domain2}-{domain3}-{RID}
     The domain prefix is S-1-5-21-{domain1}-{domain2}-{domain3} (without RID).
-    
+
     Args:
         sid: Full SID string (e.g., "S-1-5-21-123-456-789-1001")
-    
+
     Returns:
         Domain prefix (e.g., "S-1-5-21-123-456-789") or None if not a domain SID
     """
     if not sid or not sid.startswith("S-1-5-21-"):
         return None
-    
+
     parts = sid.split("-")
     # Domain SID: S-1-5-21-{d1}-{d2}-{d3}-{RID} = 8 parts minimum
     if len(parts) < 8:
         return None
-    
+
     # Return everything except the RID (last part)
     return "-".join(parts[:-1])
 
@@ -131,21 +131,21 @@ def get_domain_sid_prefix(sid: str) -> Optional[str]:
 def is_foreign_domain_sid(sid: str, local_domain_sid_prefix: Optional[str]) -> bool:
     """
     Check if a SID belongs to a foreign (trusted) domain.
-    
+
     Args:
         sid: SID to check
         local_domain_sid_prefix: Known local domain prefix (e.g., "S-1-5-21-123-456-789")
-    
+
     Returns:
         True if SID is from a different domain than local_domain_sid_prefix
     """
     if not local_domain_sid_prefix:
         return False  # Can't determine without local domain info
-    
+
     sid_prefix = get_domain_sid_prefix(sid)
     if not sid_prefix:
         return False  # Not a domain SID (built-in, well-known, etc.)
-    
+
     return sid_prefix != local_domain_sid_prefix
 
 
@@ -444,7 +444,7 @@ def resolve_name_to_sid_via_ldap(
     # Check cache first (before any processing)
     from ..utils.cache_manager import get_cache
     cache = get_cache()
-    
+
     if cache and is_computer:
         # Normalize for cache key: strip $ and domain suffix
         cache_name = name.upper()
@@ -453,19 +453,19 @@ def resolve_name_to_sid_via_ldap(
         if "." in cache_name:
             cache_name = cache_name.split(".")[0]
         cache_key = f"name:{cache_name}:{domain.upper()}"
-        
+
         cached_sid = cache.get("computers", cache_key)
         if cached_sid:
             debug(f"Cache hit for computer {name}: {cached_sid}")
             return cached_sid
     else:
         cache_key = None  # Only cache computers for now
-    
+
     # Validate domain - must be non-empty and contain at least one dot for LDAP DN construction
     if not domain or "." not in domain:
         debug(f"Invalid domain '{domain}' for LDAP resolution - must be FQDN (e.g., 'corp.local')")
         return None
-    
+
     try:
         # Extract just the name part if it's in USER@DOMAIN format
         search_name = name
@@ -577,6 +577,226 @@ def resolve_name_to_sid_via_ldap(
         warn(f"Unexpected error during LDAP name→SID resolution: {e}")
         debug(f"Full traceback: {e}", exc_info=True)
         return None
+
+
+def resolve_name_to_sid(
+    name: str,
+    domain: str,
+    is_computer: bool = False,
+    hv_loader=None,
+    dc_ip: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+) -> Optional[str]:
+    """
+    Resolve a name (computer or user) to its SID using a multi-tier fallback chain.
+
+    Fallback order:
+    1. Cache (fast, persistent)
+    2. BloodHound data (if hv_loader provided)
+    3. LDAP query (if credentials provided)
+
+    Args:
+        name: Computer name (FQDN or hostname) or username
+        domain: Domain name (e.g., "corp.local")
+        is_computer: True if resolving a computer account, False for user
+        hv_loader: HighValueLoader with BloodHound data (optional)
+        dc_ip: Domain controller IP address
+        username: LDAP authentication username
+        password: LDAP authentication password
+        hashes: NTLM hashes for pass-the-hash
+        kerberos: Use Kerberos authentication
+
+    Returns:
+        SID string (e.g., "S-1-5-21-..."), None if resolution fails
+    """
+    if not name:
+        return None
+
+    # Normalize name for lookups
+    lookup_name = name.upper()
+    if is_computer:
+        # Strip trailing $ and domain suffix
+        if lookup_name.endswith("$"):
+            lookup_name = lookup_name[:-1]
+        if "." in lookup_name:
+            lookup_name = lookup_name.split(".")[0]
+
+    # Tier 1: Check cache first
+    cache = get_cache()
+    if cache:
+        cache_key = f"name:{lookup_name}:{domain.upper() if domain else 'LOCAL'}"
+        cache_type = "computers" if is_computer else "users"
+        cached_sid = cache.get(cache_type, cache_key)
+        if cached_sid:
+            debug(f"Cache hit for {name}: {cached_sid}")
+            return cached_sid
+
+    # Tier 2: Try BloodHound data
+    if hv_loader and hasattr(hv_loader, "loaded") and hv_loader.loaded:
+        if is_computer:
+            # Try hv_computers dict (maps hostname → SID)
+            hv_computers = getattr(hv_loader, "hv_computers", {})
+            if hv_computers:
+                sid = hv_computers.get(lookup_name)
+                if sid:
+                    debug(f"Resolved {name} to {sid} via BloodHound computer data")
+                    # Cache for future lookups
+                    if cache:
+                        cache.set("computers", cache_key, sid)
+                    return sid
+        else:
+            # Try hv_users dict (maps samaccountname → metadata with SID)
+            hv_users = getattr(hv_loader, "hv_users", {})
+            if hv_users:
+                # Try exact match first
+                user_data = hv_users.get(lookup_name) or hv_users.get(lookup_name.lower())
+                if user_data:
+                    sid = user_data.get("sid") or user_data.get("objectid")
+                    if sid:
+                        debug(f"Resolved {name} to {sid} via BloodHound data")
+                        # Cache for future lookups
+                        if cache:
+                            cache.set("users", cache_key, sid)
+                        return sid
+
+    # Tier 3: Try LDAP if credentials available
+    if domain and username and (password or hashes):
+        sid = resolve_name_to_sid_via_ldap(
+            name=name,
+            domain=domain,
+            is_computer=is_computer,
+            dc_ip=dc_ip,
+            username=username,
+            password=password,
+            hashes=hashes,
+            kerberos=kerberos,
+        )
+        if sid:
+            # Already cached by resolve_name_to_sid_via_ldap
+            return sid
+
+    debug(f"Could not resolve {name} to SID (checked cache, BloodHound, LDAP)")
+    return None
+
+
+def prefetch_computer_sids(
+    targets: List[str],
+    domain: str,
+    hv_loader=None,
+    dc_ip: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+) -> Dict[str, str]:
+    """
+    Batch pre-fetch computer SIDs for known targets before scanning begins.
+
+    This function efficiently resolves computer SIDs for all targets upfront,
+    using BloodHound data first (instant) and falling back to LDAP only for
+    computers not found in BloodHound. Results are cached for the scan.
+
+    Fallback order:
+    1. BloodHound data (if hv_loader provided with hv_computers)
+    2. Cache (check if already resolved)
+    3. Batch LDAP query for remaining computers
+
+    Args:
+        targets: List of target hostnames (FQDN or short names)
+        domain: Domain name (e.g., "corp.local")
+        hv_loader: HighValueLoader with BloodHound data (optional)
+        dc_ip: Domain controller IP address
+        username: LDAP authentication username
+        password: LDAP authentication password
+        hashes: NTLM hashes for pass-the-hash
+        kerberos: Use Kerberos authentication
+
+    Returns:
+        Dict mapping normalized hostname -> SID for all resolved targets
+    """
+    if not targets:
+        return {}
+
+    resolved: Dict[str, str] = {}
+    remaining: List[str] = []
+    cache = get_cache()
+
+    # Normalize all target names
+    normalized_targets = {}
+    for target in targets:
+        # Strip domain suffix and normalize to uppercase
+        hostname = target.upper()
+        if "." in hostname:
+            hostname = hostname.split(".")[0]
+        normalized_targets[hostname] = target
+
+    # Step 1: Check BloodHound data first (instant lookups)
+    bh_hits = 0
+    if hv_loader and hasattr(hv_loader, "hv_computers") and hv_loader.hv_computers:
+        hv_computers = hv_loader.hv_computers
+        for hostname, _original in normalized_targets.items():
+            sid = hv_computers.get(hostname)
+            if sid:
+                resolved[hostname] = sid
+                bh_hits += 1
+                # Cache the result
+                if cache:
+                    cache_key = f"name:{hostname}:{domain.upper() if domain else 'LOCAL'}"
+                    cache.set("computers", cache_key, sid)
+
+        if bh_hits > 0:
+            status(f"[SID Prefetch] {bh_hits} computer SIDs from BloodHound")
+
+    # Step 2: Check cache for remaining
+    cache_hits = 0
+    for hostname in normalized_targets:
+        if hostname in resolved:
+            continue
+
+        if cache:
+            cache_key = f"name:{hostname}:{domain.upper() if domain else 'LOCAL'}"
+            cached_sid = cache.get("computers", cache_key)
+            if cached_sid:
+                resolved[hostname] = cached_sid
+                cache_hits += 1
+            else:
+                remaining.append(hostname)
+        else:
+            remaining.append(hostname)
+
+    if cache_hits > 0:
+        debug(f"Pre-fetch: {cache_hits} computer SIDs from cache")
+
+    # Step 3: Batch LDAP query for remaining (if credentials available)
+    if remaining and domain and username and (password or hashes):
+        debug(f"Pre-fetch: Querying LDAP for {len(remaining)} remaining computers")
+        for hostname in remaining:
+            sid = resolve_name_to_sid_via_ldap(
+                name=hostname,
+                domain=domain,
+                is_computer=True,
+                dc_ip=dc_ip,
+                username=username,
+                password=password,
+                hashes=hashes,
+                kerberos=kerberos,
+            )
+            if sid:
+                resolved[hostname] = sid
+                # Already cached by resolve_name_to_sid_via_ldap
+
+        ldap_resolved = len(resolved) - bh_hits - cache_hits
+        if ldap_resolved > 0:
+            status(f"[SID Prefetch] {ldap_resolved} computer SIDs via LDAP")
+
+    total = len(resolved)
+    if total > 0:
+        debug(f"Pre-fetch complete: {total} computer SIDs resolved")
+
+    return resolved
 
 
 def looks_like_domain_user(runas: str) -> bool:

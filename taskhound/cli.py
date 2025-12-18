@@ -28,7 +28,7 @@ from .utils.cache_manager import init_cache
 from .utils.console import print_banner
 from .utils.date_parser import parse_timestamp
 from .utils.helpers import normalize_targets
-from .utils.logging import debug, good, info, set_verbosity, warn
+from .utils.logging import debug, good, info, set_verbosity, status, warn
 from .utils.network import verify_ldap_connection
 
 
@@ -80,9 +80,16 @@ def main():
                         hv.hv_sids[user_data["sid"].upper()] = user_data
                         hv.hv_sids[user_data["sid"].upper()]["sam"] = sam
 
+                # Also load computer SIDs from BHCE for pre-fetch optimization
+                if bh_connector and hasattr(bh_connector, "get_all_computers"):
+                    hv.hv_computers = bh_connector.get_all_computers()
+                    if hv.hv_computers:
+                        debug(f"Loaded {len(hv.hv_computers)} computer SIDs from BHCE")
+
                 hv.loaded = True
                 hv.format_type = "bloodhound_live"
                 hv_loaded = True
+                len(hv.hv_computers) if hv.hv_computers else 0
                 good(f"Live BloodHound data loaded ({len(users_data)} users)")
 
                 # Test LDAP SID resolution capability
@@ -223,6 +230,7 @@ def main():
 
             include_dcs = getattr(args, "include_dcs", False)
             dc_msg = " (including DCs)" if include_dcs else " (excluding DCs)"
+            ldap_filter_msg = " with filter" if getattr(args, "ldap_filter", None) else ""
             info(f"Auto-targets: Querying LDAP for domain computer objects{dc_msg}...")
             try:
                 kerberos_enabled = args.kerberos or getattr(args, "aes_key", None) is not None
@@ -239,6 +247,7 @@ def main():
                     include_dcs=include_dcs,
                 )
                 if ldap_computers:
+                    status(f"[Auto-targets] {len(ldap_computers)} computers from LDAP{ldap_filter_msg}")
                     good(f"Auto-targets: Found {len(ldap_computers)} computer objects in domain")
                     targets.extend(ldap_computers)
                 else:
@@ -260,6 +269,22 @@ def main():
 
         # Normalize (append domain for short names; leave IPs as-is)
         targets = normalize_targets(targets, args.domain)
+
+        # Pre-fetch computer SIDs from BloodHound data (if available) before scan starts
+        # This populates the cache so workers don't each need to make LDAP calls
+        if targets and (hv or args.domain):
+            from .utils.sid_resolver import prefetch_computer_sids
+
+            prefetch_computer_sids(
+                targets=targets,
+                domain=args.domain,
+                hv_loader=hv,
+                dc_ip=args.dc_ip,
+                username=args.username,
+                password=args.password,
+                hashes=args.hashes,
+                kerberos=args.kerberos,
+            )
 
         # Build AuthContext from args
         # AES key implies Kerberos authentication
@@ -454,14 +479,13 @@ def main():
             if netbios_name:
                 debug(f"NetBIOS domain name: {netbios_name}")
             else:
-                debug(f"Could not query NetBIOS name, falling back to FQDN first part")
+                debug("Could not query NetBIOS name, falling back to FQDN first part")
 
         # Extract computer SIDs from task rows for accurate BloodHound resolution
         computer_sids = {}
         for row in all_rows:
-            if hasattr(row, "host") and hasattr(row, "computer_sid"):
-                if row.host and row.computer_sid:
-                    computer_sids[row.host.upper()] = row.computer_sid
+            if hasattr(row, "host") and hasattr(row, "computer_sid") and row.host and row.computer_sid:
+                computer_sids[row.host.upper()] = row.computer_sid
 
         # Create connector if credentials exist
         bh_connector = None

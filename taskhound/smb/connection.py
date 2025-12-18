@@ -235,126 +235,66 @@ def get_server_sid(
     password: Optional[str] = None,
     hashes: Optional[str] = None,
     kerberos: bool = False,
+    hv_loader=None,
 ) -> Optional[str]:
     """
-    Extract the server's machine account SID using SAMR RPC.
+    Get the server's machine account SID using a multi-tier fallback chain.
 
-    This queries the machine account SID via SAMR protocol. While this requires
-    an RPC call, it's more reliable than trying to extract it from SMB negotiation
-    (which doesn't expose it in newer SMB versions).
+    Fallback order:
+    1. Cache (fast, persistent)
+    2. BloodHound data (if hv_loader provided)
+    3. LDAP query (if credentials provided)
+
+    Note: SAMR on the target machine cannot resolve domain computer SIDs because
+    the COMPUTER$ account exists in Active Directory, not the local SAM.
 
     Args:
         smb: Established SMBConnection
-        dc_ip: Domain controller IP (optional, for LDAP fallback)
-        username: Username for LDAP fallback
-        password: Password for LDAP fallback
-        hashes: NTLM hashes for LDAP fallback
-        kerberos: Use Kerberos for LDAP fallback
+        dc_ip: Domain controller IP (for LDAP)
+        username: Username for LDAP
+        password: Password for LDAP
+        hashes: NTLM hashes for LDAP
+        kerberos: Use Kerberos for LDAP
+        hv_loader: HighValueLoader with BloodHound data (optional)
 
     Returns:
-        SID string (e.g., "S-1-5-21-3570960105-1792075822-554663251-1002") or None
+        SID or None
 
     Example:
         >>> smb = smb_connect("DC01.corp.local", "CORP", "user", "pass")
         >>> sid = get_server_sid(smb)
         >>> print(sid)
-        S-1-5-21-3570960105-1792075822-554663251-1002
+        S-1-5-21-XXXXXXXXX-XXXXXXXX-XXXXXXXX-1002
     """
     try:
-        from impacket.dcerpc.v5 import samr, transport
+        from ..utils.sid_resolver import resolve_name_to_sid
 
-        # Get computer name from SMB
+        # Get computer name and domain from SMB
         computer_name = smb.getServerName()
         if not computer_name:
             return None
 
-        # Try SAMR RPC to get machine account SID
-        try:
-            rpctransport = transport.SMBTransport(
-                smb.getRemoteName(), smb.getRemoteHost(), filename=r"\samr", smb_connection=smb
-            )
-            dce = rpctransport.get_dce_rpc()
-            dce.connect()
-            dce.bind(samr.MSRPC_UUID_SAMR)
+        # Get FQDN for lookup
+        fqdn = smb.getServerDNSHostName()
+        if not fqdn:
+            server_domain = smb.getServerDNSDomainName()
+            if computer_name and server_domain:
+                fqdn = f"{computer_name}.{server_domain}"
 
-            # Connect to SAMR
-            resp = samr.hSamrConnect(dce)
-            serverHandle = resp["ServerHandle"]
+        domain = smb.getServerDNSDomainName()
 
-            # Enumerate domains
-            resp = samr.hSamrEnumerateDomainsInSamServer(dce, serverHandle)
-            domains = resp["Buffer"]["Buffer"]
-
-            # Try each domain
-            for domain in domains:
-                try:
-                    domain_name = domain["Name"]
-
-                    # Skip Builtin domain
-                    if domain_name.lower() == "builtin":
-                        continue
-
-                    # Open domain
-                    resp = samr.hSamrLookupDomainInSamServer(dce, serverHandle, domain_name)
-                    domain_sid = resp["DomainId"]
-
-                    resp = samr.hSamrOpenDomain(dce, serverHandle, domainId=domain_sid)
-                    domainHandle = resp["DomainHandle"]
-
-                    # Look up machine account (computer accounts end with $)
-                    machine_account = f"{computer_name}$"
-                    resp = samr.hSamrLookupNamesInDomain(dce, domainHandle, [machine_account])
-
-                    # Extract RID from NDRULONG object
-                    rid_obj = resp["RelativeIds"]["Element"][0]
-                    rid = rid_obj.fields["Data"]  # Integer value
-
-                    # Build full SID
-                    machine_sid = f"{domain_sid.formatCanonical()}-{rid}"
-                    dce.disconnect()
-                    return machine_sid
-
-                except Exception:
-                    # Try next domain
-                    continue
-
-            dce.disconnect()
-
-        except Exception:
-            # SAMR failed, fall back to LDAP if credentials available
-            pass
-
-        # Fallback: Use LDAP to lookup the computer account SID
-        if dc_ip and username and (password or hashes):
-            from ..utils.sid_resolver import resolve_name_to_sid_via_ldap
-
-            # Get FQDN for LDAP lookup
-            try:
-                fqdn = smb.getServerDNSHostName()
-                if not fqdn:
-                    server_name = smb.getServerName()
-                    server_domain = smb.getServerDNSDomainName()
-                    if server_name and server_domain:
-                        fqdn = f"{server_name}.{server_domain}"
-
-                if fqdn:
-                    domain = smb.getServerDNSDomainName()
-                    if domain:
-                        sid = resolve_name_to_sid_via_ldap(
-                            name=fqdn,
-                            domain=domain,
-                            is_computer=True,
-                            dc_ip=dc_ip,
-                            username=username,
-                            password=password,
-                            hashes=hashes,
-                            kerberos=kerberos,
-                        )
-                        return sid
-            except Exception:
-                pass
-
-        return None
+        # Use unified name→SID resolution with full fallback chain
+        return resolve_name_to_sid(
+            name=fqdn or computer_name,
+            domain=domain,
+            is_computer=True,
+            hv_loader=hv_loader,
+            dc_ip=dc_ip,
+            username=username,
+            password=password,
+            hashes=hashes,
+            kerberos=kerberos,
+        )
 
     except Exception:
         return None
