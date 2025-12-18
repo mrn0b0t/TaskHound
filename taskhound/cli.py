@@ -456,6 +456,13 @@ def main():
             else:
                 debug(f"Could not query NetBIOS name, falling back to FQDN first part")
 
+        # Extract computer SIDs from task rows for accurate BloodHound resolution
+        computer_sids = {}
+        for row in all_rows:
+            if hasattr(row, "host") and hasattr(row, "computer_sid"):
+                if row.host and row.computer_sid:
+                    computer_sids[row.host.upper()] = row.computer_sid
+
         # Create connector if credentials exist
         bh_connector = None
         if bh_config.has_credentials():
@@ -479,6 +486,7 @@ def main():
             bh_connector=bh_connector,
             ldap_config=ldap_config,
             allow_orphans=getattr(args, "bh_allow_orphans", False),
+            computer_sids=computer_sids if computer_sids else None,
             netbios_name=netbios_name,
         )
 
