@@ -7,6 +7,7 @@ from taskhound.dpapi.decryptor import (
     MasterkeyInfo,
     ScheduledTaskCredential,
 )
+from taskhound.utils.helpers import is_guid
 
 
 class TestMasterkeyInfo:
@@ -182,37 +183,37 @@ class TestCredentialOutput:
 
 
 class TestIsGuid:
-    """Tests for _is_guid static method."""
+    """Tests for is_guid helper function (moved to utils.helpers)."""
 
     def test_valid_guid(self):
         """Valid GUID returns True."""
-        assert DPAPIDecryptor._is_guid("12345678-1234-1234-1234-123456789012") is True
+        assert is_guid("12345678-1234-1234-1234-123456789012") is True
 
     def test_valid_guid_lowercase(self):
         """Lowercase GUID returns True."""
-        assert DPAPIDecryptor._is_guid("abcdef12-abcd-abcd-abcd-abcdef123456") is True
+        assert is_guid("abcdef12-abcd-abcd-abcd-abcdef123456") is True
 
     def test_valid_guid_uppercase(self):
         """Uppercase GUID returns True."""
-        assert DPAPIDecryptor._is_guid("ABCDEF12-ABCD-ABCD-ABCD-ABCDEF123456") is True
+        assert is_guid("ABCDEF12-ABCD-ABCD-ABCD-ABCDEF123456") is True
 
     def test_invalid_length(self):
         """String with wrong length returns False."""
-        assert DPAPIDecryptor._is_guid("12345678") is False
-        assert DPAPIDecryptor._is_guid("12345678-1234-1234-1234-12345678901") is False
-        assert DPAPIDecryptor._is_guid("12345678-1234-1234-1234-1234567890123") is False
+        assert is_guid("12345678") is False
+        assert is_guid("12345678-1234-1234-1234-12345678901") is False
+        assert is_guid("12345678-1234-1234-1234-1234567890123") is False
 
     def test_wrong_part_count(self):
         """GUID with wrong number of dashes returns False."""
-        assert DPAPIDecryptor._is_guid("12345678123412341234123456789012") is False
+        assert is_guid("12345678123412341234123456789012") is False
 
     def test_wrong_part_lengths(self):
         """GUID with wrong part lengths returns False."""
-        assert DPAPIDecryptor._is_guid("1234567-12345-1234-1234-123456789012") is False
+        assert is_guid("1234567-12345-1234-1234-123456789012") is False
 
     def test_non_hex_characters(self):
         """GUID with non-hex characters returns False."""
-        assert DPAPIDecryptor._is_guid("GHIJKLMN-1234-1234-1234-123456789012") is False
+        assert is_guid("GHIJKLMN-1234-1234-1234-123456789012") is False
 
 
 class TestReadFile:

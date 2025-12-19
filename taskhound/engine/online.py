@@ -35,6 +35,7 @@ from ..smb.connection import (
 from ..smb.credguard import check_credential_guard
 from ..smb.task_rpc import CredentialStatus, TaskRunInfo, TaskSchedulerRPC
 from ..smb.tasks import crawl_tasks, smb_listdir
+from ..utils.credentials import find_password_for_user
 from ..utils.helpers import is_ipv4
 from ..utils.logging import debug as log_debug
 from ..utils.logging import good, info, status, warn
@@ -65,43 +66,10 @@ def _match_decrypted_password(runas: str, decrypted_creds: List, resolved_runas:
     if not decrypted_creds or not runas:
         return None
 
-    # Build list of usernames to try matching
-    usernames_to_try = []
+    # Use the resolved username if the original is a SID
+    username = runas if not is_sid(runas) else (resolved_runas or runas)
 
-    # If we have a pre-resolved username, use it
-    if resolved_runas:
-        usernames_to_try.append(resolved_runas.lower())
-
-    # Also try the original runas if it's not a raw SID
-    runas_normalized = runas.lower()
-    if not is_sid(runas) and runas_normalized not in usernames_to_try:
-        usernames_to_try.append(runas_normalized)
-
-    # If no valid usernames to try (unresolved SID), can't match
-    if not usernames_to_try:
-        return None
-
-    for cred in decrypted_creds:
-        if not cred.username:
-            continue
-
-        cred_user_normalized = cred.username.lower()
-
-        for try_username in usernames_to_try:
-            # Match full domain\user or partial matches
-            if cred_user_normalized == try_username:
-                # Exact match
-                return cred.password
-            elif "\\" in cred_user_normalized and "\\" not in try_username:
-                # Cred has domain, try_username doesn't - match on username part only
-                if cred_user_normalized.split("\\")[-1] == try_username:
-                    return cred.password
-            elif "\\" in try_username and "\\" not in cred_user_normalized:
-                # try_username has domain, cred doesn't - match on username part only
-                if try_username.split("\\")[-1] == cred_user_normalized:
-                    return cred.password
-
-    return None
+    return find_password_for_user(username, decrypted_creds, resolved_runas)
 
 
 def process_target(
@@ -620,11 +588,9 @@ def process_target(
             if not runas:
                 continue
             logon_type = (meta.get("logon_type") or "").strip().lower()
-            # Only query users from tasks with stored credentials
-            if logon_type == "password":
-                # Skip SIDs - we can't look them up by SID in LDAP easily
-                if not is_sid(runas):
-                    unique_users.add(runas)
+            # Only query users from tasks with stored credentials (skip SIDs)
+            if logon_type == "password" and not is_sid(runas):
+                unique_users.add(runas)
 
         if unique_users:
             info(f"{target}: Querying LDAP for password age data ({len(unique_users)} users)...")

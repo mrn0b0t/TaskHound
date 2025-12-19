@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 from impacket.smbconnection import SMBConnection as ImpacketSMBConnection
 
 from ..parsers.task_xml import parse_task_xml
+from ..utils.helpers import is_guid
 from .decryptor import DPAPIDecryptor, MasterkeyInfo, ScheduledTaskCredential
 
 
@@ -238,7 +239,7 @@ class OfflineDPAPICollector:
                     continue
 
                 # Check if it looks like a GUID (masterkey filename)
-                if self._is_guid(filename):
+                if is_guid(filename):
                     try:
                         # Download masterkey
                         buffer = BytesIO()
@@ -291,13 +292,6 @@ class OfflineDPAPICollector:
 
         except Exception as e:
             logging.error(f"Failed to collect credentials: {e}")
-
-    def _is_guid(self, filename: str) -> bool:
-        """Check if filename looks like a GUID"""
-        import re
-
-        guid_pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        return bool(re.match(guid_pattern, filename.lower()))
 
     def _create_readme(self) -> None:
         """Create README with decryption instructions"""
@@ -459,7 +453,7 @@ def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[Sched
                 continue
 
             # Check if it looks like a GUID
-            if _is_guid_filename(filename):
+            if is_guid(filename):
                 try:
                     with open(filepath, "rb") as f:
                         mk_bytes = f.read()
@@ -523,14 +517,6 @@ def decrypt_offline_dpapi_files(loot_dir: str, dpapi_userkey: str) -> List[Sched
 
     logging.info(f"[+] Decrypted {len(credentials)} credentials from disk")
     return credentials
-
-
-def _is_guid_filename(filename: str) -> bool:
-    """Check if filename looks like a GUID"""
-    import re
-
-    guid_pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-    return bool(re.match(guid_pattern, filename.lower()))
 
 
 def _decrypt_credential_blob_offline(

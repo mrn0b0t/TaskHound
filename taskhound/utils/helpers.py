@@ -6,7 +6,7 @@
 import ipaddress
 import re
 import uuid
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 def is_ipv4(host: str) -> bool:
@@ -22,7 +22,7 @@ def is_ipv4(host: str) -> bool:
         return False
 
 
-def parse_ntlm_hashes(hashes: str) -> Tuple[str, str]:
+def parse_ntlm_hashes(hashes: Optional[str]) -> Tuple[str, str]:
     """
     Parse NTLM hashes from string format.
 
@@ -40,6 +40,25 @@ def parse_ntlm_hashes(hashes: str) -> Tuple[str, str]:
         return lmhash, nthash
     else:
         return "", hashes
+
+
+# Pre-compiled regex for GUID validation
+_GUID_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def is_guid(value: str) -> bool:
+    """
+    Check if a string is a valid GUID format.
+
+    Args:
+        value: String to check (e.g., "12345678-1234-1234-1234-123456789012")
+
+    Returns:
+        True if the string matches GUID format, False otherwise
+    """
+    return bool(_GUID_PATTERN.match(value))
 
 
 def expand_cidr(cidr: str) -> List[str]:

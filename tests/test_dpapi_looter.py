@@ -2,8 +2,7 @@
 Comprehensive test suite for DPAPI Looter functionality.
 
 Tests cover:
-- _is_guid_filename helper function
-- OfflineDPAPICollector._is_guid method
+- is_guid helper function (from utils.helpers)
 - decrypt_offline_dpapi_files workflow
 - _decrypt_credential_blob_offline parsing
 - _decrypt_dpapi_blob_data decryption
@@ -24,11 +23,11 @@ from taskhound.dpapi.looter import (
     OfflineDPAPICollector,
     _decrypt_credential_blob_offline,
     _decrypt_dpapi_blob_data,
-    _is_guid_filename,
     collect_dpapi_files,
     decrypt_offline_dpapi_files,
     loot_credentials,
 )
+from taskhound.utils.helpers import is_guid
 
 # ============================================================================
 # Test Fixtures
@@ -80,56 +79,56 @@ def sample_masterkey_info():
 
 
 # ============================================================================
-# Unit Tests: _is_guid_filename
+# Unit Tests: is_guid (from utils.helpers)
 # ============================================================================
 
 
-class TestIsGuidFilename:
-    """Tests for _is_guid_filename function"""
+class TestIsGuid:
+    """Tests for is_guid function from utils.helpers"""
 
     def test_valid_guid_lowercase(self):
         """Valid lowercase GUID should return True"""
-        assert _is_guid_filename("12345678-1234-1234-1234-123456789012") is True
+        assert is_guid("12345678-1234-1234-1234-123456789012") is True
 
     def test_valid_guid_uppercase(self):
         """Valid uppercase GUID should return True"""
-        assert _is_guid_filename("12345678-1234-1234-1234-123456789ABC") is True
+        assert is_guid("12345678-1234-1234-1234-123456789ABC") is True
 
     def test_valid_guid_mixed_case(self):
         """Valid mixed case GUID should return True"""
-        assert _is_guid_filename("12345678-abcd-EFGH-1234-123456789abc") is False  # G,H are invalid hex
+        assert is_guid("12345678-abcd-EFGH-1234-123456789abc") is False  # G,H are invalid hex
 
     def test_valid_guid_all_hex(self):
         """Valid GUID with all hex chars should return True"""
-        assert _is_guid_filename("abcdef01-2345-6789-abcd-ef0123456789") is True
+        assert is_guid("abcdef01-2345-6789-abcd-ef0123456789") is True
 
     def test_invalid_guid_wrong_length(self):
         """Wrong length GUID should return False"""
-        assert _is_guid_filename("12345678-1234-1234-1234-12345678901") is False
+        assert is_guid("12345678-1234-1234-1234-12345678901") is False
 
     def test_invalid_guid_missing_dashes(self):
         """GUID without dashes should return False"""
-        assert _is_guid_filename("12345678123412341234123456789012") is False
+        assert is_guid("12345678123412341234123456789012") is False
 
     def test_invalid_guid_extra_chars(self):
         """GUID with extra characters should return False"""
-        assert _is_guid_filename("12345678-1234-1234-1234-123456789012x") is False
+        assert is_guid("12345678-1234-1234-1234-123456789012x") is False
 
     def test_invalid_guid_wrong_chars(self):
         """GUID with non-hex characters should return False"""
-        assert _is_guid_filename("gggggggg-gggg-gggg-gggg-gggggggggggg") is False
+        assert is_guid("gggggggg-gggg-gggg-gggg-gggggggggggg") is False
 
     def test_empty_string(self):
         """Empty string should return False"""
-        assert _is_guid_filename("") is False
+        assert is_guid("") is False
 
     def test_regular_filename(self):
         """Regular filename should return False"""
-        assert _is_guid_filename("document.txt") is False
+        assert is_guid("document.txt") is False
 
     def test_dots_and_extensions(self):
         """Filename with dots should return False"""
-        assert _is_guid_filename("12345678-1234-1234-1234-123456789012.bak") is False
+        assert is_guid("12345678-1234-1234-1234-123456789012.bak") is False
 
 
 # ============================================================================
@@ -137,18 +136,17 @@ class TestIsGuidFilename:
 # ============================================================================
 
 
-class TestOfflineDPAPICollectorIsGuid:
-    """Tests for OfflineDPAPICollector._is_guid method"""
+class TestOfflineDPAPICollector:
+    """Tests for OfflineDPAPICollector class"""
 
-    def test_is_guid_valid(self, mock_smb_connection, temp_loot_dir):
-        """Valid GUID should return True"""
-        collector = OfflineDPAPICollector(mock_smb_connection, temp_loot_dir)
-        assert collector._is_guid("12345678-1234-1234-1234-123456789012") is True
+    def test_guid_check_via_helpers(self, mock_smb_connection, temp_loot_dir):
+        """is_guid helper should work correctly"""
+        # Note: OfflineDPAPICollector now uses is_guid from helpers
+        assert is_guid("12345678-1234-1234-1234-123456789012") is True
 
-    def test_is_guid_invalid(self, mock_smb_connection, temp_loot_dir):
+    def test_guid_check_invalid(self, mock_smb_connection, temp_loot_dir):
         """Invalid GUID should return False"""
-        collector = OfflineDPAPICollector(mock_smb_connection, temp_loot_dir)
-        assert collector._is_guid("not-a-guid") is False
+        assert is_guid("not-a-guid") is False
 
 
 class TestOfflineDPAPICollectorMetadata:

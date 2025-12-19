@@ -32,6 +32,7 @@ from impacket.dpapi import (
 from impacket.smbconnection import SMBConnection as ImpacketSMBConnection
 from impacket.uuid import bin_to_string
 
+from ..utils.helpers import is_guid
 from ..utils.logging import good, info, status
 
 
@@ -162,7 +163,7 @@ class DPAPIDecryptor:
                     continue
 
                 # GUID format check (masterkey files are named with GUIDs)
-                if self._is_guid(filename):
+                if is_guid(filename):
                     guid = filename.lower()
                     filepath = ntpath.join(self.SYSTEM_MASTERKEY_PATH, filename)
 
@@ -407,25 +408,3 @@ class DPAPIDecryptor:
                 return hmac_result
 
         return hmac_result
-
-    @staticmethod
-    def _is_guid(filename: str) -> bool:
-        """Check if filename matches GUID pattern"""
-        if len(filename) != 36:
-            return False
-
-        # GUID format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-        parts = filename.split("-")
-        if len(parts) != 5:
-            return False
-
-        if len(parts[0]) != 8 or len(parts[1]) != 4 or len(parts[2]) != 4 or len(parts[3]) != 4 or len(parts[4]) != 12:
-            return False
-
-        # Check if all parts are hex
-        try:
-            for part in parts:
-                int(part, 16)
-            return True
-        except ValueError:
-            return False

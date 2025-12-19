@@ -5,31 +5,12 @@
 
 import contextlib
 import socket
-from typing import Optional, Tuple
+from typing import Optional
 
 from impacket.ldap import ldap as ldap_impacket
 
+from .helpers import parse_ntlm_hashes
 from .logging import debug
-
-
-def parse_ntlm_hashes(hashes: Optional[str]) -> Tuple[str, str]:
-    """
-    Parse NTLM hashes from string format.
-
-    Args:
-        hashes: Hash string in "LM:NT" or "NT" format, or None
-
-    Returns:
-        Tuple of (lmhash, nthash) - empty strings if not provided
-    """
-    if not hashes:
-        return "", ""
-
-    if ":" in hashes:
-        lmhash, nthash = hashes.split(":", 1)
-        return lmhash, nthash
-    else:
-        return "", hashes
 
 
 def resolve_dc_hostname(dc_ip: str, domain: str, use_tcp: bool = False) -> Optional[str]:
@@ -320,11 +301,9 @@ def enumerate_domain_computers(
         debug("LDAP: Excluding Domain Controllers from enumeration")
 
     # Combine with custom filter if provided
-    if ldap_filter:
-        # Wrap user filter in AND with base filter
-        search_filter = f"(&{base_filter}{ldap_filter})"
-    else:
-        search_filter = base_filter
+    search_filter = (
+        f"(&{base_filter}{ldap_filter})" if ldap_filter else base_filter
+    )
 
     debug(f"LDAP: Enumerating computers with filter: {search_filter}")
 

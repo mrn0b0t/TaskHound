@@ -5,6 +5,7 @@ from rich.table import Table
 from ..parsers.highvalue import HighValueLoader
 from ..utils import logging as log_utils
 from ..utils.console import console
+from ..utils.credentials import find_password_for_user
 from ..utils.date_parser import parse_iso_date
 from ..utils.sid_resolver import format_runas_with_sid_resolution
 from . import COLORS
@@ -303,25 +304,9 @@ def format_block(
 
         # In concise mode, show decrypted password inline if available for ALL task types
         if decrypted_creds:
-            runas_normalized = runas.lower()
-            if " (s-1-5-" in runas_normalized:
-                runas_normalized = runas_normalized.split(" (s-1-5-")[0].strip()
-
-            for cred in decrypted_creds:
-                if cred.username:
-                    cred_user_normalized = cred.username.lower()
-                    matched = False
-                    if cred_user_normalized == runas_normalized:
-                        matched = True
-                    elif "\\" in cred_user_normalized and "\\" not in runas_normalized:
-                        if cred_user_normalized.split("\\")[-1] == runas_normalized:
-                            matched = True
-                    elif "\\" in runas_normalized and "\\" not in cred_user_normalized:
-                        if runas_normalized.split("\\")[-1] == cred_user_normalized:
-                            matched = True
-                    if matched:
-                        line += f" | PWD: {cred.password}"
-                        break
+            password = find_password_for_user(runas, decrypted_creds, resolved_username)
+            if password:
+                line += f" | PWD: {password}"
 
         return [line]
 
@@ -442,45 +427,7 @@ def _find_decrypted_password(
     if not decrypted_creds:
         return None
 
-    usernames_to_try = []
-
-    # Add resolved username from SID resolution
-    if resolved_username:
-        usernames_to_try.append(resolved_username.lower())
-
-    # Extract from display_runas format "username (S-1-5-21-...)"
-    display_runas_lower = display_runas.lower()
-    if " (s-1-5-" in display_runas_lower:
-        username_part = display_runas_lower.split(" (s-1-5-")[0].strip()
-        if username_part and username_part not in usernames_to_try:
-            usernames_to_try.append(username_part)
-    elif not display_runas_lower.startswith("s-1-5-"):
-        if display_runas_lower not in usernames_to_try:
-            usernames_to_try.append(display_runas_lower)
-
-    # Try the original runas if it's not a raw SID
-    runas_normalized = runas.lower()
-    if not runas_normalized.startswith("s-1-5-"):
-        if " (s-1-5-" in runas_normalized:
-            username_part = runas_normalized.split(" (s-1-5-")[0].strip()
-            if username_part and username_part not in usernames_to_try:
-                usernames_to_try.append(username_part)
-        elif runas_normalized not in usernames_to_try:
-            usernames_to_try.append(runas_normalized)
-
-    for cred in decrypted_creds:
-        if cred.username:
-            cred_user_normalized = cred.username.lower()
-
-            for try_username in usernames_to_try:
-                if cred_user_normalized == try_username:
-                    return cred.password
-                elif "\\" in cred_user_normalized and "\\" not in try_username:
-                    if cred_user_normalized.split("\\")[-1] == try_username:
-                        return cred.password
-                elif "\\" in try_username and "\\" not in cred_user_normalized:
-                    if try_username.split("\\")[-1] == cred_user_normalized:
-                        return cred.password
-
-    return None
+    # Use display_runas as primary (may have resolved name), runas as fallback
+    primary_username = display_runas if display_runas else runas
+    return find_password_for_user(primary_username, decrypted_creds, resolved_username)
 

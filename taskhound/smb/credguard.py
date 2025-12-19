@@ -4,6 +4,8 @@
 # via the SYSTEM\CurrentControlSet\Control\Lsa registry keys. Uses Impacket's RemoteOperations and
 # RemoteRegistry classes. Returns True if Credential Guard is detected, False otherwise.
 
+import logging
+
 from impacket.dcerpc.v5 import rrp, transport
 from impacket.dcerpc.v5.rpcrt import DCERPCException
 
@@ -43,5 +45,6 @@ def check_credential_guard(smb_conn, host):
         except DCERPCException:
             pass
         return False
-    except Exception:
+    except Exception as e:
+        logging.debug(f"Credential Guard check failed: {type(e).__name__}: {e}")
         return False

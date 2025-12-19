@@ -102,11 +102,15 @@ class TableHelpAction(argparse.Action):
 
                 # Get help text - don't add default if already mentioned in help
                 help_text = action.help or ""
-                if action.default and action.default != argparse.SUPPRESS and action.default is not None:
-                    if action.default is not True and action.default is not False:
-                        # Only add default if not already in help text
-                        if "default:" not in help_text.lower():
-                            help_text += f" [dim](default: {action.default})[/]"
+                if (
+                    action.default
+                    and action.default != argparse.SUPPRESS
+                    and action.default is not None
+                    and action.default is not True
+                    and action.default is not False
+                    and "default:" not in help_text.lower()
+                ):
+                    help_text += f" [dim](default: {action.default})[/]"
 
                 table.add_row(opts, help_text)
 
