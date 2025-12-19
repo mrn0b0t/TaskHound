@@ -48,6 +48,13 @@ class TestSafeGetSam:
 
         assert result == "user"
 
+    def test_handles_empty_string(self):
+        """Should return empty string for empty string value"""
+        data = {"SamAccountName": ""}
+        result = _safe_get_sam(data, "SamAccountName")
+
+        assert result == ""
+
 
 class TestSanitizeStringValue:
     """Tests for _sanitize_string_value helper function"""
@@ -125,6 +132,15 @@ class TestBloodHoundConnectorInit:
         )
 
         assert connector.timeout == 300
+
+    def test_init_default_timeout(self):
+        """Should set default timeout of 120"""
+        connector = BloodHoundConnector(
+            bh_type="bhce",
+            ip="192.168.1.1",
+        )
+
+        assert connector.timeout == 120
 
     def test_init_with_url_scheme(self):
         """Should handle URL with scheme"""
