@@ -9,6 +9,7 @@ import socket
 import struct
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from impacket.ldap import ldapasn1 as ldapasn1_impacket
@@ -411,14 +412,18 @@ def resolve_sid_via_smb(sid: str, smb_connection) -> Optional[str]:
     return None
 
 
+# Precompiled SID pattern for performance
+_SID_PATTERN = re.compile(r"^S-1-\d+(-\d+)+$")
+
+
+@lru_cache(maxsize=2048)
 def is_sid(value: str) -> bool:
-    """Check if a string looks like a Windows SID."""
+    """Check if a string looks like a Windows SID (cached for performance)."""
     if not value:
         return False
     # SID pattern: S-1-<revision>-<authority>-<sub-authorities>
     # Must have at least revision and authority, sub-authorities are optional but common
-    pattern = r"^S-1-\d+(-\d+)+$"  # At least one sub-authority required
-    return bool(re.match(pattern, value.strip()))
+    return bool(_SID_PATTERN.match(value.strip()))
 
 
 def get_domain_sid_prefix(sid: str) -> Optional[str]:
