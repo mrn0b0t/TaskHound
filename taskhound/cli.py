@@ -584,8 +584,10 @@ def main():
                     try:
                         with open(opengraph_file) as f:
                             graph_data = json.load(f)
-                        node_count = len(graph_data.get("nodes", []))
-                        edge_count = len(graph_data.get("edges", []))
+                        # bhopengraph exports with nested "graph" key
+                        inner_graph = graph_data.get("graph", graph_data)
+                        node_count = len(inner_graph.get("nodes", []))
+                        edge_count = len(inner_graph.get("edges", []))
                         if node_count == 0 and edge_count == 0:
                             info("Skipping BloodHound upload - no data to upload (0 nodes, 0 edges)")
                             info(f"Empty OpenGraph file saved: {opengraph_file}")
