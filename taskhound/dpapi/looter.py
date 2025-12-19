@@ -537,7 +537,7 @@ def _decrypt_credential_blob_offline(
             cred_file = CredentialFile(blob_bytes)
             dpapi_blob_bytes = cred_file["Data"]
             logging.debug("Parsed as CredentialFile format")
-        except Exception:
+        except (KeyError, struct.error):
             # If that fails, treat as raw DPAPI blob
             dpapi_blob_bytes = blob_bytes
             logging.debug("Treating as raw DPAPI blob")

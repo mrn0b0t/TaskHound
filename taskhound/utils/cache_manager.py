@@ -468,8 +468,8 @@ class CacheManager:
                 cursor = conn.execute("SELECT COUNT(*) FROM cache")
                 total_cached = cursor.fetchone()[0]
                 info(f"  Persistent cache size: {total_cached} entries")
-            except Exception:
-                pass
+            except (sqlite3.Error, TypeError):
+                pass  # Database query failed
 
 
 # Global cache instance

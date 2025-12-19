@@ -124,7 +124,8 @@ def parse_task_xml(xml_bytes: bytes) -> Dict[str, str]:
             elif event_trigger is not None:
                 res["trigger_type"] = "Event"
 
-    except Exception:
+    except Exception:  # noqa: BLE001 - Intentionally broad: XML parsing can fail many ways
         # Be permissive: return default dict with None values on parse errors
+        # Catching broadly ensures malformed task XML doesn't crash the scan
         pass
     return res

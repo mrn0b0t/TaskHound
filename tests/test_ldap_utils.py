@@ -68,15 +68,17 @@ class TestParseNtlmHashes:
 class TestResolveDcHostname:
     """Tests for resolve_dc_hostname function"""
 
+    @patch.dict('sys.modules', {'dns.resolver': None, 'dns.reversename': None})
     @patch('taskhound.utils.ldap.socket.gethostbyaddr')
     def test_socket_reverse_dns_success(self, mock_gethostbyaddr):
-        """Should use socket reverse DNS lookup"""
+        """Should use socket reverse DNS lookup when dnspython unavailable"""
         mock_gethostbyaddr.return_value = ("dc01.example.com", [], [])
 
         result = resolve_dc_hostname("192.168.1.1", "example.com")
 
         assert result == "dc01.example.com"
 
+    @patch.dict('sys.modules', {'dns.resolver': None, 'dns.reversename': None})
     @patch('taskhound.utils.ldap.socket.gethostbyaddr')
     def test_socket_returns_domain_name_tries_fqdn(self, mock_gethostbyaddr):
         """Should skip result if it matches domain name"""
@@ -88,6 +90,7 @@ class TestResolveDcHostname:
 
             assert result == "dc01.example.com"
 
+    @patch.dict('sys.modules', {'dns.resolver': None, 'dns.reversename': None})
     @patch('taskhound.utils.ldap.socket.gethostbyaddr')
     def test_socket_herror_returns_none(self, mock_gethostbyaddr):
         """Should return None when socket.herror occurs"""
@@ -99,17 +102,19 @@ class TestResolveDcHostname:
 
             assert result is None
 
+    @patch.dict('sys.modules', {'dns.resolver': None, 'dns.reversename': None})
     @patch('taskhound.utils.ldap.socket.gethostbyaddr')
     def test_all_methods_fail_returns_none(self, mock_gethostbyaddr):
         """Should return None when all methods fail"""
         mock_gethostbyaddr.side_effect = socket.herror()
 
         with patch('taskhound.utils.ldap.socket.getfqdn') as mock_fqdn:
-            mock_fqdn.side_effect = Exception("FQDN lookup failed")
+            mock_fqdn.side_effect = OSError("FQDN lookup failed")
             result = resolve_dc_hostname("192.168.1.1", "example.com")
 
             assert result is None
 
+    @patch.dict('sys.modules', {'dns.resolver': None, 'dns.reversename': None})
     @patch('taskhound.utils.ldap.socket.getfqdn')
     @patch('taskhound.utils.ldap.socket.gethostbyaddr')
     def test_getfqdn_fallback_success(self, mock_gethostbyaddr, mock_getfqdn):
@@ -121,6 +126,7 @@ class TestResolveDcHostname:
 
         assert result == "dc02.example.com"
 
+    @patch.dict('sys.modules', {'dns.resolver': None, 'dns.reversename': None})
     @patch('taskhound.utils.ldap.socket.getfqdn')
     @patch('taskhound.utils.ldap.socket.gethostbyaddr')
     def test_getfqdn_returns_ip_no_hostname(self, mock_gethostbyaddr, mock_getfqdn):
@@ -132,6 +138,7 @@ class TestResolveDcHostname:
 
         assert result is None
 
+    @patch.dict('sys.modules', {'dns.resolver': None, 'dns.reversename': None})
     def test_use_tcp_parameter_accepted(self):
         """Should accept use_tcp parameter without error"""
         # Just verify the function accepts the parameter (actual DNS lookup will fail/be mocked)

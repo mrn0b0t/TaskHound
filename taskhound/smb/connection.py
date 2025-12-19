@@ -296,7 +296,7 @@ def get_server_sid(
             kerberos=kerberos,
         )
 
-    except Exception:
+    except Exception:  # noqa: BLE001 - SID lookup has many failure modes (LDAP, LSA, network)
         return None
 
 
@@ -342,7 +342,7 @@ def get_server_fqdn(smb: SMBConnection, target_ip: Optional[str] = None, dc_ip: 
         else:
             # No SMB hostname info at all
             server_name = None
-    except Exception:
+    except (OSError, AttributeError):
         server_name = None
 
     # Method 3 & 4: DNS fallback - try to resolve via PTR record
@@ -405,7 +405,7 @@ def _dns_ptr_lookup(ip: str, nameserver: Optional[str] = None, use_tcp: bool = F
             except ImportError:
                 # dnspython not available, fall through to socket method
                 pass
-            except Exception:
+            except (OSError, socket.timeout):
                 # DNS query failed, fall through to socket method
                 pass
 
@@ -422,7 +422,7 @@ def _dns_ptr_lookup(ip: str, nameserver: Optional[str] = None, use_tcp: bool = F
         if hostname and hostname != ip:
             return hostname
 
-    except Exception:
+    except (OSError, socket.herror, socket.gaierror):
         pass
 
     return None

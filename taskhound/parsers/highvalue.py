@@ -144,7 +144,7 @@ class HighValueLoader:
                     parsed = json.loads(s)
                     if isinstance(parsed, list):
                         result = [str(x) for x in parsed]
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     # Fallback: treat as single item stripped of brackets
                     result = [s.strip("[]")]
             else:
@@ -214,7 +214,7 @@ class HighValueLoader:
                 if "objectid" not in all_props:
                     return False
 
-            except Exception:
+            except (TypeError, AttributeError, re.error):
                 # If regex parsing fails completely, skip this record
                 return False
         else:

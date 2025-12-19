@@ -269,7 +269,7 @@ def _test_port(host: str, port: int, timeout: int = 3) -> bool:
         result = sock.connect_ex((host, port))
         sock.close()
         return result == 0
-    except Exception:
+    except (OSError, socket.error):
         return False
 
 

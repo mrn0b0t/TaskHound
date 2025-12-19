@@ -2146,8 +2146,8 @@ def batch_get_user_attributes(
                                     sid_str = binary_to_sid(binary_sid)
                                     if sid_str:
                                         entry_attrs["sid"] = sid_str
-                                except Exception:
-                                    pass
+                                except (ValueError, TypeError, AttributeError):
+                                    pass  # Malformed SID data
 
                         if sam_name and entry_attrs:
                             results[sam_name] = entry_attrs
@@ -2426,8 +2426,8 @@ def fetch_tier0_members(
                                 if sid_str:
                                     domain_sid = "-".join(sid_str.split("-")[:-1])
                                     break
-                            except Exception:
-                                pass
+                            except (ValueError, TypeError, AttributeError):
+                                pass  # Malformed SID data
                     if domain_sid:
                         break
 

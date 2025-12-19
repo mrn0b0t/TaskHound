@@ -54,8 +54,8 @@ def resolve_dc_hostname(dc_ip: str, domain: str, use_tcp: bool = False) -> Optio
                 return hostname
     except ImportError:
         pass  # dnspython not available
-    except Exception:
-        pass  # DNS lookup failed
+    except (OSError, socket.timeout) as e:
+        pass  # DNS lookup failed: {e}
 
     # Method 2: System reverse DNS lookup
     try:
@@ -71,7 +71,7 @@ def resolve_dc_hostname(dc_ip: str, domain: str, use_tcp: bool = False) -> Optio
         hostname = socket.getfqdn(dc_ip)
         if hostname and hostname != dc_ip and hostname.lower() != domain.lower():
             return hostname
-    except Exception:
+    except (OSError, socket.error):
         pass
 
     return None
