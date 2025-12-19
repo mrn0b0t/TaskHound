@@ -293,6 +293,8 @@ class TestResolveSidEdgeCases:
         """Should increment failure count when all methods fail."""
         mock_cache_instance = MagicMock()
         mock_cache_instance.get.return_value = None
+        # increment() returns the new value (1 on first call)
+        mock_cache_instance.increment.return_value = 1
         mock_cache.return_value = mock_cache_instance
 
         mock_bh.return_value = None
@@ -308,11 +310,11 @@ class TestResolveSidEdgeCases:
             password="pass"
         )
 
-        # Should have called set on sid_failures with incremented value
-        # Check that set was called with sid_failures category
-        calls = [call for call in mock_cache_instance.set.call_args_list
-                 if call[0][0] == "sid_failures"]
-        assert len(calls) >= 1
+        # Should have called increment on sid_failures category
+        mock_cache_instance.increment.assert_called_once()
+        call_args = mock_cache_instance.increment.call_args
+        assert call_args[0][0] == "sid_failures"  # category
+        assert "S-1-5-21-123-456-789-1004" in call_args[0][1]  # key contains SID
 
     @patch("taskhound.utils.sid_resolver.get_cache")
     @patch("taskhound.utils.sid_resolver.resolve_sid_from_bloodhound")

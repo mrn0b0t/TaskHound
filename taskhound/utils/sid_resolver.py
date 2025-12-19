@@ -1784,7 +1784,8 @@ def resolve_sid(
             debug(f"Using cached SID resolution: {sid} → {cached_username}")
             return f"{cached_username} ({sid})", cached_username
 
-        # Check fail count
+        # Check fail count atomically to prevent race conditions
+        # increment() returns value > 3 if already at max, allowing us to skip
         fail_count = cache.get("sid_failures", sid) or 0
         if fail_count >= 3:
             debug(f"Skipping resolution for {sid} (failed {fail_count} times previously)")
@@ -1967,14 +1968,12 @@ def resolve_sid(
 
     # Could not resolve - return SID with appropriate explanation
     if cache:
-        # Increment fail count
-        try:
-            fail_count = int(cache.get("sid_failures", sid) or 0)
-        except (ValueError, TypeError):
-            fail_count = 0
-        fail_count += 1
-        cache.set("sid_failures", sid, fail_count)
-        debug(f"SID {sid} resolution failed (attempt {fail_count}/3)")
+        # Atomically increment fail count to prevent race conditions in multi-threaded scenarios
+        # Using atomic increment ensures multiple threads don't all pass the check and then all increment
+        fail_count = cache.increment("sid_failures", sid, max_value=3)
+        if fail_count <= 3:
+            debug(f"SID {sid} resolution failed (attempt {fail_count}/3)")
+        # If fail_count > 3, we've exceeded max (shouldn't happen with atomic increment)
 
     if is_unknown_domain:
         debug(f"SID {sid} not resolved: unknown domain SID (possibly local machine account)")

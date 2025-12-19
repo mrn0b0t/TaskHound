@@ -294,6 +294,60 @@ class CacheManager:
             except Exception as e:
                 debug(f"Cache delete error: {e}")
 
+    def increment(self, category: str, key: str, max_value: int = 3) -> int:
+        """
+        Atomically increment a counter value, respecting a maximum.
+
+        Thread-safe: Uses RLock to ensure atomic read-check-increment.
+        Returns the new value AFTER increment, or max_value+1 if already at/above max.
+
+        This is designed for fail counters where we want to:
+        1. Skip if already at max (return value > max)
+        2. Increment atomically to prevent race conditions
+
+        Args:
+            category: Cache category (e.g., "sid_failures")
+            key: Cache key (e.g., SID string)
+            max_value: Maximum allowed value (default: 3)
+
+        Returns:
+            New value after increment. If > max_value, caller should skip.
+        """
+        session_key = f"{category}:{key}"
+
+        with self._session_lock:
+            # Get current value
+            current = self.session.get(session_key, 0)
+            if not isinstance(current, int):
+                try:
+                    current = int(current)
+                except (ValueError, TypeError):
+                    current = 0
+
+            # If already at or above max, return max+1 to signal "skip"
+            if current >= max_value:
+                return max_value + 1
+
+            # Increment
+            new_value = current + 1
+            self.session[session_key] = new_value
+
+        # Also update persistent cache (best effort, session is authoritative)
+        conn = self._get_conn()
+        if conn:
+            try:
+                ttl = self.ttl_hours
+                expires_at = time.time() + (ttl * 3600)
+                conn.execute(
+                    "INSERT OR REPLACE INTO cache (category, key, value, expires_at) VALUES (?, ?, ?, ?)",
+                    (category, key, json.dumps(new_value), expires_at),
+                )
+                conn.commit()
+            except Exception as e:
+                debug(f"Cache increment persist error: {e}")
+
+        return new_value
+
     def get_all(self, category: str) -> Dict[str, Any]:
         """
         Get all non-expired cached values for a category.

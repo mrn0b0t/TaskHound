@@ -474,10 +474,14 @@ def _create_relationship_edges(
             else:
                 # User exists in BloodHound
                 node_id, object_id, *rest = node_info
+                # Extract resolved name if available (3rd element in tuple)
+                resolved_name = rest[0] if rest else None
                 if object_id:  # If we have an objectid (SID)
                     user_object_id = object_id
                     user_match_by = "id"  # match_by='id' looks for node where id property == object_id (SID)
-                    debug(f"Using id (objectid) for User: {principal_id} → {object_id}")
+                    # Show resolved name alongside SID for better readability
+                    display_name = resolved_name if resolved_name else principal_id
+                    debug(f"Using id (objectid) for User: {display_name} → {object_id}")
                 else:
                     debug(f"No objectid for {principal_id}, falling back to name matching")
 
@@ -488,7 +492,9 @@ def _create_relationship_edges(
                     start_match_by="id",
                     end_match_by=user_match_by
                 )
-                debug(f"Created RunsAs edge: {task_path} → {principal_id} (match_by={user_match_by})")
+                # Show resolved name in edge creation log for clarity
+                edge_display = resolved_name if resolved_name else principal_id
+                debug(f"Created RunsAs edge: {task_path} → {edge_display} (match_by={user_match_by})")
                 edges.append(runs_as_edge)
         else:
             # User not in map - wasn't queried (shouldn't happen in normal flow)

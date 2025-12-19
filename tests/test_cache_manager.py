@@ -108,6 +108,88 @@ class TestCacheManagerSessionCache:
         assert result == "updated"
 
 
+class TestCacheManagerIncrement:
+    """Tests for atomic increment operation"""
+
+    def test_increment_from_zero(self):
+        """Should increment from 0 to 1"""
+        cache = CacheManager(enabled=False)
+
+        result = cache.increment("failures", "key1")
+
+        assert result == 1
+
+    def test_increment_multiple_times(self):
+        """Should increment sequentially"""
+        cache = CacheManager(enabled=False)
+
+        assert cache.increment("failures", "key1") == 1
+        assert cache.increment("failures", "key1") == 2
+        assert cache.increment("failures", "key1") == 3
+
+    def test_increment_respects_max(self):
+        """Should return max+1 when at max"""
+        cache = CacheManager(enabled=False)
+
+        # Increment to max (3)
+        cache.increment("failures", "key1")  # 1
+        cache.increment("failures", "key1")  # 2
+        cache.increment("failures", "key1")  # 3
+
+        # Should return max+1 (4) when already at max
+        result = cache.increment("failures", "key1")
+        assert result == 4
+
+    def test_increment_custom_max(self):
+        """Should respect custom max value"""
+        cache = CacheManager(enabled=False)
+
+        assert cache.increment("failures", "key1", max_value=2) == 1
+        assert cache.increment("failures", "key1", max_value=2) == 2
+        # At max=2, should return 3
+        assert cache.increment("failures", "key1", max_value=2) == 3
+
+    def test_increment_different_keys_independent(self):
+        """Should track different keys independently"""
+        cache = CacheManager(enabled=False)
+
+        cache.increment("failures", "key1")
+        cache.increment("failures", "key1")
+        cache.increment("failures", "key2")
+
+        # key1 should be at 2, key2 at 1
+        assert cache.increment("failures", "key1") == 3
+        assert cache.increment("failures", "key2") == 2
+
+    def test_increment_thread_safety(self):
+        """Should handle concurrent increments without exceeding max"""
+        import threading
+
+        cache = CacheManager(enabled=False)
+        results = []
+
+        def incrementer():
+            for _ in range(10):
+                result = cache.increment("failures", "concurrent_key", max_value=30)
+                results.append(result)
+
+        threads = [threading.Thread(target=incrementer) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have exactly 50 results (5 threads * 10 increments)
+        assert len(results) == 50
+        # None should exceed max+1 (31)
+        assert all(r <= 31 for r in results)
+        # Results should be sequential when sorted
+        sorted_results = sorted(results)
+        # First 30 should be 1-30, rest should be 31
+        assert sorted_results[:30] == list(range(1, 31))
+        assert all(r == 31 for r in sorted_results[30:])
+
+
 class TestCacheManagerPersistentCache:
     """Tests for persistent cache operations"""
 
