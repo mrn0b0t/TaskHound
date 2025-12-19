@@ -3,7 +3,451 @@
 # Contains shared helper functions used by both online and offline
 # processing modules.
 
-from typing import List
+import contextlib
+import os
+import traceback
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from ..utils.logging import debug as log_debug
+from ..utils.logging import good, info, warn
+
+
+@dataclass
+class ConnectionContext:
+    """Context object holding SMB connection state and metadata."""
+
+    smb: Any = None
+    server_fqdn: Optional[str] = None
+    server_sid: Optional[str] = None
+    credguard_status: Optional[bool] = None
+    laps_used: bool = False
+    laps_type_used: Optional[str] = None
+    discovered_hostname: Optional[str] = None
+    laps_cred: Any = None  # LAPSCredential if LAPS mode
+
+
+@dataclass
+class ProcessingContext:
+    """Context for task processing with validation and cache data."""
+
+    cred_validation_results: Dict[str, Any] = field(default_factory=dict)
+    decrypted_creds: List[Any] = field(default_factory=list)
+    pwd_cache: Dict[str, Any] = field(default_factory=dict)
+    tier0_cache: Dict[str, Tuple[bool, list]] = field(default_factory=dict)
+    backup_target_dir: Optional[str] = None
+
+
+def setup_backup_directory(target: str, backup_dir: Optional[str], debug: bool = False) -> Optional[str]:
+    """
+    Create backup directory structure for raw XML files.
+
+    Args:
+        target: Target host identifier
+        backup_dir: Base backup directory path
+        debug: Enable debug output
+
+    Returns:
+        Path to target-specific backup directory, or None if disabled/failed
+    """
+    if not backup_dir:
+        return None
+
+    backup_target_dir = os.path.join(backup_dir, target)
+    try:
+        os.makedirs(backup_target_dir, exist_ok=True)
+        good(f"{target}: Raw XML backup enabled - saving to {backup_target_dir}")
+        return backup_target_dir
+    except Exception as e:
+        warn(f"{target}: Failed to create backup directory {backup_target_dir}: {e}")
+        return None
+
+
+def perform_credential_validation(
+    target: str,
+    password_task_paths: List[str],
+    *,
+    domain: str,
+    username: str,
+    password: Optional[str],
+    hashes: Optional[str],
+    aes_key: Optional[str],
+    kerberos: bool,
+    dc_ip: Optional[str],
+    opsec: bool,
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """
+    Validate credentials for tasks via Task Scheduler RPC.
+
+    Args:
+        target: Target host
+        password_task_paths: List of task paths to validate
+        domain: Authentication domain
+        username: Authentication username
+        password: Password for authentication
+        hashes: NTLM hashes
+        aes_key: Kerberos AES key
+        kerberos: Use Kerberos authentication
+        dc_ip: Domain controller IP
+        opsec: OPSEC mode (skips validation)
+        debug: Enable debug output
+
+    Returns:
+        Dict mapping task paths to TaskRunInfo results
+    """
+    from ..smb.task_rpc import CredentialStatus, TaskSchedulerRPC
+
+    if not password_task_paths:
+        info(f"{target}: No password-authenticated tasks found - skipping credential validation")
+        return {}
+
+    if opsec:
+        info(f"{target}: Skipping credential validation (OPSEC mode)")
+        return {}
+
+    # Skip if using ccache-only Kerberos
+    if kerberos and not password and not hashes and not aes_key:
+        warn(f"{target}: Credential validation not supported with ccache-only Kerberos")
+        return {}
+
+    info(f"{target}: Querying Task Scheduler RPC for credential validation...")
+
+    try:
+        # Parse hashes for RPC auth
+        lm_hash = ""
+        nt_hash = ""
+        if hashes:
+            hash_parts = hashes.split(":")
+            if len(hash_parts) == 2:
+                lm_hash, nt_hash = hash_parts
+            elif len(hash_parts) == 1 and len(hash_parts[0]) == 32:
+                nt_hash = hash_parts[0]
+
+        rpc_client = TaskSchedulerRPC(
+            target=target,
+            domain=domain,
+            username=username,
+            password=password or "",
+            lm_hash=lm_hash,
+            nt_hash=nt_hash,
+            aes_key=aes_key or "",
+            kerberos=kerberos,
+            dc_ip=dc_ip or "",
+        )
+
+        if not rpc_client.connect():
+            warn(f"{target}: Failed to connect to Task Scheduler RPC")
+            return {}
+
+        results = rpc_client.validate_specific_tasks(password_task_paths)
+        rpc_client.disconnect()
+
+        if results:
+            valid_count = sum(1 for r in results.values() if r.password_valid)
+            invalid_count = sum(
+                1 for r in results.values() if r.credential_status == CredentialStatus.INVALID
+            )
+            unknown_count = sum(
+                1 for r in results.values() if r.credential_status == CredentialStatus.UNKNOWN
+            )
+            good(
+                f"{target}: Validated {len(results)} password tasks "
+                f"({valid_count} valid, {invalid_count} invalid, {unknown_count} unknown)"
+            )
+        else:
+            info(f"{target}: No run info available for password tasks")
+
+        return results
+
+    except Exception as e:
+        warn(f"{target}: Credential validation failed: {e}")
+        if debug:
+            traceback.print_exc()
+        return {}
+
+
+def perform_dpapi_looting(
+    target: str,
+    smb: Any,
+    *,
+    dpapi_key: Optional[str],
+    backup_target_dir: Optional[str],
+    debug: bool = False,
+) -> Tuple[List[Any], List[str]]:
+    """
+    Perform DPAPI credential looting (live or offline collection).
+
+    Args:
+        target: Target host
+        smb: SMB connection
+        dpapi_key: DPAPI key for live decryption (None for offline collection)
+        backup_target_dir: Backup directory (for nested loot storage)
+        debug: Enable debug output
+
+    Returns:
+        Tuple of (decrypted_creds, output_lines)
+    """
+    out_lines: List[str] = []
+    decrypted_creds: List[Any] = []
+
+    if dpapi_key:
+        # Mode 1: Live decryption with DPAPI key
+        try:
+            from ..dpapi.looter import loot_credentials
+
+            info(f"{target}: Starting DPAPI credential looting...")
+            decrypted_creds = loot_credentials(smb, dpapi_key)
+
+            if decrypted_creds:
+                good(f"{target}: Successfully decrypted {len(decrypted_creds)} Task Scheduler credentials!")
+            else:
+                info(f"{target}: No credentials decrypted (no matching masterkeys or no credential blobs found)")
+
+        except Exception as e:
+            warn(f"{target}: DPAPI credential looting failed: {e}")
+            if debug:
+                traceback.print_exc()
+    else:
+        # Mode 2: Offline collection without DPAPI key
+        try:
+            from ..dpapi.looter import collect_dpapi_files
+
+            # Create loot directory structure
+            if backup_target_dir:
+                loot_target_dir = os.path.join(backup_target_dir, "dpapi_loot")
+            else:
+                loot_base_dir = "dpapi_loot"
+                loot_target_dir = os.path.join(loot_base_dir, target)
+
+            os.makedirs(loot_target_dir, exist_ok=True)
+
+            info(f"{target}: Collecting DPAPI files for offline decryption...")
+            info(f"{target}: Saving to: {loot_target_dir}")
+
+            stats = collect_dpapi_files(smb, loot_target_dir)
+
+            good(f"{target}: Collected {stats['masterkeys']} masterkeys and {stats['credentials']} credential blobs")
+
+            out_lines.extend([
+                "",
+                "=" * 80,
+                "DPAPI FILES COLLECTED FOR OFFLINE DECRYPTION",
+                "=" * 80,
+                "",
+                f"Output Directory : {loot_target_dir}",
+                f"Masterkeys       : {stats['masterkeys']} files (in masterkeys/)",
+                f"Credential Blobs : {stats['credentials']} files (in credentials/)",
+                "",
+                "NEXT STEPS:",
+                "  1. Obtain DPAPI_SYSTEM userkey:",
+                f"     nxc smb {target} -u <user> -p <pass> --lsa",
+                "",
+                "  2. Decrypt with the userkey:",
+                f"     taskhound -t {target} -u <user> -p <pass> \\",
+                "              --loot --dpapi-key <dpapi_userkey>",
+                "",
+                f"See {os.path.join(loot_target_dir, 'README.txt')} for detailed instructions",
+                "=" * 80,
+                "",
+            ])
+
+        except Exception as e:
+            warn(f"{target}: DPAPI file collection failed: {e}")
+            if debug:
+                traceback.print_exc()
+
+    return decrypted_creds, out_lines
+
+
+def prefetch_pwd_last_set(
+    target: str,
+    items: List[Tuple[str, bytes]],
+    *,
+    domain: str,
+    dc_ip: Optional[str],
+    username: str,
+    password: Optional[str],
+    hashes: Optional[str],
+    kerberos: bool,
+    aes_key: Optional[str],
+    ldap_domain: Optional[str],
+    ldap_user: Optional[str],
+    ldap_password: Optional[str],
+    ldap_hashes: Optional[str],
+    no_ldap: bool,
+    opsec: bool,
+    hv: Any,
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """
+    Pre-fetch pwdLastSet for all unique users via single LDAP batch query.
+
+    Args:
+        target: Target host (for logging)
+        items: List of (rel_path, xml_bytes) tuples
+        domain: Domain for LDAP auth
+        dc_ip: Domain controller IP
+        username: LDAP auth username
+        password: LDAP auth password
+        hashes: LDAP auth hashes
+        kerberos: Use Kerberos for LDAP
+        aes_key: Kerberos AES key
+        ldap_domain: Override domain for LDAP
+        ldap_user: Override user for LDAP
+        ldap_password: Override password for LDAP
+        ldap_hashes: Override hashes for LDAP
+        no_ldap: Disable LDAP queries
+        opsec: OPSEC mode
+        hv: HighValueLoader instance
+        debug: Enable debug output
+
+    Returns:
+        Dict mapping normalized username to pwdLastSet datetime
+    """
+    from ..parsers.task_xml import parse_task_xml
+    from ..utils.sid_resolver import is_sid
+
+    pwd_cache: Dict[str, Any] = {}
+
+    if no_ldap or opsec or (hv and hv.loaded):
+        return pwd_cache
+
+    # Collect unique runas users from all tasks with stored credentials
+    unique_users = set()
+    for _rel_path, xml_bytes in items:
+        meta = parse_task_xml(xml_bytes)
+        runas = meta.get("runas")
+        if not runas:
+            continue
+        logon_type = (meta.get("logon_type") or "").strip().lower()
+        # Only query users from tasks with stored credentials (skip SIDs)
+        if logon_type == "password" and not is_sid(runas):
+            unique_users.add(runas)
+
+    if not unique_users:
+        return pwd_cache
+
+    info(f"{target}: Querying LDAP for password age data ({len(unique_users)} users)...")
+
+    try:
+        from ..utils.sid_resolver import batch_get_user_attributes
+
+        ldap_auth_domain = ldap_domain or domain
+        ldap_auth_user = ldap_user or username
+        ldap_auth_pass = ldap_password or password
+        ldap_auth_hashes = ldap_hashes or hashes
+
+        results = batch_get_user_attributes(
+            usernames=list(unique_users),
+            domain=ldap_auth_domain,
+            dc_ip=dc_ip,
+            username=ldap_auth_user,
+            password=ldap_auth_pass,
+            hashes=ldap_auth_hashes,
+            kerberos=kerberos,
+            aes_key=aes_key,
+            attributes=["pwdLastSet", "sAMAccountName"],
+        )
+
+        # Build cache: normalized_username -> pwdLastSet datetime
+        for norm_user, attrs in results.items():
+            pwd_last_set = attrs.get("pwdLastSet")
+            if pwd_last_set:
+                pwd_cache[norm_user] = pwd_last_set
+
+        if pwd_cache:
+            good(f"{target}: Retrieved password age data for {len(pwd_cache)} users")
+        else:
+            info(f"{target}: No password age data available from LDAP")
+
+    except Exception as e:
+        warn(f"{target}: LDAP batch query failed: {e}")
+        if debug:
+            traceback.print_exc()
+
+    return pwd_cache
+
+
+def prefetch_tier0_members(
+    target: str,
+    *,
+    domain: str,
+    dc_ip: Optional[str],
+    username: str,
+    password: Optional[str],
+    hashes: Optional[str],
+    kerberos: bool,
+    aes_key: Optional[str],
+    ldap_domain: Optional[str],
+    ldap_user: Optional[str],
+    ldap_password: Optional[str],
+    ldap_hashes: Optional[str],
+    no_ldap: bool,
+    ldap_tier0: bool,
+    hv: Any,
+    debug: bool = False,
+) -> Dict[str, Tuple[bool, list]]:
+    """
+    Pre-fetch Tier-0 group members via LDAP.
+
+    Args:
+        target: Target host (for logging)
+        domain: Domain for LDAP auth
+        dc_ip: Domain controller IP
+        username: LDAP auth username
+        password: LDAP auth password
+        hashes: LDAP auth hashes
+        kerberos: Use Kerberos for LDAP
+        aes_key: Kerberos AES key
+        ldap_domain: Override domain for LDAP
+        ldap_user: Override user for LDAP
+        ldap_password: Override password for LDAP
+        ldap_hashes: Override hashes for LDAP
+        no_ldap: Disable LDAP queries
+        ldap_tier0: Enable Tier-0 lookup
+        hv: HighValueLoader instance
+        debug: Enable debug output
+
+    Returns:
+        Dict mapping username to (is_tier0, group_list) tuple
+    """
+    tier0_cache: Dict[str, Tuple[bool, list]] = {}
+
+    if not ldap_tier0 or no_ldap or (hv and hv.loaded):
+        return tier0_cache
+
+    info(f"{target}: Fetching Tier-0 group members via LDAP (pre-flight)...")
+
+    try:
+        from ..utils.sid_resolver import fetch_tier0_members
+
+        ldap_auth_domain = ldap_domain or domain
+        ldap_auth_user = ldap_user or username
+        ldap_auth_pass = ldap_password or password
+        ldap_auth_hashes = ldap_hashes or hashes
+
+        tier0_cache = fetch_tier0_members(
+            domain=ldap_auth_domain,
+            dc_ip=dc_ip,
+            auth_username=ldap_auth_user,
+            auth_password=ldap_auth_pass,
+            hashes=ldap_auth_hashes,
+            kerberos=kerberos,
+            aes_key=aes_key,
+        )
+
+        if tier0_cache:
+            good(f"{target}: Loaded {len(tier0_cache)} Tier-0 users from LDAP")
+        else:
+            info(f"{target}: No Tier-0 users found in domain")
+
+    except Exception as e:
+        warn(f"{target}: LDAP Tier-0 pre-flight failed: {e}")
+        if debug:
+            traceback.print_exc()
+
+    return tier0_cache
 
 
 def sort_tasks_by_priority(lines: List[str]) -> List[str]:
