@@ -161,6 +161,25 @@ def main():
             external_count = len(domain_sids) - intra_count
             good(f"Loaded {len(domain_sids)} domain SID prefixes via LDAP ({intra_count} intra-forest, {external_count} external)")
 
+    # Store LDAP credentials for lazy NETBIOS resolution (used when NETBIOS\user format encountered)
+    # This enables resolving trusted domain NETBIOS names (e.g., TRUSTEDDOM\user → TRUSTEDDOM.LOCAL\user)
+    if not args.no_ldap and args.domain and args.username:
+        from .utils.sid_resolver import set_netbios_ldap_credentials
+
+        ldap_domain = args.ldap_domain if args.ldap_domain else args.domain
+        ldap_user = args.ldap_user if args.ldap_user else args.username
+        ldap_pass = args.ldap_password if args.ldap_password else args.password
+        ldap_hashes = args.ldap_hashes if args.ldap_hashes else args.hashes
+
+        set_netbios_ldap_credentials(
+            domain=ldap_domain,
+            dc_ip=args.dc_ip,
+            username=ldap_user,
+            password=ldap_pass,
+            hashes=ldap_hashes,
+            kerberos=args.kerberos,
+        )
+
     # Initialize LAPS if requested (online mode only)
     laps_cache: Optional[LAPSCache] = None
     laps_failures: List[LAPSFailure] = []
@@ -502,24 +521,26 @@ def main():
             info("LDAP fallback disabled - missing credentials")
 
         # Query NetBIOS domain name for accurate cross-domain detection
+        # Use the shared NETBIOS cache (lazy-loaded from LDAP if needed)
         netbios_name = None
-        if ldap_config:
-            from .utils.ldap import get_netbios_domain_name
+        from .utils.sid_resolver import get_netbios_cache
 
-            netbios_name = get_netbios_domain_name(
-                dc_ip=args.dc_ip,
-                domain=args.domain,
-                username=ldap_user,
-                password=ldap_password,
-                hashes=args.hashes,
-                kerberos=args.kerberos,
-                aes_key=getattr(args, "aes_key", None),
-                use_tcp=getattr(args, "dns_tcp", False),
-            )
-            if netbios_name:
-                debug(f"NetBIOS domain name: {netbios_name}")
-            else:
-                debug("Could not query NetBIOS name, falling back to FQDN first part")
+        # First, try to get our own domain's NETBIOS from the cache
+        # The cache maps NETBIOS -> FQDN, so we need to reverse lookup
+        netbios_cache = get_netbios_cache()
+        our_fqdn = args.domain.upper() if args.domain else ""
+
+        # Find our NETBIOS name by reverse lookup in cache
+        for nb_name, fqdn in netbios_cache.items():
+            if fqdn == our_fqdn:
+                netbios_name = nb_name
+                debug(f"NetBIOS domain name (from cache): {netbios_name}")
+                break
+
+        # Fallback: if not in cache, derive from FQDN first part
+        if not netbios_name and args.domain:
+            netbios_name = args.domain.split(".")[0].upper()
+            debug(f"NetBIOS domain name (derived from FQDN): {netbios_name}")
 
         # Extract computer SIDs from task rows for accurate BloodHound resolution
         computer_sids = {}
