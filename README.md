@@ -29,33 +29,86 @@
 </p>
 <hr />
 
-TaskHound hunts for Windows scheduled tasks that run with privileged accounts and stored credentials. It enumerates tasks over SMB, parses XMLs, and identifies high-value attack opportunities through BloodHound support.
+TaskHound hunts for Windows scheduled tasks that run with privileged accounts and stored credentials. It enumerates tasks over SMB, parses XMLs, and identifies high-value attack opportunities through BloodHound integration.
 
-For Backstory/Lore, and more explanations: see my associated: [Blog Post](https://r0bit.io/posts/taskhound.html)
+For backstory/lore and detailed explanations: see the associated [Blog Post](https://r0bit.io/posts/taskhound.html).
 
 ## Key Features
 
-- **Tier 0 & High Value Detection**: Automatically identifies tasks running as classic Tier 0 and High Value users
-- **BloodHound Integration**: Connect to your live BloodHound Instance or ingest exports
-- **OpenGraph Support**: Visualize tasks as graph entities in BloodHound
-- **DPAPI Support**: Collect and decrypt DPAPI blobs from scheduled tasks
-- **SID Resolution**: Supports LDAP for SID lookups when encountered in tasks
-- **Password Analysis**: Analyzes password age relative to task creation date
-- **Offline Analysis**: Process previously collected XML files
-- **AdaptixC2 Integration**: BOF available in Extension-Kit for C2 operations
+| Feature | Description |
+|---------|-------------|
+| **Tier 0 & High Value Detection** | Automatically identifies tasks running as Domain Admins, Enterprise Admins, and other privileged accounts |
+| **BloodHound Integration** | Connect to live BHCE/Legacy instances or ingest exports for high-value user detection |
+| **OpenGraph Support** | Visualize scheduled tasks as attack path nodes in BloodHound CE |
+| **LAPS Integration** | Auto-retrieve and use LAPS passwords (both Windows LAPS and Legacy) for per-host authentication |
+| **DPAPI Credential Extraction** | Collect and decrypt DPAPI blobs containing stored task credentials |
+| **Multi-threaded Scanning** | Parallel target processing with rate limiting for large environments |
+| **LDAP-based Tier-0 Detection** | Detect privileged accounts via group membership without BloodHound |
+| **Credential Validation** | Verify if stored task passwords are still valid via RPC |
+| **Offline Analysis** | Process mounted disk images or previously collected XMLs |
+| **Audit Mode** | Generate HTML security reports with severity scoring and remediation guidance |
+| **SID Resolution** | Multi-tier resolution via BloodHound → LDAP → Global Catalog → LSARPC |
+| **Caching** | SQLite-based persistent cache for SID lookups and LAPS credentials |
 
 ## Quick Start
 
 ```bash
 # Install
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install .
+git clone https://github.com/1r0BIT/TaskHound.git
+cd TaskHound
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && pip install .
 
-# Basic usage
-taskhound -u homer.simpson -p P@ssw0rd -d thesimpsons.local -t moe.thesimpsons.local
+# Basic usage - single target
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local
+
+# Multiple targets with threading
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --targets-file hosts.txt --threads 10
+
+# Auto-discover all domain computers
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --dc-ip 10.0.0.1 --auto-targets --threads 20
+
+# With LAPS - auto-retrieves per-host local admin passwords
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --targets-file hosts.txt --laps --threads 10
+
+# Offline analysis of mounted disk image
+taskhound --offline-disk /mnt/disk
 ```
+
+## Configuration File
+
+TaskHound supports TOML configuration files for persistent settings. Create `taskhound.toml` in your working directory or `~/.config/taskhound/`:
+
+```toml
+[authentication]
+username = "svc_taskhound"
+domain = "THESIMPSONS.LOCAL"
+
+[target]
+dc_ip = "10.0.0.1"
+threads = 10
+timeout = 30
+
+[bloodhound]
+live = true
+connector = "http://127.0.0.1:8080"
+api_key = "${BH_API_KEY}"      # Use env vars for secrets
+api_key_id = "${BH_API_KEY_ID}"
+type = "bhce"
+
+[bloodhound.opengraph]
+enabled = true
+output_dir = "./opengraph"
+
+[laps]
+enabled = true
+
+[cache]
+enabled = true
+ttl = 86400  # 24 hours
+```
+
+Priority: CLI args > Environment variables > Local config > User config > Defaults
 
 ## AdaptixC2 Integration
 
@@ -72,407 +125,468 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
 
                      by 0xr0BIT
 
-[+] Legacy BloodHound export detected
-[+] High Value target data loaded
+[+] Connecting to BloodHound CE at http://127.0.0.1:8080
+[+] BloodHound connection successful (API v2)
+[+] High Value target data loaded (42 users)
+[+] OpenGraph generation enabled (auto-upload active)
+[*] Processing target: moe.thesimpsons.local
 [+] moe.thesimpsons.local: Connected via SMB
 [+] moe.thesimpsons.local: Local Admin Access confirmed
-[*] moe.thesimpsons.local: Crawling Scheduled Tasks (skipping \Microsoft for speed)
-[+] moe.thesimpsons.local: Found 7 tasks, privileged 2
+[*] moe.thesimpsons.local: Enumerating scheduled tasks (skipping \Microsoft)
+[+] moe.thesimpsons.local: Found 12 tasks (3 privileged, 2 with stored credentials)
 
-[TIER-0] moe.thesimpsons.local - Windows\System32\Tasks\BackupTask
-        Enabled : True
-        RunAs   : THESIMPSONS\Administrator
-        What    : C:\Scripts\backup.exe --daily
-        Author  : THESIMPSONS\Administrator  
-        Date    : 2025-09-18T23:04:37.3089851
-        Trigger : Calendar (starts 2025-09-18 23:00, every 1 day, daily)
-        Reason  : AdminSDHolder; TIER0 Group Membership
-        Password Analysis : Password changed BEFORE task creation, password is valid!
-        Next Step: Try DPAPI Dump / Task Manipulation
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ [TIER-0] moe.thesimpsons.local - \DuffBrewery\BackupJob                      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Enabled          │ True                                                      │
+│ RunAs            │ THESIMPSONS\Administrator                                 │
+│ What             │ C:\Scripts\backup_beer_recipes.ps1                        │
+│ Author           │ THESIMPSONS\burns.monty                                   │
+│ Date             │ 2025-06-15T02:30:00                                       │
+│ Trigger          │ Calendar (starts 2025-06-15 02:30, daily)                 │
+│ Reason           │ Tier 0 - Domain Admins membership                         │
+│ Cred Validation  │ VALID                                                     │
+│ Pwd Analysis     │ Password changed BEFORE task creation - credentials valid │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-[PRIV] moe.thesimpsons.local - Windows\System32\Tasks\MaintenanceTask
-        Enabled : True
-        RunAs   : THESIMPSONS\marge.simpson
-        What    : C:\Tools\cleanup.exe
-        Author  : THESIMPSONS\Administrator
-        Date    : 2025-09-18T23:05:43.0854575
-        Trigger : Calendar (starts 2025-09-19 02:00, every 6 hours, daily)
-        Reason  : High Value match found
-        Password Analysis : Password changed AFTER task creation, Password could be stale
-        Next Step: Try DPAPI Dump / Task Manipulation
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ [PRIV] moe.thesimpsons.local - \KrustyBurger\InventorySync                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Enabled          │ True                                                      │
+│ RunAs            │ THESIMPSONS\svc_krusty                                    │
+│ What             │ C:\KrustyApps\sync.exe --silent                           │
+│ Author           │ THESIMPSONS\carlson.carl                                  │
+│ Date             │ 2025-03-10T08:00:00                                       │
+│ Trigger          │ Calendar (starts 2025-03-10 08:00, every 4 hours)         │
+│ Reason           │ High Value match found in BloodHound                      │
+│ Cred Validation  │ EXPIRED (0x80070532)                                      │
+│ Pwd Analysis     │ Password changed AFTER task - credentials may be stale    │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-[TASK] moe.thesimpsons.local - Windows\System32\Tasks\SIDTask  
-        Enabled : True
-        RunAs   : Administrator (S-1-5-21-3211413907-14631080-1147255650-500)
-        What    : C:\Windows\System32\cmd.exe /c backup
-        Author  : SYSTEM
-        Date    : 2025-09-15T08:15:22.1234567
-        Trigger : Time at 2025-09-16 03:00
+╭─────────────────────────── SCAN COMPLETE ────────────────────────────────────╮
+│   [+] Succeeded: 1                                                           │
+│   [-] Failed: 0                                                              │
+│   Total time: 2.34s                                                          │
+│   Avg per target: 2340ms                                                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
-[TASK] moe.thesimpsons.local - Windows\System32\Tasks\UserTask
-        Enabled : False
-        RunAs   : THESIMPSONS\bart.simpson
-        What    : C:\Windows\System32\notepad.exe
-        Author  : THESIMPSONS\bart.simpson
-        Date    : 2025-09-18T12:30:15.1234567
-        Trigger : Logon
+╭─────────────────────────── TASK SUMMARY ─────────────────────────────────────╮
+│  Hostname                  Tier-0    Privileged    Normal                    │
+│  moe.thesimpsons.local        1           2           9                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
-================================================================================
-SUMMARY
-================================================================================
-HOSTNAME                | TIER-0_TASKS | PRIVILEGED_TASKS | NORMAL_TASKS
-------------------------------------------------------------------------
-moe.thesimpsons.local   | 1            | 1                | 6           
-================================================================================
-[+] Check the output above or your saved files for detailed task information
+╭─────────────────────── BLOODHOUND OPENGRAPH ─────────────────────────────────╮
+│   [+] Generated 3 nodes, 5 edges                                             │
+│   [+] Uploaded to BloodHound successfully                                    │
+│   [*] JSON saved to: ./opengraph/taskhound_data.json                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
 ```
+
+---
 
 ## BloodHound Integration
 
-TaskHound supports both **Legacy BloodHound** and **BloodHound Community Edition (BHCE)** formats with automatic format detection.
+TaskHound supports both **Legacy BloodHound** (Neo4j) and **BloodHound Community Edition (BHCE)** with automatic format detection.
 
-### Tier 0 Detection
-TaskHound uses multiple detection methods for Tier 0 identification:
+### Live Connection
 
-**BHCE Format:**
-- `isTierZero` attribute
-- System tags (e.g., `admin_tier_0`)
-- AdminSDHolder (`admincount=1`)
-
-**Legacy Format:**
-- AdminSDHolder (`admincount=1`) 
-- SID-based detection
-
-**Supported Tier 0 Groups:**
-- Domain Admins, Enterprise Admins, Schema Admins
-- Key Admins, Enterprise Key Admins
-- Local Administrators, Domain Controllers
-- Backup/Server/Account/Print Operators
-
-> **Note**: I currently only have a somewhat 'hacky' solution for the TIER-0 vs. PRIV logic for BHCE that checks if the istierzero or highvalue attribute is set AND if the user is actually a member of default TIER-0 groups. This is because if you mark a user as highvalue in the bhce gui, the istierzero attribute get's changed aswell. At this point I don't know if I'm being stupid or if this is actually intended.
-
-### Data Ingestion
-
-TaskHound can connect directly to live BloodHound instances for real-time high-value user data. It also supports direct parsing of BloodHound Exports.
-
-#### Live BloodHound Connection
-
-**BHCE (Community Edition) with API Key/ID Pair (Recommended):**
 ```bash
-# Generate key via BloodHound UI: My Profile → API Key Management → Create Token
-taskhound -u homer.simpson -p pass -t moe.thesimpsons.local \
+# BHCE with API Key (recommended)
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local \
   --bh-live --bhce --bh-connector http://127.0.0.1:8080 \
-  --bh-api-key "YOUR_API_KEY" --bh-api-key-id "YOUR_API_KEY_ID"
-```
-**Note:** API key authentication uses HMAC-SHA256 signing for secure requests. Both the key and ID are required.
+  --bh-api-key "YOUR_API_KEY" --bh-api-key-id "YOUR_KEY_ID"
 
-**BHCE with Username/Password:**
-```bash
-taskhound -u homer.simpson -p pass -t moe.thesimpsons.local --bh-live --bhce --bh-connector http://127.0.0.1:8080 --bh-user admin --bh-password password
-```
+# BHCE with username/password
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local \
+  --bh-live --bhce --bh-connector http://127.0.0.1:8080 \
+  --bh-user admin --bh-password password
 
-**Legacy BloodHound:**
-```bash
-taskhound -u homer.simpson -p pass -t moe.thesimpsons.local --bh-live --legacy --bh-connector bolt://127.0.0.1:7687 --bh-user neo4j --bh-password password
-```
-
-**Configuration File Support:**
-```ini
-[BloodHound]
-connector = http://127.0.0.1:8080
-type = bhce
-
-# Method 1: API Key/ID Pair (recommended - uses HMAC-SHA256 signing)
-# Generate via BloodHound UI: My Profile → API Key Management → Create Token
-# BOTH key and ID are required
-api_key = ${BH_API_KEY}
-api_key_id = ${BH_API_KEY_ID}
-
-# Method 2: Username + Password
-# username = admin
-# password = ${BH_PASSWORD}
+# Legacy BloodHound (Neo4j)
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local \
+  --bh-live --legacy --bh-connector bolt://127.0.0.1:7687 \
+  --bh-user neo4j --bh-password password
 ```
 
-**Note:** API key authentication uses HMAC-SHA256 signing with a signature chain (OperationKey → DateKey → Signature) for secure, token-based access without session management
-If you don't need live data or your BloodHound instance is located in an unreachable network, you can generate ingestable data with the following queries:
+### Tier 0 Detection Methods
 
-#### BloodHound Community Edition (BHCE)
+| Source | Detection Method |
+|--------|------------------|
+| **BHCE** | `isTierZero`, system tags (`admin_tier_0`), AdminSDHolder |
+| **Legacy** | AdminSDHolder (`admincount=1`), SID-based detection |
+| **LDAP** | Group membership queries (`--ldap-tier0`) |
+| **Built-in** | Well-known Tier 0 SIDs (Domain Admins, Enterprise Admins, etc.) |
+
+### Offline Data Ingestion
+
+If live connection isn't possible, export high-value users with these Cypher queries:
+
+**BHCE:**
 ```cypher
-MATCH (n)
-WHERE coalesce(n.system_tags, "") CONTAINS "admin_tier_0"
-   OR n.highvalue = true
+MATCH (n) WHERE coalesce(n.system_tags, "") CONTAINS "admin_tier_0" OR n.highvalue = true
 MATCH p = (n)-[:MemberOf*1..]->(g:Group)
 RETURN p;
 ```
 
-#### Legacy BloodHound 
+**Legacy:**
 ```cypher
 MATCH (u:User {highvalue:true})
 OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)
-WITH u, properties(u) as all_props, collect(g.name) as groups, collect(g.objectid) as group_sids
-RETURN u.samaccountname AS SamAccountName, all_props, groups, group_sids
-ORDER BY SamAccountName
+WITH u, properties(u) as all_props, collect(g.name) as groups
+RETURN u.samaccountname AS SamAccountName, all_props, groups
 ```
 
-> **Note**: The above shown legacy query only works with JSON export. The `all_props` field contains all BloodHound user attributes, making it much more maintainable than manually specifying each field.
+Then use: `taskhound --bh-data exported_users.json ...`
+
+---
+
+## OpenGraph Attack Path Visualization
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/7cde5d08-24e8-49f8-9964-ba8e18864550" alt="OpenGraph Attack Path" />
+</p>
+
+TaskHound creates custom nodes and edges in BloodHound CE to visualize scheduled task attack paths.
+
+**What You Get:**
+- **Custom Nodes**: `ScheduledTask` with 20+ properties (credentials, triggers, password analysis, validation status)
+- **Custom Edges**: `HasTask`, `HasTaskWithStoredCreds`, `RunsAs`
+- **Attack Paths**: `(Owned) → AdminTo → (Computer) → HasTask → (Task) → RunsAs → (Target)`
+
+```bash
+# Collect and auto-upload
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --bh-opengraph
+
+# Generate without upload
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --bh-opengraph --bh-no-upload --bh-output ./opengraph
+```
+
+> **Note**: OpenGraph is BHCE-only. Legacy BloodHound doesn't support custom node types.
+
+---
+
+## LAPS Integration
+
+TaskHound can automatically retrieve and use LAPS passwords for per-host authentication. Supports both Windows LAPS (`msLAPS-Password`) and Legacy LAPS (`ms-Mcs-AdmPwd`), including encrypted passwords via MS-GKDI.
+
+```bash
+# Basic LAPS - auto-retrieves passwords per target
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --targets-file hosts.txt --laps --threads 10
+
+# Custom local admin username
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --laps --laps-user localadmin
+
+# LAPS with OPSEC mode (other noisy operations disabled)
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --laps --opsec --force-laps
+```
+
+**Supported LAPS Types:**
+| Type | Attribute | Encrypted |
+|------|-----------|-----------|
+| Windows LAPS | `msLAPS-Password` | No |
+| Windows LAPS | `msLAPS-EncryptedPassword` | Yes (MS-GKDI) |
+| Legacy LAPS | `ms-Mcs-AdmPwd` | No |
+
+---
+
+## DPAPI Credential Extraction
+
+Extract and decrypt stored task credentials using DPAPI.
+
+```bash
+# Step 1: Get DPAPI_SYSTEM key via LSA dump
+nxc smb moe.thesimpsons.local -u homer.simpson -p 'Doh!123' --lsa
+# Look for: DPAPI_SYSTEM userkey: 0x51e43225...
+
+# Step 2a: Collect + decrypt immediately
+taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --loot --dpapi-key 0x51e43225...
+
+# Step 2b: Or collect now, decrypt later
+taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --loot --backup ./collected
+# Later:
+taskhound --offline ./collected/moe.thesimpsons.local --dpapi-key 0x51e43225...
+```
+
+> **Important**: Each host has a unique DPAPI_SYSTEM key. For multi-target scans, collect with `--loot` (no key), then decrypt each target offline.
+
+---
+
+## Credential Validation
+
+TaskHound can verify if stored task passwords are still valid by querying task execution history via RPC.
+
+```bash
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --validate-creds
+```
+
+Output includes validation status:
+- `VALID` - Task ran successfully recently
+- `EXPIRED` - Password changed (0x80070532)
+- `INVALID` - Logon failure (0x8007052E)
+- `UNKNOWN` - No execution history
+
+> **Note**: Disabled in OPSEC mode due to additional RPC traffic.
+
+---
+
+## Audit Mode
+
+Generate HTML security reports for blue team assessments.
+
+```bash
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets --audit-mode --html-report ./audit_report.html
+```
+
+Reports include:
+- Severity scoring per task
+- Task details and metadata
+- Exportable findings
+
+---
+
+## Multi-threaded Scanning
+
+For large environments, use parallel scanning with rate limiting:
+
+```bash
+# 20 parallel workers, max 5 targets/second
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets --threads 20 --rate-limit 5
+
+# Auto-discover servers only
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets \
+  --ldap-filter "(operatingSystem=*Server*)" --threads 20
+```
+
+---
 
 ## SID Resolution
 
-TaskHound tries to automatically resolve SIDs to samaccountnames for improved readability when encountered in a task.
-Before using any outbound connection, it will try to resolve them using the supplied BloodHound data.
-If there is no data found or wasn't supplied, taskhound will then try to look up the SID via LDAP unless supressed with `--no-ldap`.
+TaskHound resolves SIDs to readable names using a multi-tier fallback chain:
 
-### Dedicated LDAP Credentials
-
-When using NTLM hashes for main authentication, you can provide separate credentials for LDAP SID resolution:
-
-```bash
-# Main auth with NTLM hash, separate LDAP credentials for SID resolution
-taskhound -u homer.simpson --hashes :5d41402abc4b2a76b9719d911017c592 -d thesimpsons.local -t moe.thesimpsons.local --ldap-user marge.simpson --ldap-password M@rg3P@ss --ldap-domain thesimpsons.local
-
-# Or when you only have local admin access via LAPS Password or SAMDumps (domain='.')
-taskhound -u Administrator -p L0c@lAdm1n! -d . -t moe.thesimpsons.local --ldap-user bart.simpson --ldap-password B@rtP@ss --ldap-domain thesimpsons.local
-```
-
-### AES Key Authentication
-
-Authenticate using Kerberos AES keys (from a keytab, secretsdump, etc.):
+1. **BloodHound** (if connected) - fastest, no network traffic
+2. **Cache** - SQLite persistent cache (default 24h TTL)
+3. **LDAP** - domain controller query
+4. **Global Catalog** - for cross-domain/forest SIDs
+5. **LSARPC** - direct target query (most accurate, most traffic)
 
 ```bash
-# AES-256 key (64 hex characters)
-taskhound -u svc_backup -d corp.local --aes-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef -t dc01.corp.local --dc-ip 10.0.0.1
+# Separate LDAP credentials for SID resolution
+taskhound -u localadmin -p 'L0c4lP@ss!' -d . -t moe.thesimpsons.local \
+  --ldap-user homer.simpson --ldap-password 'Doh!123' --ldap-domain thesimpsons.local
 
-# AES-128 key (32 hex characters) 
-taskhound -u admin -d corp.local --aes-key 0123456789abcdef0123456789abcdef -t server01.corp.local --dc-ip 10.0.0.1
+# Specify Global Catalog for multi-domain
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --gc-server 10.0.0.1
+
+# Disable all network-based resolution (OPSEC)
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --opsec
 ```
 
-> **NOTE**: AES key authentication implies `-k` (Kerberos). The `--dc-ip` flag is recommended for reliable KDC resolution.
+---
 
-**Why separate LDAP credentials?**
-- LDAP SID resolution now uses Impacket's LDAP implementation with NTLM hash support
-- You might only have local admin access but need domain LDAP for SID resolution
-- Allows using lower-privilege accounts specifically for SID lookups
+## Offline Analysis
 
-> **NOTE**: To use this reliably with kerberos auth you need a working krb5.conf.
-
-## EXPERIMENTAL Features
-
-> **WARNING**  
-> Features in this section are **UNSAFE** for production environments. Limited testing has been done in lab environments. Don't blame me if something blows up your op or gets you busted. You have been warned.
-
-### OpenGraph Attack Path Visualization (BHCE Only)
-
-![1761663911331](https://github.com/user-attachments/assets/7cde5d08-24e8-49f8-9964-ba8e18864550)
-
-TaskHound integrates with BloodHound Community Edition's **OpenGraph** platform to visualize scheduled tasks as first-class graph entities. This enables attack path analysis showing how privileged tasks create escalation opportunities.
-
-**What You Get:**
-- **Custom Nodes**: `ScheduledTask` with 19+ properties (credentials, triggers, password analysis)
-- **Custom Edges**: 
-  - `HasTask` / `HasTaskWithStoredCreds`: Computer → Task relationships
-  - `RunsAs`: Task → User/Group execution context
-- **Attack Paths**: `(Owned User) → AdminTo → (Computer) → HasTask → (Task) → RunsAs → (Privileged User)`
-
-**Quick Start:**
+Analyze tasks without network access:
 
 ```bash
-# Collect and auto-upload in one command (taskhound.toml config is preferred)
-taskhound -u homer.simpson -p pass -t moe.thesimpsons.local -d thesimpsons.local --bh-set-icon
+# Previously collected XML backups
+taskhound --offline ./backup/moe.thesimpsons.local
 
-# Manual generation (no upload)
-taskhound -u homer.simpson -p pass -d thesimpsons.local -t moe.thesimpsons.local --bh-opengraph --bh-output ./opengraph --bh-no-upload
+# Mounted disk image
+taskhound --offline-disk /mnt/disk
+
+# Mounted image with custom hostname
+taskhound --offline-disk /mnt/disk --disk-hostname MOE
 ```
 
-**Features:**
-- Auto-detects config and enables OpenGraph
-- Uploads directly to BloodHound CE
-- Custom icon support (`--bh-set-icon`)
-- Local backup always saved
+---
 
-> **Full documentation, abuse scenarios, and Cypher queries coming in separate docs** (currently being finalized for the merge)
+## Authentication Methods
 
-### DPAPI Credential Extraction
+| Method | Example |
+|--------|---------|
+| Password | `-u homer.simpson -p 'Doh!123' -d thesimpsons.local` |
+| NTLM Hash | `-u homer.simpson --hashes :31d6cfe0d16ae931b73c59d7e0c089c0 -d thesimpsons.local` |
+| Kerberos | `-u homer.simpson -p 'Doh!123' -d thesimpsons.local -k --dc-ip 10.0.0.1` |
+| AES Key | `-u homer.simpson --aes-key 0123...cdef -d thesimpsons.local --dc-ip 10.0.0.1` |
+| ccache | `export KRB5CCNAME=/tmp/homer.ccache && taskhound -u homer.simpson -d thesimpsons.local -k` |
+| LAPS | `-u homer.simpson -p 'Doh!123' -d thesimpsons.local --laps` |
 
-TaskHound can extract and decrypt Task Scheduler credentials stored by Windows using DPAPI. This feature supports two workflows:
-
-**Online Mode: Live Collection & Decryption**
-```bash
-# First, obtain DPAPI_SYSTEM userkey via LSA dump:
-nxc smb moe.thesimpsons.local -u homer.simpson -p pass --lsa
-
-# Option 1: Collect only (saves to dpapi_loot/moe.thesimpsons.local/)
-taskhound -t moe.thesimpsons.local -u homer.simpson -p pass -d thesimpsons.local --loot
-
-# Option 2: Collect + decrypt immediately (credentials shown inline with tasks)
-taskhound -t moe.thesimpsons.local -u homer.simpson -p pass -d thesimpsons.local --loot --dpapi-key 0x51e43225...
-
-# Option 3: Collect from multiple targets (WITHOUT --dpapi-key)
-taskhound --targets-file hosts.txt -u homer.simpson -p pass -d thesimpsons.local --loot
-# Then decrypt each target offline with its specific key
-```
-
-**Offline Mode: Decrypt Previously Collected Files**
-```bash
-# Decrypt files collected earlier with --loot:
-taskhound --offline dpapi_loot/moe.thesimpsons.local --dpapi-key 0x51e43225...
-```
-
-> **Important**: Each target has a unique DPAPI key. The `--dpapi-key` flag can only be used with a single target, NOT with `--targets-file`. For multiple targets, use `--loot` (without `--dpapi-key`) to collect files, then decrypt each target offline with its specific key.
-
-### Credential Guard Detection
-
-Checks remote registry for Credential Guard status to determine DPAPI dump feasibility. Results include `"credential_guard": true/false` in output.
-
-## Full Usage Reference
-
-```
-Usage: taskhound [-h] [-u USERNAME] [-p PASSWORD] [-d DOMAIN] [--hashes HASHES] 
-                 [-k] [-t TARGET] [--targets-file TARGETS_FILE] [--dc-ip DC_IP]
-                 [--offline OFFLINE] [--bh-data BH_DATA] [--bh-live] [--bh-connector BH_CONNECTOR]
-                 [--bh-user BH_USER] [--bh-password BH_PASSWORD] [--bhce] [--legacy]
-                 [--bh-save BH_SAVE] [--bh-opengraph] [--bh-output BH_OUTPUT] 
-                 [--bh-no-upload] [--bh-set-icon] [--bh-force-icon] [--bh-icon BH_ICON] 
-                 [--bh-color BH_COLOR] [--include-ms] [--include-local] [--include-all] 
-                 [--unsaved-creds] [--no-ldap] [--ldap-user LDAP_USER] 
-                 [--ldap-password LDAP_PASSWORD] [--ldap-domain LDAP_DOMAIN]
-                 [--credguard-detect] [--loot] [--dpapi-key DPAPI_KEY]
-                 [--plain PLAIN] [--json JSON] [--csv CSV] [--opengraph OPENGRAPH]
-                 [--backup BACKUP] [--no-summary] [--debug]
-
-Authentication:
-  -u, --username        Username (required for online mode)
-  -p, --password        Password (omit with -k for Kerberos/ccache)  
-  -d, --domain          Domain (required for online mode)
-  --hashes HASHES       NTLM hashes (LM:NT or NT-only format)
-  -k, --kerberos        Use Kerberos authentication (supports ccache)
-  --aes-key AES_KEY     AES key for Kerberos (128-bit: 32 hex, 256-bit: 64 hex)
-
-Targets:
-  -t, --target          Single target hostname/IP
-  --targets-file        File with targets, one per line
-  --dc-ip               Domain controller IP (required for Kerberos without DNS)
-
-Scanning:
-  --offline OFFLINE     Parse previously collected XML files from directory
-  --bh-data BH_DATA     BloodHound export file (CSV/JSON) for high-value detection
-
-BloodHound Live Connection:
-  --bh-live             Enable live BloodHound connection
-  --bh-connector BH_CONNECTOR  
-                        BloodHound connector URI (default: http://127.0.0.1:8080)
-                        Examples: localhost, http://localhost:8080, https://bh.domain.com,
-                                 bolt://neo4j.local:7687
-                        Supports both BHCE (http/https) and Legacy (bolt) protocols
-  --bh-user BH_USER     BloodHound username
-  --bh-password BH_PASSWORD  BloodHound password
-  --bhce                Use BHCE (Community Edition) connection
-  --legacy              Use Legacy BloodHound (Neo4j) connection
-  --bh-save BH_SAVE     Save retrieved BloodHound data to file
-
-BloodHound OpenGraph Integration (BHCE ONLY):
-  --bh-opengraph        Generate BloodHound OpenGraph JSON files (auto-enabled if 
-                        taskhound.toml has valid BHCE credentials)
-  --bh-output BH_OUTPUT Directory to save OpenGraph files (default: ./opengraph)
-  --bh-no-upload        Generate OpenGraph files but skip automatic upload
-  --bh-set-icon         Automatically set custom icon for ScheduledTask nodes
-  --bh-force-icon       Force icon update even if icon already exists
-  --bh-icon BH_ICON     Font Awesome icon name (default: heart)
-  --bh-color BH_COLOR   Hex color code for icon (default: #8B5CF6)
-
-LDAP/SID Resolution:
-  --ldap-user LDAP_USER     Separate username for LDAP SID resolution
-  --ldap-password LDAP_PASSWORD  Separate password for LDAP SID resolution  
-  --ldap-domain LDAP_DOMAIN     Separate domain for LDAP SID resolution
-  --no-ldap             Disable LDAP queries for SID resolution
-
-Task Filtering:
-  --include-ms          Include \Microsoft tasks (WARNING: very slow)
-  --include-local       Include local system accounts (NT AUTHORITY\SYSTEM, etc.)
-  --include-all         Include ALL tasks (combines --include-ms, --include-local, 
-                        --unsaved-creds - WARNING: very slow and noisy)
-  --unsaved-creds       Show tasks without stored credentials
-  --credguard-detect    EXPERIMENTAL: Detect Credential Guard via remote registry
-
-DPAPI Operations:
-  --loot                Collect DPAPI files (masterkeys + credentials) for decryption
-                        Without --dpapi-key: saves files to dpapi_loot/<target>/
-                        With --dpapi-key: decrypts credentials immediately
-                        When combined with --backup: nests dpapi_loot/ inside backup directory
-  --dpapi-key KEY       DPAPI_SYSTEM userkey (hex format from LSA secrets dump)
-                        Use with --loot for live decryption, or with --offline for 
-                        offline decryption of previously collected files
-
-Output:
-  --plain PLAIN         Save plain text output per target
-  --json JSON           Export results to JSON file  
-  --csv CSV             Export results to CSV file
-  --opengraph OPENGRAPH Generate BloodHound OpenGraph JSON files (same as --bh-opengraph)
-                        Directory path where files will be saved
-  --backup BACKUP       Save raw XML files for offline analysis
-                        When combined with --loot: creates consolidated output directory
-                        Structure: <backup_dir>/<target>/Tasks/ and dpapi_loot/
-  --no-summary          Disable summary table (shown by default)
-  --debug               Enable debug output and full stack traces
-```
+---
 
 ## OPSEC Considerations
 
-TaskHound relies heavily on impacket for SMB/RPC/Kerberos operations. Standard impacket IOCs apply.
-**If you really care about OPSEC**: Use the BOF implementation or collect tasks manually, then analyze offline.
+TaskHound relies on Impacket for SMB/RPC operations. Standard Impacket IOCs apply.
+
+**Noisy operations (disabled with `--opsec`):**
+- LDAP SID resolution  
+- Credential Guard detection
+- Credential validation RPC
+- LAPS queries (use `--force-laps` to override)
+
+**For maximum stealth:**
+1. Use the BOF implementation in AdaptixC2
+2. Collect XMLs via other means, analyze offline
+3. Pre-populate BloodHound data to avoid network queries
+
+---
+
+## Full CLI Reference
+
+TaskHound uses Rich for formatted console output with colored tables and progress indicators.
+
+```
+taskhound --help
+```
+
+<details>
+<summary>Click to expand full usage</summary>
+
+```
+Usage: taskhound [OPTIONS] [TARGETS]
+
+AUTHENTICATION OPTIONS
+  -u, --username        Username (required for online mode)
+  -p, --password        Password (omit with -k for Kerberos/ccache)
+  -d, --domain          Domain (required for online mode)
+  --hashes              NTLM hashes (LM:NT or NT-only)
+  -k, --kerberos        Use Kerberos authentication
+  --aes-key             AES key for Kerberos (32 or 64 hex chars)
+
+TARGET OPTIONS
+  -t, --target          Single target or comma-separated list
+  --targets-file        File with targets, one per line
+  --dc-ip               Domain controller IP
+  --ns, --nameserver    DNS nameserver for lookups
+  --timeout             Connection timeout in seconds (default: 5)
+  --threads             Parallel worker threads (default: 1)
+  --rate-limit          Max targets per second (default: unlimited)
+  --dns-tcp             Force DNS over TCP (for SOCKS proxies)
+  --auto-targets        Auto-discover targets via LDAP
+  --ldap-filter         Custom LDAP filter for auto-discovery
+  --include-dcs         Include Domain Controllers in auto-targets
+
+SCANNING OPTIONS
+  --offline             Parse XMLs from directory
+  --offline-disk        Analyze mounted Windows filesystem
+  --disk-hostname       Override hostname for offline-disk
+  --bh-data             BloodHound export file for HV detection
+  --opsec               Disable noisy operations
+  --include-ms          Include \Microsoft tasks
+  --include-local       Include local system accounts
+  --include-all         Include ALL tasks
+  --unsaved-creds       Show tasks without stored credentials
+  --credguard-detect    Detect Credential Guard status
+  --validate-creds      Validate stored credentials via RPC
+
+BLOODHOUND OPTIONS
+  --bh-live             Enable live BloodHound connection
+  --bh-connector        BloodHound URI (default: http://127.0.0.1:8080)
+  --bh-user             BloodHound username
+  --bh-password         BloodHound password
+  --bh-api-key          BloodHound API key
+  --bh-api-key-id       BloodHound API key ID
+  --bh-timeout          API query timeout (default: 120)
+  --bhce                Use BHCE (Community Edition)
+  --legacy              Use Legacy BloodHound (Neo4j)
+  --bh-save             Save query results to file
+
+OPENGRAPH OPTIONS (BHCE ONLY)
+  --bh-opengraph        Generate OpenGraph JSON files
+  --bh-output           Output directory (default: ./opengraph)
+  --bh-no-upload        Skip automatic upload
+  --bh-force-icon       Force icon update
+  --bh-icon             Icon name (default: clock)
+  --bh-color            Icon color (default: #8B5CF6)
+  --bh-allow-orphans    Create edges for missing nodes
+
+DPAPI OPTIONS
+  --loot                Collect DPAPI credential blobs
+  --dpapi-key           DPAPI_SYSTEM userkey (hex format)
+
+LDAP/SID RESOLUTION
+  --no-ldap             Disable LDAP SID resolution
+  --ldap-user           Alternative LDAP username
+  --ldap-password       Alternative LDAP password
+  --ldap-hashes         Alternative LDAP hashes
+  --ldap-domain         Alternative LDAP domain
+  --ldap-tier0          Enable LDAP-based Tier-0 detection
+  --gc-server           Global Catalog server IP
+
+LAPS OPTIONS
+  --laps                Enable LAPS authentication
+  --laps-user           Override local admin username
+  --force-laps          Force LAPS in OPSEC mode
+
+CACHE OPTIONS
+  --cache-ttl           Cache TTL in seconds (default: 86400)
+  --no-cache            Disable caching
+  --clear-cache         Clear cache before run
+  --cache-file          Cache file path
+
+OUTPUT OPTIONS
+  --plain               Save text output per target
+  --json                Export to JSON file
+  --csv                 Export to CSV file
+  --backup              Save raw XML files
+  --no-backup           Disable auto-backup (offline-disk)
+  --no-summary          Disable summary table
+
+AUDIT OPTIONS
+  --audit-mode          Generate HTML security report
+  --html-report         HTML report path
+
+MISC
+  --verbose             Verbose output
+  --debug               Debug output with stack traces
+```
+
+</details>
+
+---
 
 ## Roadmap
 
 When caffeine intake and free time align:
-### definitely on the list
-- **Abuse Info Integration**: Add MITRE ATT&CK techniques and OPSEC notes to BloodHound nodes
-- **OpenGraph Optimization**: Switch from name-based to ID-based node matching for reliable BloodHound integration
-- **Node Caching System**: Multi-tier caching to reduce API calls by 80% and speed up repeated runs
-- ~~**API Key Authentication**: Support for BloodHound API tokens instead of username/password~~ **DONE (v1.1.0)**
-- **Enhanced SID Resolution**: Improved fallback chain combining BloodHound, LDAP, and local SID databases
-  - *Partial*: Infrastructure exists for BloodHound API fallback, needs connector refactoring to pass through call chain
-- **Unreachable Hosts Tracking**: Show failed connections in summary with detailed error reasons
 
-### when i find time
-- **Asynchronous Processing**: Multi-threaded target processing for 10x speedup on large environments
-- ~~**LAPS Support**: Automatic Local Administrator Password Solution integration like NetExec~~ **DONE (v1.2.0)** - Supports plaintext and encrypted LAPS passwords via MS-GKDI
-- **Cross Domain Authentication**: Support for multi-domain environments with trust relationships
-- **Custom Tier-0 Mappings**: Support for user-defined TIER-0 targets beyond standard groups
+### Recently Completed
+- ~~API Key Authentication - HMAC-SHA256 signed requests~~
+- ~~LAPS Support - Windows LAPS + Legacy + encrypted via MS-GKDI~~
+- ~~Multi-threaded Processing - Parallel scanning with rate limiting~~
+- ~~Credential Validation - RPC-based password validity checking~~
+- ~~Audit Mode - HTML reports with severity scoring~~
+- ~~Auto-target Discovery - LDAP-based computer enumeration~~
+- ~~Offline Disk Mode - Mounted disk image analysis~~
+- ~~Persistent Caching - SQLite cache for SID/LAPS data~~
+- ~~Rich Console Output - Colored tables and progress indicators~~
+- ~~Cross-Domain Support - Multi-domain environments with trust relationships~~
 
-### nice to have
-- **Colored Terminal Output**: Rich formatting with progress bars and status indicators
-- **WMI Password Validation**: Check if stored task passwords are still valid via WMI queries
-- **Automatic Script Grabbing**: Download task executables for offline analysis with restore functionality
-- **Blue Team Audit Mode**: HTML reports with remediation guidance, etc.  
+### Planned
+- **Modularization of Stages**: This turned into a behemoth with way too many switches. I'll fix that.
+- **Abuse Info Integration**: MITRE ATT&CK techniques in BloodHound nodes
+- **Custom Tier-0 Mappings**: Support for User-defined privilege zones in BHCE
+
+---
+
+## Acknowledgements
+
+- [Fortra/Impacket](https://github.com/fortra/impacket) - SMB/RPC/Kerberos, DPAPI-NG, MS-GKDI
+- [SpecterOps/BloodHound](https://github.com/SpecterOps/BloodHound) - Attack path analysis
+- [Podalirius/bh-opengraph](https://github.com/Podalirius/bh-opengraph) - OpenGraph inspiration
+- [Pennyw0rth/NetExec](https://github.com/Pennyw0rth/NetExec) - LAPS implementation reference
+- [jborean93/dpapi-ng](https://github.com/jborean93/dpapi-ng) - DPAPI-NG research
+- [tijldeneut/DPAPIck3](https://github.com/tijldeneut/DPAPIck3) - DPAPI decryption reference
+- [gentilkiwi/mimikatz](https://github.com/gentilkiwi/mimikatz) - DPAPI research
+
+And everyone who contributed to making offensive security tooling accessible.
+
+---
 
 ## Disclaimer
 
-TaskHound is strictly an **audit and educational tool**. Use only in environments you own or where you have explicit authorization to test. Seriously. Don't be a jerk.
-
-## Acknowledgement
-
-[Fortra/Impacket](https://github.com/fortra/impacket) - SMB/RPC/Kerberos operations, DPAPI-NG implementation, MS-GKDI RPC support
-
-[SpecterOps/BloodHound](https://github.com/SpecterOps/BloodHound) - Active Directory attack path analysis
-
-[Podalirius/bh-opengraph](https://github.com/Podalirius/bh-opengraph) - OpenGraph integration inspiration and implementation guidance
-
-[Pennyw0rth/NetExec](https://github.com/Pennyw0rth/NetExec) - LAPS encrypted password decryption reference implementation
-
-[jborean93/dpapi-ng](https://github.com/jborean93/dpapi-ng) - DPAPI-NG/CNG DPAPI research and implementation
-
-[tijldeneut/DPAPIck3](https://github.com/tijldeneut/DPAPIck3) - DPAPI decryption implementation reference
-
-[Pupy Project](https://github.com/n1nj4sec/pupy) - DPAPI SYSTEM masterkey decryption techniques
-
-[gentilkiwi/mimikatz](https://github.com/gentilkiwi/mimikatz) - DPAPI operations and LSA secrets extraction research
-
-[toneillcodes](https://medium.com/@toneillcodes/decoding-dpapi-blobs-1ed9b4832cf6) - DPAPI blob structure documentation
-
-and every contributor to these projects for the amazing work they did for the community.
+TaskHound is strictly an **audit and educational tool**. Use only in environments you own or have explicit authorization to test. Seriously. Don't be a jerk.
 
 ## Contributing
 
-PRs welcome. Don't expect wonders though. Half of this was caffeine-induced vibe-coding.
+PRs welcome. Half of this was caffeine-induced vibe-coding, so don't expect miracles.
 
 ## License
 

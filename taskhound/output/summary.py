@@ -78,10 +78,13 @@ def _clean_failure_reason(reason: str) -> str:
     return reason
 
 
-def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data: bool = False):
+def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data: bool = False, has_tier0_detection: bool = False):
     """Print a nicely formatted summary table showing task counts per host."""
     if not all_rows:
         return
+
+    # Support both old and new parameter names
+    has_hv = has_hv_data or has_tier0_detection
 
     # Aggregate data by host
     host_stats = {}
@@ -110,7 +113,7 @@ def print_summary_table(all_rows: List[Any], backup_dir: str = None, has_hv_data
         return
 
     # Use Rich table
-    rich_summary_table(host_stats, has_hv_data=has_hv_data, backup_dir=backup_dir)
+    rich_summary_table(host_stats, has_hv_data=has_hv)
 
 
 def print_decrypted_credentials(all_rows: List[Any]) -> int:

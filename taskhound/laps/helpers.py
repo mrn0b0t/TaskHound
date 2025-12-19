@@ -62,22 +62,24 @@ def print_laps_summary(
         successes: Number of successful LAPS authentications
         failures: List of LAPS failures
     """
+    from rich.console import Console
+    from rich.panel import Panel
+
+    console = Console(highlight=False)
     stats = cache.get_statistics()
 
-    print()
-    print("─" * 60)
-    print("LAPS STATISTICS")
-    print("─" * 60)
-    print(f"Total LAPS entries loaded : {stats['total']}")
+    # Build statistics content
+    lines = [f"Total LAPS entries loaded : [bold]{stats['total']}[/]"]
     if stats["mslaps"] > 0:
-        print(f"  - Windows LAPS          : {stats['mslaps']}")
+        lines.append(f"  - Windows LAPS          : {stats['mslaps']}")
     if stats["legacy"] > 0:
-        print(f"  - Legacy LAPS           : {stats['legacy']}")
+        lines.append(f"  - Legacy LAPS           : {stats['legacy']}")
     if stats["encrypted"] > 0:
-        print(f"  - Encrypted (skipped)   : {stats['encrypted']}")
-    print()
-    print("LAPS Auth Results:")
-    print(f"  - Successful            : {successes}")
+        lines.append(f"  - Encrypted (skipped)   : {stats['encrypted']}")
+
+    lines.append("")
+    lines.append("[bold]LAPS Auth Results:[/]")
+    lines.append(f"  [green][+][/] Successful            : [bold]{successes}[/]")
 
     # Group failures by type
     failure_counts: dict[str, int] = {}
@@ -93,4 +95,13 @@ def print_laps_summary(
 
     for ftype, count in failure_counts.items():
         label = failure_labels.get(ftype, ftype)
-        print(f"  - {label:21} : {count}")
+        lines.append(f"  [red][-][/] {label:21} : [bold]{count}[/]")
+
+    console.print()
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold]LAPS STATISTICS[/]",
+            border_style="cyan",
+        )
+    )

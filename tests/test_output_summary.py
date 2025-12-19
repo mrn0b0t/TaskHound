@@ -165,12 +165,12 @@ class TestPrintSummaryTable:
         assert "WS01.example.com" in host_stats
 
     @patch('taskhound.output.summary.rich_summary_table')
-    def test_backup_dir_passed(self, mock_rich_table, sample_task_dict):
-        """Should pass backup_dir to rich_summary_table"""
-        print_summary_table([sample_task_dict], backup_dir="/tmp/backup")
+    def test_has_tier0_detection_passed(self, mock_rich_table, sample_task_dict):
+        """Should pass has_tier0_detection flag to rich_summary_table"""
+        print_summary_table([sample_task_dict], has_tier0_detection=True)
 
         call_kwargs = mock_rich_table.call_args[1]
-        assert call_kwargs["backup_dir"] == "/tmp/backup"
+        assert call_kwargs["has_hv_data"] is True
 
     @patch('taskhound.output.summary.rich_summary_table')
     def test_has_hv_data_passed(self, mock_rich_table, sample_task_dict):

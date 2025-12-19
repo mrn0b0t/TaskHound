@@ -251,7 +251,7 @@ def spinner(description: str = "Processing"):
 def print_summary_table(
     host_stats: dict,
     has_hv_data: bool = False,
-    backup_dir: Optional[str] = None,
+    has_tier0_detection: bool = False,
 ):
     """
     Print a rich summary table with host statistics.
@@ -260,9 +260,12 @@ def print_summary_table(
 
     Args:
         host_stats: Dict of {hostname: {tier0, privileged, normal, status, failure_reason}}
-        has_hv_data: Whether high-value data was loaded
-        backup_dir: Optional backup directory path
+        has_hv_data: Whether high-value data was loaded (deprecated, use has_tier0_detection)
+        has_tier0_detection: Whether tier-0 detection was enabled
     """
+    # Support both old and new parameter names
+    has_hv = has_hv_data or has_tier0_detection
+
     if not host_stats:
         return
 
@@ -282,10 +285,10 @@ def print_summary_table(
     # Print successful hosts table
     if success_hosts:
         table = Table(
-            title="[bold]TASK SUMMARY[/]",
             show_header=True,
             header_style="bold cyan",
             border_style="dim",
+            box=None,
         )
 
         table.add_column("Hostname", style="white", no_wrap=True)
@@ -295,8 +298,8 @@ def print_summary_table(
 
         for host in sorted(success_hosts.keys()):
             stats = success_hosts[host]
-            tier0 = str(stats["tier0"]) if has_hv_data else "N/A"
-            priv = str(stats["privileged"]) if has_hv_data else "N/A"
+            tier0 = str(stats["tier0"]) if has_hv else "N/A"
+            priv = str(stats["privileged"]) if has_hv else "N/A"
             normal = str(stats["normal"])
 
             total_tier0 += stats["tier0"]
@@ -308,8 +311,8 @@ def print_summary_table(
         # Add totals row if multiple hosts
         if len(success_hosts) > 1:
             table.add_section()
-            tier0_total = str(total_tier0) if has_hv_data else "N/A"
-            priv_total = str(total_priv) if has_hv_data else "N/A"
+            tier0_total = str(total_tier0) if has_hv else "N/A"
+            priv_total = str(total_priv) if has_hv else "N/A"
             table.add_row(
                 "[bold]TOTAL[/]",
                 f"[bold]{tier0_total}[/]",
@@ -318,15 +321,21 @@ def print_summary_table(
             )
 
         console.print()
-        console.print(table)
+        console.print(
+            Panel(
+                table,
+                title="[bold]TASK SUMMARY[/]",
+                border_style="cyan",
+            )
+        )
 
     # Print failed hosts table
     if failed_hosts:
         fail_table = Table(
-            title=f"[bold red]FAILED HOSTS ({len(failed_hosts)})[/]",
             show_header=True,
             header_style="bold red",
             border_style="dim red",
+            box=None,
         )
 
         fail_table.add_column("Hostname", style="white", no_wrap=True)
@@ -340,18 +349,21 @@ def print_summary_table(
             fail_table.add_row(host, reason)
 
         console.print()
-        console.print(fail_table)
+        console.print(
+            Panel(
+                fail_table,
+                title=f"[bold red]FAILED HOSTS ({len(failed_hosts)})[/]",
+                border_style="red",
+            )
+        )
 
     console.print()
 
     # Additional hints
-    if not has_hv_data and success_hosts:
+    if not has_hv and success_hosts:
         console.print(
             "[dim]Note: Tier-0/Privileged detection requires --bh-data, --bh-live, or --ldap-tier0[/]"
         )
-
-    if backup_dir:
-        console.print(f"[dim]Raw XML files saved to: {backup_dir}[/]")
 
 
 # =============================================================================
@@ -370,7 +382,6 @@ def print_scan_complete(
 
     # Build the content lines
     content_lines = [
-        "[bold green]Scan Complete[/]\n",
         f"  [green][+][/] Succeeded: [bold]{succeeded}[/]",
     ]
 
@@ -386,6 +397,7 @@ def print_scan_complete(
     console.print(
         Panel(
             "\n".join(content_lines),
+            title="[bold]SCAN COMPLETE[/]",
             border_style="green" if failed == 0 else "yellow",
         )
     )
@@ -419,3 +431,56 @@ def format_task_line(
         line += f"\n        [dim]{command}[/]"
 
     return line
+
+
+# =============================================================================
+# Output Section Panels
+# =============================================================================
+
+def print_backup_section(backup_dir: str):
+    """Print backup directory info in a styled panel."""
+    console.print()
+    console.print(
+        Panel(
+            f"[green][+][/] Raw XML files saved to: [bold]{backup_dir}[/]",
+            title="[bold]XML BACKUP[/]",
+            border_style="dim",
+        )
+    )
+
+
+def print_audit_report_section(report_path: str):
+    """Print audit report section in a styled panel."""
+    console.print()
+    console.print(
+        Panel(
+            f"[green][+][/] Audit report generated: [bold]{report_path}[/]\n"
+            f"[dim][*] Open in a browser to view the report[/]",
+            title="[bold]AUDIT REPORT[/]",
+            border_style="cyan",
+        )
+    )
+
+
+def print_opengraph_section(json_path: str, uploaded: bool = False, node_count: int = 0, edge_count: int = 0):
+    """Print OpenGraph output section in a styled panel."""
+    console.print()
+
+    if uploaded:
+        content = (
+            f"[green][+][/] Generated {node_count} nodes, {edge_count} edges\n"
+            f"[green][+][/] Uploaded to BloodHound successfully\n"
+            f"[dim][*] JSON saved to: {json_path}[/]"
+        )
+        border_style = "green"
+    else:
+        content = f"[green][+][/] JSON saved to: [bold]{json_path}[/]"
+        border_style = "dim"
+
+    console.print(
+        Panel(
+            content,
+            title="[bold]BLOODHOUND OPENGRAPH[/]",
+            border_style=border_style,
+        )
+    )

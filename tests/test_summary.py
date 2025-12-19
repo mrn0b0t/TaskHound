@@ -93,14 +93,14 @@ class TestPrintSummaryTable:
         mock_table.assert_called_once()
 
     @patch("taskhound.output.summary.rich_summary_table")
-    def test_with_backup_dir(self, mock_table):
-        """Test that backup_dir is passed through."""
+    def test_with_has_tier0_detection(self, mock_table):
+        """Test that has_tier0_detection flag is passed through."""
         rows = [{"host": "DC01", "type": "TASK", "reason": ""}]
 
-        print_summary_table(rows, backup_dir="/tmp/backup")
+        print_summary_table(rows, has_tier0_detection=True)
         mock_table.assert_called_once()
         kwargs = mock_table.call_args[1]
-        assert kwargs["backup_dir"] == "/tmp/backup"
+        assert kwargs["has_hv_data"] is True
 
     @patch("taskhound.output.summary.rich_summary_table")
     def test_with_hv_data_flag(self, mock_table):

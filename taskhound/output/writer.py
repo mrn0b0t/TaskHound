@@ -312,10 +312,11 @@ def _write_host_tasks_file(path: str, host: str, rows: List[Dict], force_color: 
         f.write(buffer.getvalue())
 
 
-def write_json(path: str, rows: List[Any]):
+def write_json(path: str, rows: List[Any], silent: bool = False):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(_rows_to_dicts(rows), f, indent=2)
-    good(f"Wrote JSON results to {path}")
+    if not silent:
+        good(f"Wrote JSON results to {path}")
 
 
 def write_csv(path: str, rows: List[Any]):
