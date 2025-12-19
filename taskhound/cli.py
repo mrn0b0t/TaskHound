@@ -1,7 +1,7 @@
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .auth import AuthContext
 from .config import build_parser, validate_args
@@ -30,6 +30,225 @@ from .utils.date_parser import parse_timestamp
 from .utils.helpers import normalize_targets
 from .utils.logging import debug, good, info, set_verbosity, status, warn
 from .utils.network import verify_ldap_connection
+
+
+def _handle_opengraph(
+    args: Any,
+    all_rows: List[Dict],
+    opengraph_json_path: Optional[str],
+    opengraph_json_overwrites: bool,
+) -> None:
+    """Handle BloodHound OpenGraph generation and upload."""
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from .config_model import BloodHoundConfig
+
+    console = Console()
+    print()
+    console.print(Panel.fit(
+        "[bold]BloodHound OpenGraph Integration[/bold]",
+        border_style="blue",
+    ))
+
+    # Show JSON auto-generation messages (deferred from earlier)
+    if opengraph_json_path:
+        if opengraph_json_overwrites:
+            warn(f"OpenGraph will overwrite existing file: {opengraph_json_path}")
+        info(f"Auto-generating JSON for OpenGraph: {opengraph_json_path}")
+        info("To use a different path, specify --json <path>")
+
+    # Create consolidated config from args
+    bh_config = BloodHoundConfig.from_args_and_config(args)
+
+    # Build LDAP config for fallback resolution
+    ldap_domain = getattr(args, "ldap_domain", None) or args.domain
+    ldap_user = getattr(args, "ldap_user", None) or args.username
+    ldap_password = getattr(args, "ldap_password", None) or args.password
+
+    ldap_config = None
+    if ldap_domain and ldap_user and (ldap_password or args.hashes):
+        ldap_config = {
+            "domain": ldap_domain,
+            "dc_ip": args.dc_ip,
+            "username": ldap_user,
+            "password": ldap_password,
+            "hashes": args.hashes,
+            "kerberos": args.kerberos,
+        }
+        debug("LDAP fallback enabled for objectId resolution")
+    else:
+        info("LDAP fallback disabled - missing credentials")
+
+    # Query NetBIOS domain name for accurate cross-domain detection
+    from .utils.sid_resolver import get_netbios_cache
+
+    netbios_name = None
+    netbios_cache = get_netbios_cache()
+    our_fqdn = args.domain.upper() if args.domain else ""
+
+    # Find our NETBIOS name by reverse lookup in cache
+    for nb_name, fqdn in netbios_cache.items():
+        if fqdn == our_fqdn:
+            netbios_name = nb_name
+            debug(f"NetBIOS domain name (from cache): {netbios_name}")
+            break
+
+    # Fallback: derive from FQDN first part
+    if not netbios_name and args.domain:
+        netbios_name = args.domain.split(".")[0].upper()
+        debug(f"NetBIOS domain name (derived from FQDN): {netbios_name}")
+
+    # Extract computer SIDs from task rows
+    computer_sids = {}
+    for row in all_rows:
+        if hasattr(row, "host") and hasattr(row, "computer_sid") and row.host and row.computer_sid:
+            computer_sids[row.host.upper()] = row.computer_sid
+
+    # Create connector if credentials exist
+    bh_connector = None
+    if bh_config.has_credentials():
+        from .connectors.bloodhound import BloodHoundConnector
+        from .output.bloodhound import extract_host_from_connector
+
+        host = extract_host_from_connector(bh_config.bh_connector)
+        bh_connector = BloodHoundConnector(
+            bh_type=bh_config.bh_type or "bhce",
+            ip=host,
+            username=bh_config.bh_username,
+            password=bh_config.bh_password,
+            api_key=bh_config.bh_api_key,
+            api_key_id=bh_config.bh_api_key_id,
+        )
+
+    # Generate OpenGraph files
+    opengraph_file = generate_opengraph_files(
+        output_dir=bh_config.bh_output,
+        tasks=all_rows,
+        bh_connector=bh_connector,
+        ldap_config=ldap_config,
+        allow_orphans=getattr(args, "bh_allow_orphans", False),
+        computer_sids=computer_sids if computer_sids else None,
+        netbios_name=netbios_name,
+    )
+
+    # Upload to BloodHound if not disabled and we have credentials
+    _upload_opengraph(bh_config, opengraph_file)
+
+
+def _upload_opengraph(bh_config: Any, opengraph_file: Optional[str]) -> None:
+    """Upload OpenGraph data to BloodHound if configured."""
+    if bh_config.bh_no_upload:
+        info(f"OpenGraph file generated: {opengraph_file}")
+        info("Upload disabled with --bh-no-upload")
+        return
+
+    if not bh_config.has_credentials():
+        warn("No BloodHound credentials available - skipping upload")
+        warn("Configure credentials in taskhound.toml [bloodhound] section or use CLI flags")
+        return
+
+    if not opengraph_file:
+        warn("No OpenGraph file generated - skipping upload")
+        return
+
+    import json
+    try:
+        with open(opengraph_file) as f:
+            graph_data = json.load(f)
+        # bhopengraph exports with nested "graph" key
+        inner_graph = graph_data.get("graph", graph_data)
+        node_count = len(inner_graph.get("nodes", []))
+        edge_count = len(inner_graph.get("edges", []))
+
+        if node_count == 0 and edge_count == 0:
+            info("Skipping BloodHound upload - no data to upload (0 nodes, 0 edges)")
+            info(f"Empty OpenGraph file saved: {opengraph_file}")
+            return
+
+        print()
+        success = upload_opengraph_to_bloodhound(
+            opengraph_file=opengraph_file,
+            bloodhound_url=bh_config.bh_connector,
+            username=bh_config.bh_username,
+            password=bh_config.bh_password,
+            api_key=bh_config.bh_api_key,
+            api_key_id=bh_config.bh_api_key_id,
+            set_icon=True,
+            force_icon=bh_config.bh_force_icon,
+            icon_name=bh_config.bh_icon,
+            icon_color=bh_config.bh_color,
+        )
+
+        if not success:
+            warn("OpenGraph upload failed - files are still saved locally")
+            warn("You can upload manually via BloodHound UI")
+
+    except (OSError, json.JSONDecodeError) as e:
+        warn(f"Could not read OpenGraph file to check for data: {e}")
+        warn("Skipping upload - file may be corrupted")
+
+
+def _handle_exports(
+    args: Any,
+    all_rows: List[Dict],
+    hv_loaded: bool,
+    laps_cache: Optional[LAPSCache],
+    laps_successes: int,
+    laps_failures: List[LAPSFailure],
+) -> tuple:
+    """Handle all export formats and summary output.
+
+    Returns:
+        Tuple of (opengraph_json_path, opengraph_json_overwrites) for OpenGraph handling.
+    """
+    import os
+
+    # Track if we need to auto-generate JSON for OpenGraph
+    opengraph_json_path = None
+    opengraph_json_overwrites = False
+    if args.bh_opengraph and not args.json:
+        os.makedirs(args.bh_output, exist_ok=True)
+        opengraph_json_path = f"{args.bh_output}/taskhound_data.json"
+        opengraph_json_overwrites = os.path.exists(opengraph_json_path)
+        args.json = opengraph_json_path
+
+    # Write export files
+    if args.json:
+        write_json(args.json, all_rows)
+    if args.csv:
+        write_csv(args.csv, all_rows)
+
+    # Auto-enable plain output in concise mode (default) to ./output
+    is_concise = not (args.verbose or args.debug)
+    if args.plain:
+        write_rich_plain(args.plain, all_rows)
+    elif is_concise and all_rows:
+        write_rich_plain("./output", all_rows)
+
+    # Print decrypted credentials summary
+    print_decrypted_credentials(all_rows)
+
+    # Print summary table
+    if not args.no_summary:
+        backup_dir = args.backup if hasattr(args, "backup") and args.backup else None
+        has_tier0_detection = hv_loaded or args.ldap_tier0
+        print_summary_table(all_rows, backup_dir, has_tier0_detection)
+
+        if laps_cache is not None:
+            print_laps_summary(laps_cache, laps_successes, laps_failures)
+
+    # HTML report generation
+    if getattr(args, "html_report", None) or getattr(args, "audit_mode", False):
+        from .output.html_report import generate_html_report
+        report_path = getattr(args, "html_report", None) or "taskhound_audit_report.html"
+        if all_rows:
+            generate_html_report(all_rows, report_path)
+            info(f"Open {report_path} in a browser to view the audit report")
+        else:
+            warn("No tasks found - skipping HTML report generation")
+
+    return opengraph_json_path, opengraph_json_overwrites
 
 
 def main():
@@ -418,205 +637,11 @@ def main():
                     elif isinstance(laps_result, LAPSFailure):
                         laps_failures.append(laps_result)
 
-    # Exports
-    # Track if we need to auto-generate JSON for OpenGraph (defer messages until OpenGraph section)
-    opengraph_json_path = None
-    opengraph_json_overwrites = False
-    if args.bh_opengraph and not args.json:
-        # Create output directory if it doesn't exist
-        import os
-
-        os.makedirs(args.bh_output, exist_ok=True)
-
-        # Generate JSON path (messages will be shown in OpenGraph section)
-        opengraph_json_path = f"{args.bh_output}/taskhound_data.json"
-        opengraph_json_overwrites = os.path.exists(opengraph_json_path)
-        args.json = opengraph_json_path
-
-    if args.json:
-        write_json(args.json, all_rows)
-    if args.csv:
-        write_csv(args.csv, all_rows)
-
-    # Auto-enable plain output in concise mode (default) to ./output
-    # In verbose/debug mode, user sees details on screen so auto-output is optional
-    is_concise = not (args.verbose or args.debug)
-    if args.plain:
-        write_rich_plain(args.plain, all_rows)
-    elif is_concise and all_rows:
-        # Auto-write to ./output in concise mode
-        write_rich_plain("./output", all_rows)
-
-    # Print decrypted credentials summary (always shown when credentials found)
-    # This is printed BEFORE the summary table so high-value findings are visible
-    print_decrypted_credentials(all_rows)
-
-    # Print summary by default (unless disabled)
-    if not args.no_summary:
-        backup_dir = args.backup if hasattr(args, "backup") and args.backup else None
-        # Tier-0 detection is available if we have BloodHound data OR --ldap-tier0
-        has_tier0_detection = hv_loaded or args.ldap_tier0
-        print_summary_table(all_rows, backup_dir, has_tier0_detection)
-
-        # Print LAPS summary if LAPS was used
-        if laps_cache is not None:
-            print_laps_summary(laps_cache, laps_successes, laps_failures)
-
-    # Audit Mode: Generate HTML security report
-    # --html-report implies --audit-mode
-    if getattr(args, "html_report", None) or getattr(args, "audit_mode", False):
-        from .output.html_report import generate_html_report
-
-        # Determine output path
-        report_path = getattr(args, "html_report", None) or "taskhound_audit_report.html"
-
-        if all_rows:
-            generate_html_report(all_rows, report_path)
-            info(f"Open {report_path} in a browser to view the audit report")
-        else:
-            warn("No tasks found - skipping HTML report generation")
+    # Handle exports and summary
+    opengraph_json_path, opengraph_json_overwrites = _handle_exports(
+        args, all_rows, hv_loaded, laps_cache, laps_successes, laps_failures
+    )
 
     # BloodHound OpenGraph Integration
     if args.bh_opengraph:
-        from rich.console import Console
-        from rich.panel import Panel
-
-        from .config_model import BloodHoundConfig
-
-        console = Console()
-        print()
-        console.print(Panel.fit(
-            "[bold]BloodHound OpenGraph Integration[/bold]",
-            border_style="blue",
-        ))
-
-        # Show JSON auto-generation messages (deferred from earlier)
-        if opengraph_json_path:
-            if opengraph_json_overwrites:
-                warn(f"OpenGraph will overwrite existing file: {opengraph_json_path}")
-            info(f"Auto-generating JSON for OpenGraph: {opengraph_json_path}")
-            info("To use a different path, specify --json <path>")
-
-        # Create consolidated config from args
-        bh_config = BloodHoundConfig.from_args_and_config(args)
-
-        # Build LDAP config for fallback resolution
-        # Use dedicated LDAP credentials if provided, otherwise use main auth
-        ldap_domain = getattr(args, "ldap_domain", None) or args.domain
-        ldap_user = getattr(args, "ldap_user", None) or args.username
-        ldap_password = getattr(args, "ldap_password", None) or args.password
-
-        ldap_config = None
-        if ldap_domain and ldap_user and (ldap_password or args.hashes):
-            ldap_config = {
-                "domain": ldap_domain,
-                "dc_ip": args.dc_ip,
-                "username": ldap_user,
-                "password": ldap_password,
-                "hashes": args.hashes,
-                "kerberos": args.kerberos,
-            }
-            debug("LDAP fallback enabled for objectId resolution")
-        else:
-            info("LDAP fallback disabled - missing credentials")
-
-        # Query NetBIOS domain name for accurate cross-domain detection
-        # Use the shared NETBIOS cache (lazy-loaded from LDAP if needed)
-        netbios_name = None
-        from .utils.sid_resolver import get_netbios_cache
-
-        # First, try to get our own domain's NETBIOS from the cache
-        # The cache maps NETBIOS -> FQDN, so we need to reverse lookup
-        netbios_cache = get_netbios_cache()
-        our_fqdn = args.domain.upper() if args.domain else ""
-
-        # Find our NETBIOS name by reverse lookup in cache
-        for nb_name, fqdn in netbios_cache.items():
-            if fqdn == our_fqdn:
-                netbios_name = nb_name
-                debug(f"NetBIOS domain name (from cache): {netbios_name}")
-                break
-
-        # Fallback: if not in cache, derive from FQDN first part
-        if not netbios_name and args.domain:
-            netbios_name = args.domain.split(".")[0].upper()
-            debug(f"NetBIOS domain name (derived from FQDN): {netbios_name}")
-
-        # Extract computer SIDs from task rows for accurate BloodHound resolution
-        computer_sids = {}
-        for row in all_rows:
-            if hasattr(row, "host") and hasattr(row, "computer_sid") and row.host and row.computer_sid:
-                computer_sids[row.host.upper()] = row.computer_sid
-
-        # Create connector if credentials exist
-        bh_connector = None
-        if bh_config.has_credentials():
-            from .connectors.bloodhound import BloodHoundConnector
-            from .output.bloodhound import extract_host_from_connector
-
-            host = extract_host_from_connector(bh_config.bh_connector)
-            bh_connector = BloodHoundConnector(
-                bh_type=bh_config.bh_type or "bhce",
-                ip=host,
-                username=bh_config.bh_username,
-                password=bh_config.bh_password,
-                api_key=bh_config.bh_api_key,
-                api_key_id=bh_config.bh_api_key_id,
-            )
-
-        # Generate OpenGraph files with BloodHound API integration for objectId resolution
-        opengraph_file = generate_opengraph_files(
-            output_dir=bh_config.bh_output,
-            tasks=all_rows,
-            bh_connector=bh_connector,
-            ldap_config=ldap_config,
-            allow_orphans=getattr(args, "bh_allow_orphans", False),
-            computer_sids=computer_sids if computer_sids else None,
-            netbios_name=netbios_name,
-        )
-
-        # Upload to BloodHound if not disabled and we have credentials
-        if not bh_config.bh_no_upload:
-            if bh_config.has_credentials():
-                # Check if there's actually data to upload
-                if opengraph_file:
-                    import json
-                    try:
-                        with open(opengraph_file) as f:
-                            graph_data = json.load(f)
-                        # bhopengraph exports with nested "graph" key
-                        inner_graph = graph_data.get("graph", graph_data)
-                        node_count = len(inner_graph.get("nodes", []))
-                        edge_count = len(inner_graph.get("edges", []))
-                        if node_count == 0 and edge_count == 0:
-                            info("Skipping BloodHound upload - no data to upload (0 nodes, 0 edges)")
-                            info(f"Empty OpenGraph file saved: {opengraph_file}")
-                        else:
-                            print()
-                            success = upload_opengraph_to_bloodhound(
-                                opengraph_file=opengraph_file,
-                                bloodhound_url=bh_config.bh_connector,
-                                username=bh_config.bh_username,
-                                password=bh_config.bh_password,
-                                api_key=bh_config.bh_api_key,
-                                api_key_id=bh_config.bh_api_key_id,
-                                set_icon=True,  # Always set icon on upload
-                                force_icon=bh_config.bh_force_icon,
-                                icon_name=bh_config.bh_icon,
-                                icon_color=bh_config.bh_color,
-                            )
-
-                            if not success:
-                                warn("OpenGraph upload failed - files are still saved locally")
-                                warn("You can upload manually via BloodHound UI")
-                    except (OSError, json.JSONDecodeError) as e:
-                        warn(f"Could not read OpenGraph file to check for data: {e}")
-                        warn("Skipping upload - file may be corrupted")
-                else:
-                    warn("No OpenGraph file generated - skipping upload")
-            else:
-                warn("No BloodHound credentials available - skipping upload")
-                warn("Configure credentials in taskhound.toml [bloodhound] section or use CLI flags")
-        else:
-            info(f"OpenGraph file generated: {opengraph_file}")
-            info("Upload disabled with --bh-no-upload")
+        _handle_opengraph(args, all_rows, opengraph_json_path, opengraph_json_overwrites)
