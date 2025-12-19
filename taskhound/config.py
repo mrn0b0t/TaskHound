@@ -307,6 +307,8 @@ def load_config() -> Dict[str, Any]:
         defaults["ldap_domain"] = ldap["domain"]
     if "tier0" in ldap:
         defaults["ldap_tier0"] = ldap["tier0"]
+    if "gc_server" in ldap:
+        defaults["gc_server"] = ldap["gc_server"]
 
     # Output
     output = config_data.get("output", {})

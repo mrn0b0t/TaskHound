@@ -84,6 +84,7 @@ color = "#8B5CF6"
 # hashes = "LM:NT"
 # domain = "domain.local"
 # tier0 = false  # Enable LDAP-based Tier-0 detection via group membership queries
+# gc_server = "10.0.0.1"  # Global Catalog server IP for foreign domain SID resolution (auto-discovers if not set)
 
 [dpapi]
 # DPAPI credential decryption settings
