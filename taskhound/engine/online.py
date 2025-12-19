@@ -170,6 +170,7 @@ def process_target(
     ldap_user = auth.ldap_user
     ldap_password = auth.ldap_password
     ldap_hashes = auth.ldap_hashes
+    gc_server = auth.gc_server
 
     out_lines: List[str] = []
     laps_result: Optional[Union[bool, LAPSFailure]] = None
@@ -769,7 +770,8 @@ def process_target(
                 local_domain_prefix = get_domain_sid_prefix(server_sid) if server_sid else None
 
                 # Get known domain SID prefixes for unknown domain detection
-                known_prefixes = set(hv.hv_domain_sids.keys()) if hv and hasattr(hv, 'hv_domain_sids') and hv.hv_domain_sids else None
+                # Pass full dict (prefix -> FQDN) for trust-aware display
+                known_prefixes = hv.hv_domain_sids if hv and hasattr(hv, 'hv_domain_sids') and hv.hv_domain_sids else None
 
                 _, row.resolved_runas = format_runas_with_sid_resolution(
                     runas,
@@ -789,6 +791,7 @@ def process_target(
                     ldap_hashes=ldap_hashes,
                     local_domain_sid_prefix=local_domain_prefix,
                     known_domain_prefixes=known_prefixes,
+                    gc_server=gc_server,
                 )
 
         # Enrich row with decrypted password if available from DPAPI loot

@@ -7,8 +7,9 @@
 import re
 import socket
 import struct
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from impacket.ldap import ldapasn1 as ldapasn1_impacket
 
@@ -16,6 +17,90 @@ from ..parsers.highvalue import HighValueLoader
 from ..utils.cache_manager import get_cache
 from ..utils.ldap import LDAPConnectionError, get_ldap_connection
 from ..utils.logging import debug, info, status, warn
+
+# Trust attribute flags from Active Directory
+# Reference: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/e9a2d23c-c31e-4a6f-88a0-6646c877eb42
+TRUST_ATTRIBUTE_NON_TRANSITIVE = 0x1
+TRUST_ATTRIBUTE_UPLEVEL_ONLY = 0x2
+TRUST_ATTRIBUTE_QUARANTINED_DOMAIN = 0x4  # SID filtering enabled
+TRUST_ATTRIBUTE_FOREST_TRANSITIVE = 0x8  # Cross-forest trust
+TRUST_ATTRIBUTE_CROSS_ORGANIZATION = 0x10
+TRUST_ATTRIBUTE_WITHIN_FOREST = 0x20  # Intra-forest trust (parent-child, tree-root)
+TRUST_ATTRIBUTE_TREAT_AS_EXTERNAL = 0x40
+TRUST_ATTRIBUTE_USES_RC4_ENCRYPTION = 0x80
+
+
+@dataclass
+class TrustInfo:
+    """
+    Information about a trusted domain for SID resolution.
+
+    Used to determine whether GC lookup is viable (intra-forest) or
+    we should use trust FQDN directly (external/cross-forest).
+    """
+    fqdn: str  # Fully qualified domain name (e.g., "TRUSTEDFOREST.LOCAL")
+    is_intra_forest: bool  # True if trust is within the same forest (GC will work)
+    trust_attributes: int = 0  # Raw trustAttributes value from AD
+
+    def __str__(self) -> str:
+        trust_type = "intra-forest" if self.is_intra_forest else "external"
+        return f"{self.fqdn} ({trust_type})"
+
+
+# Type alias for backwards compatibility - can be either simple str or TrustInfo
+TrustData = Union[str, TrustInfo]
+
+
+# Track domain prefixes known to be external trusts (different forest)
+# GC lookups are useless for these - they're not in the same forest
+# This is populated at runtime when GC lookups fail for foreign SIDs
+_external_trust_prefixes: Set[str] = set()
+
+# Cached Global Catalog server discovered via DNS
+# This is populated on first GC lookup attempt to avoid repeated DNS queries
+_discovered_gc_server: Optional[str] = None
+_gc_discovery_attempted: bool = False
+
+
+def get_discovered_gc_server(domain: str) -> Optional[str]:
+    """
+    Get a Global Catalog server for the domain, discovering via DNS if needed.
+
+    Results are cached module-wide to avoid repeated DNS lookups.
+    Call this during warmup/init or on first GC lookup attempt.
+
+    Args:
+        domain: Forest root domain name (e.g., "corp.local")
+
+    Returns:
+        GC server hostname/IP if discovered, None otherwise
+    """
+    global _discovered_gc_server, _gc_discovery_attempted
+
+    # Return cached result if we've already attempted discovery
+    if _gc_discovery_attempted:
+        return _discovered_gc_server
+
+    _gc_discovery_attempted = True
+
+    if not domain or "." not in domain:
+        debug(f"Invalid domain '{domain}' for GC discovery")
+        return None
+
+    try:
+        from ..utils.dns import discover_global_catalog_servers
+
+        gc_servers = discover_global_catalog_servers(domain)
+        if gc_servers:
+            _discovered_gc_server = gc_servers[0]  # Use first (highest priority)
+            debug(f"Cached discovered GC server: {_discovered_gc_server}")
+            return _discovered_gc_server
+        else:
+            debug(f"No GC servers discovered via DNS for domain {domain}")
+    except Exception as e:
+        debug(f"GC discovery failed: {e}")
+
+    return None
 
 
 def resolve_sid_via_smb(sid: str, smb_connection) -> Optional[str]:
@@ -166,8 +251,69 @@ WELL_KNOWN_LOCAL_RIDS = {
     # Local user RIDs start at 1000+
 }
 
+# Well-known SIDs that can be resolved instantly without any network calls
+# Chain 0 in the Multi-Chain SID Resolution architecture
+# Reference: https://learn.microsoft.com/en-us/windows/win32/secauthz/well-known-sids
+WELL_KNOWN_SIDS = {
+    # NT AUTHORITY
+    "S-1-5-18": "NT AUTHORITY\\SYSTEM",
+    "S-1-5-19": "NT AUTHORITY\\LOCAL SERVICE",
+    "S-1-5-20": "NT AUTHORITY\\NETWORK SERVICE",
+    # BUILTIN domain (S-1-5-32-*)
+    "S-1-5-32-544": "BUILTIN\\Administrators",
+    "S-1-5-32-545": "BUILTIN\\Users",
+    "S-1-5-32-546": "BUILTIN\\Guests",
+    "S-1-5-32-547": "BUILTIN\\Power Users",
+    "S-1-5-32-548": "BUILTIN\\Account Operators",
+    "S-1-5-32-549": "BUILTIN\\Server Operators",
+    "S-1-5-32-550": "BUILTIN\\Print Operators",
+    "S-1-5-32-551": "BUILTIN\\Backup Operators",
+    "S-1-5-32-552": "BUILTIN\\Replicators",
+    "S-1-5-32-554": "BUILTIN\\Pre-Windows 2000 Compatible Access",
+    "S-1-5-32-555": "BUILTIN\\Remote Desktop Users",
+    "S-1-5-32-556": "BUILTIN\\Network Configuration Operators",
+    "S-1-5-32-557": "BUILTIN\\Incoming Forest Trust Builders",
+    "S-1-5-32-558": "BUILTIN\\Performance Monitor Users",
+    "S-1-5-32-559": "BUILTIN\\Performance Log Users",
+    "S-1-5-32-560": "BUILTIN\\Windows Authorization Access Group",
+    "S-1-5-32-561": "BUILTIN\\Terminal Server License Servers",
+    "S-1-5-32-562": "BUILTIN\\Distributed COM Users",
+    "S-1-5-32-568": "BUILTIN\\IIS_IUSRS",
+    "S-1-5-32-569": "BUILTIN\\Cryptographic Operators",
+    "S-1-5-32-573": "BUILTIN\\Event Log Readers",
+    "S-1-5-32-574": "BUILTIN\\Certificate Service DCOM Access",
+    "S-1-5-32-575": "BUILTIN\\RDS Remote Access Servers",
+    "S-1-5-32-576": "BUILTIN\\RDS Endpoint Servers",
+    "S-1-5-32-577": "BUILTIN\\RDS Management Servers",
+    "S-1-5-32-578": "BUILTIN\\Hyper-V Administrators",
+    "S-1-5-32-579": "BUILTIN\\Access Control Assistance Operators",
+    "S-1-5-32-580": "BUILTIN\\Remote Management Users",
+    # Other well-known
+    "S-1-5-6": "NT AUTHORITY\\SERVICE",
+    "S-1-5-7": "NT AUTHORITY\\ANONYMOUS LOGON",
+    "S-1-5-9": "NT AUTHORITY\\ENTERPRISE DOMAIN CONTROLLERS",
+    "S-1-5-10": "NT AUTHORITY\\SELF",
+    "S-1-5-11": "NT AUTHORITY\\Authenticated Users",
+    "S-1-5-12": "NT AUTHORITY\\RESTRICTED",
+    "S-1-5-13": "NT AUTHORITY\\TERMINAL SERVER USER",
+    "S-1-5-14": "NT AUTHORITY\\REMOTE INTERACTIVE LOGON",
+    "S-1-5-15": "NT AUTHORITY\\This Organization",
+    "S-1-5-17": "NT AUTHORITY\\IUSR",
+    # NULL SID and Everyone
+    "S-1-0-0": "NULL SID",
+    "S-1-1-0": "Everyone",
+    "S-1-2-0": "LOCAL",
+    "S-1-2-1": "CONSOLE LOGON",
+    "S-1-3-0": "CREATOR OWNER",
+    "S-1-3-1": "CREATOR GROUP",
+    "S-1-3-4": "OWNER RIGHTS",
+    # Service SIDs (common services)
+    "S-1-5-80-0": "NT SERVICE\\ALL SERVICES",
+    "S-1-5-83-0": "NT VIRTUAL MACHINE\\Virtual Machines",
+}
 
-def is_unknown_domain_sid(sid: str, known_domain_prefixes: set) -> bool:
+
+def is_unknown_domain_sid(sid: str, known_domain_prefixes: Dict[str, TrustData]) -> bool:
     """
     Check if a SID is from an unknown domain (not in our known set).
 
@@ -176,8 +322,8 @@ def is_unknown_domain_sid(sid: str, known_domain_prefixes: set) -> bool:
     as "UNKNOWN\\<name>" based on well-known RIDs.
 
     Args:
-        sid: SID to check (e.g., "S-1-5-21-1406697320-...-500")
-        known_domain_prefixes: Set of known domain SID prefixes
+        sid: SID to check (e.g., "S-1-5-21-XXXXXXXXXX-...-500")
+        known_domain_prefixes: Dict mapping domain SID prefixes to TrustInfo or FQDN strings
 
     Returns:
         True if SID is from an unknown domain (not in known_domain_prefixes)
@@ -192,6 +338,22 @@ def is_unknown_domain_sid(sid: str, known_domain_prefixes: set) -> bool:
     return sid_prefix not in known_domain_prefixes
 
 
+def get_trust_fqdn(trust_data: TrustData) -> str:
+    """Extract FQDN from TrustInfo or string."""
+    if isinstance(trust_data, TrustInfo):
+        return trust_data.fqdn
+    return trust_data  # Already a string (backwards compatibility)
+
+
+def is_external_trust(trust_data: TrustData) -> bool:
+    """Check if trust is external (cross-forest) vs intra-forest."""
+    if isinstance(trust_data, TrustInfo):
+        return not trust_data.is_intra_forest
+    # String format (backwards compatibility) - assume external to be safe
+    # GC lookup will succeed if it's actually intra-forest
+    return False
+
+
 def resolve_unknown_sid_to_local_name(sid: str) -> Optional[str]:
     """
     Attempt to resolve an unknown domain SID to a local account name.
@@ -200,7 +362,7 @@ def resolve_unknown_sid_to_local_name(sid: str) -> Optional[str]:
     infer the account name from well-known RIDs like 500 (Administrator).
 
     Args:
-        sid: SID to resolve (e.g., "S-1-5-21-1406697320-...-500")
+        sid: SID to resolve (e.g., "S-1-5-21-XXXXXXXXXX-...-500")
 
     Returns:
         "UNKNOWN\\<name>" if RID is well-known, None otherwise
@@ -221,10 +383,53 @@ def resolve_unknown_sid_to_local_name(sid: str) -> Optional[str]:
             name = WELL_KNOWN_LOCAL_RIDS[rid]
             return f"UNKNOWN\\{name}"
 
-        # For unknown RIDs, just show the RID number
-        # RIDs >= 1000 are typically local user accounts
+        # For unknown RIDs >= 1000, these are typically custom local user accounts
+        # We can't know the actual name, so just show the RID number as a fallback
         if rid >= 1000:
             return f"UNKNOWN\\User-{rid}"
+
+        return None
+
+    except (ValueError, IndexError):
+        return None
+
+
+def resolve_trust_sid_to_name(sid: str, trust_fqdn: str) -> Optional[str]:
+    """
+    Resolve a SID from a known trust domain to a displayable name.
+
+    For SIDs from cross-forest trusts where GC lookup isn't possible,
+    we use the known trust FQDN to create a UPN-style display for
+    well-known RIDs (like Administrator), or show the FQDN + SID for
+    unknown accounts.
+
+    Args:
+        sid: SID to resolve (e.g., "S-1-5-21-111111111-222222222-333333333-500")
+        trust_fqdn: The FQDN of the trusted domain (e.g., "TRUSTEDFOREST.LOCAL")
+
+    Returns:
+        For well-known RIDs: "Administrator@TRUSTEDFOREST.LOCAL"
+        For unknown RIDs: "TRUSTEDFOREST.LOCAL\\User-1234" or None if unparseable
+    """
+    if not sid or not sid.startswith("S-1-5-21-") or not trust_fqdn:
+        return None
+
+    try:
+        # Extract RID (last component)
+        parts = sid.split("-")
+        if len(parts) < 8:
+            return None
+
+        rid = int(parts[-1])
+
+        # Check if it's a well-known RID - use UPN format
+        if rid in WELL_KNOWN_LOCAL_RIDS:
+            name = WELL_KNOWN_LOCAL_RIDS[rid]
+            return f"{name}@{trust_fqdn}"
+
+        # For unknown RIDs >= 1000, show domain with user indicator
+        if rid >= 1000:
+            return f"{trust_fqdn}\\User-{rid}"
 
         return None
 
@@ -239,12 +444,12 @@ def fetch_known_domain_sids_via_ldap(
     password: Optional[str] = None,
     hashes: Optional[str] = None,
     kerberos: bool = False,
-) -> Dict[str, str]:
+) -> Dict[str, TrustInfo]:
     """
     Fetch known domain SID prefixes from LDAP (own domain + trusts).
 
-    Queries the domain's own SID and all trusted domain SIDs via LDAP.
-    This is used as a fallback when BloodHound is not available.
+    Queries the domain's own SID and all trusted domain SIDs via LDAP,
+    including trust attributes to determine if GC lookup is viable.
 
     Args:
         domain: Domain name (e.g., "corp.local")
@@ -255,9 +460,9 @@ def fetch_known_domain_sids_via_ldap(
         kerberos: Use Kerberos authentication
 
     Returns:
-        Dict mapping domain SID prefix -> domain name
+        Dict mapping domain SID prefix -> TrustInfo (with FQDN and trust type)
     """
-    result: Dict[str, str] = {}
+    result: Dict[str, TrustInfo] = {}
 
     # Validate domain
     if not domain or "." not in domain:
@@ -283,6 +488,7 @@ def fetch_known_domain_sids_via_ldap(
         base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
 
         # Query 1: Get own domain's SID from the domain object
+        # Own domain is always intra-forest (it's our forest!)
         domain_filter = "(objectClass=domain)"
         try:
             search_results = conn.search(
@@ -301,18 +507,23 @@ def fetch_known_domain_sids_via_ldap(
                                 binary_sid = bytes(attribute["vals"][0])
                                 sid_str = binary_to_sid(binary_sid)
                                 if sid_str:
-                                    result[sid_str] = domain.upper()
-                                    debug(f"Own domain SID: {sid_str} -> {domain}")
+                                    # Own domain is always intra-forest
+                                    result[sid_str] = TrustInfo(
+                                        fqdn=domain.upper(),
+                                        is_intra_forest=True,
+                                        trust_attributes=0,
+                                    )
+                                    debug(f"Own domain SID: {sid_str} -> {domain} (intra-forest)")
         except Exception as e:
             debug(f"Error querying own domain SID: {e}")
 
-        # Query 2: Get trusted domain SIDs
+        # Query 2: Get trusted domain SIDs with trustAttributes
         trust_filter = "(objectClass=trustedDomain)"
         try:
             search_results = conn.search(
                 searchBase=f"CN=System,{base_dn}",
                 searchFilter=trust_filter,
-                attributes=["securityIdentifier", "trustPartner", "name"],
+                attributes=["securityIdentifier", "trustPartner", "name", "trustAttributes"],
                 searchControls=None,
             )
 
@@ -321,6 +532,7 @@ def fetch_known_domain_sids_via_ldap(
                     if isinstance(entry, ldapasn1_impacket.SearchResultEntry):
                         trust_name = None
                         trust_sid = None
+                        trust_attrs = 0
 
                         for attribute in entry["attributes"]:
                             attr_name = str(attribute["type"])
@@ -329,16 +541,31 @@ def fetch_known_domain_sids_via_ldap(
                                 trust_sid = binary_to_sid(binary_sid)
                             elif attr_name.lower() in ("trustpartner", "name"):
                                 trust_name = str(attribute["vals"][0])
+                            elif attr_name.lower() == "trustattributes":
+                                try:
+                                    trust_attrs = int(attribute["vals"][0])
+                                except (ValueError, TypeError):
+                                    trust_attrs = 0
 
                         if trust_sid and trust_name:
-                            result[trust_sid] = trust_name.upper()
-                            debug(f"Trust SID: {trust_sid} -> {trust_name}")
+                            # Determine if intra-forest based on trustAttributes
+                            # TRUST_ATTRIBUTE_WITHIN_FOREST (0x20) = parent-child or tree-root trust
+                            is_intra = bool(trust_attrs & TRUST_ATTRIBUTE_WITHIN_FOREST)
+                            trust_type = "intra-forest" if is_intra else "external"
+                            result[trust_sid] = TrustInfo(
+                                fqdn=trust_name.upper(),
+                                is_intra_forest=is_intra,
+                                trust_attributes=trust_attrs,
+                            )
+                            debug(f"Trust SID: {trust_sid} -> {trust_name} ({trust_type}, attrs=0x{trust_attrs:x})")
 
         except Exception as e:
             debug(f"Error querying trust SIDs: {e}")
 
         if result:
-            info(f"Loaded {len(result)} domain SID prefixes via LDAP")
+            intra_count = sum(1 for t in result.values() if t.is_intra_forest)
+            external_count = len(result) - intra_count
+            info(f"Loaded {len(result)} domain SID prefixes via LDAP ({intra_count} intra-forest, {external_count} external)")
 
     except LDAPConnectionError as e:
         debug(f"LDAP connection failed for domain SID query: {e}")
@@ -608,6 +835,143 @@ def resolve_sid_via_ldap(
 
     except Exception as e:
         warn(f"Unexpected error during LDAP SID resolution: {e}")
+        debug(f"Full traceback: {e}", exc_info=True)
+        return None
+
+
+def resolve_sid_via_global_catalog(
+    sid: str,
+    domain: str,
+    gc_server: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+    aes_key: Optional[str] = None,
+    nameserver: Optional[str] = None,
+    use_tcp: bool = False,
+) -> Optional[str]:
+    """
+    Resolve a SID from a foreign domain within the same AD forest via Global Catalog.
+
+    Global Catalog (ports 3268/3269) contains a partial replica of ALL objects in the
+    forest. Use this for resolving SIDs from other domains in the same forest where
+    local LDAP (port 389) cannot find them.
+
+    Chain 2 in the Multi-Chain SID Resolution architecture:
+    - Skips: LSARPC (STATUS_NONE_MAPPED for foreign SIDs)
+    - Skips: Local LDAP (wrong partition - foreign SIDs aren't there)
+    - Uses: Global Catalog (forest-wide partial replica)
+
+    Args:
+        sid: The Windows SID to resolve
+        domain: Forest root domain name (for GC discovery)
+        gc_server: Global Catalog server IP (optional, auto-discovers if not provided)
+        username: Authentication username
+        password: Authentication password
+        hashes: NTLM hashes (format: lm:nt or just nt)
+        kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos
+        nameserver: DNS server for GC discovery
+        use_tcp: Force DNS over TCP (for SOCKS proxies)
+
+    Returns:
+        The resolved username (sAMAccountName), None if resolution fails
+    """
+    from ..utils.ldap import LDAPConnectionError, get_global_catalog_connection
+
+    try:
+        debug(f"Attempting Global Catalog resolution for foreign SID: {sid}")
+
+        if not username or not (password or hashes or kerberos):
+            debug("No valid credentials provided for GC SID resolution")
+            return None
+
+        if not domain or "." not in domain:
+            debug(f"Invalid domain '{domain}' for GC SID resolution")
+            return None
+
+        # Convert SID to binary format for LDAP search
+        binary_sid = sid_to_binary(sid)
+        if not binary_sid:
+            warn(f"Could not convert SID {sid} to binary format for GC lookup")
+            return None
+
+        # Get Global Catalog connection
+        try:
+            gc_conn = get_global_catalog_connection(
+                gc_server=gc_server,
+                domain=domain,
+                username=username,
+                password=password,
+                hashes=hashes,
+                kerberos=kerberos,
+                aes_key=aes_key,
+                nameserver=nameserver,
+                use_tcp=use_tcp,
+            )
+        except LDAPConnectionError as e:
+            debug(f"Failed to connect to Global Catalog: {e}")
+            return None
+
+        # Global Catalog searches use empty base DN for forest-wide search
+        # or the forest root DN (we'll use forest root for consistency)
+        base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
+        debug(f"Using GC search base: {base_dn}")
+
+        # Create search filter using binary SID
+        binary_sid_escaped = "".join([f"\\{b:02x}" for b in binary_sid])
+        search_filter = f"(objectSid={binary_sid_escaped})"
+        debug(f"GC search filter: {search_filter}")
+
+        # Perform the search
+        # GC partial replica includes sAMAccountName and objectSid
+        try:
+            search_results = gc_conn.search(
+                searchBase=base_dn,
+                searchFilter=search_filter,
+                attributes=["sAMAccountName", "name", "displayName"],
+                searchControls=None,
+            )
+
+            if search_results:
+                for entry in search_results:
+                    if isinstance(entry, ldapasn1_impacket.SearchResultEntry):
+                        attributes = {}
+                        for attribute in entry["attributes"]:
+                            attr_name = str(attribute["type"])
+                            attr_vals = [str(val) for val in attribute["vals"]]
+                            attributes[attr_name] = attr_vals[0] if len(attr_vals) == 1 else attr_vals
+
+                        sam_account_name = attributes.get("sAMAccountName")
+                        display_name = attributes.get("displayName")
+                        name = attributes.get("name")
+
+                        username_resolved = sam_account_name or display_name or name
+
+                        if username_resolved:
+                            # Sanity check: ensure we didn't somehow get the SID back as the "name"
+                            resolved_str = username_resolved.strip()
+                            if resolved_str.startswith("S-1-") or resolved_str == sid:
+                                debug(f"GC returned SID as name attribute for {sid} - treating as not found. Raw attributes: {attributes}")
+                            else:
+                                info(f"Resolved foreign SID {sid} to {resolved_str} via Global Catalog")
+                                return resolved_str
+                        else:
+                            # GC found the object but no name attributes - this shouldn't happen
+                            # for normal user/computer objects. Log all attributes for debugging.
+                            debug(f"GC entry for SID {sid} has no sAMAccountName/displayName/name. Raw attributes: {attributes}")
+            else:
+                debug(f"No GC entries found for SID {sid}")
+
+        except Exception as e:
+            warn(f"GC search error during SID resolution: {e}")
+            return None
+
+        return None
+
+    except Exception as e:
+        warn(f"Unexpected error during GC SID resolution: {e}")
         debug(f"Full traceback: {e}", exc_info=True)
         return None
 
@@ -1118,7 +1482,8 @@ def resolve_sid(
     ldap_password: Optional[str] = None,
     ldap_hashes: Optional[str] = None,
     local_domain_sid_prefix: Optional[str] = None,
-    known_domain_prefixes: Optional[set] = None,
+    known_domain_prefixes: Optional[Dict[str, TrustData]] = None,
+    gc_server: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Comprehensive SID resolution with 4-tier fallback chain.
@@ -1132,6 +1497,10 @@ def resolve_sid(
 
     For unknown domain SIDs (not matching any known domain prefix), falls back to
     UNKNOWN\\<name> based on well-known RIDs (e.g., 500 -> UNKNOWN\\Administrator).
+
+    For foreign domain SIDs from known trusts:
+    - Intra-forest trusts: Try GC lookup (GC contains all forest objects)
+    - External trusts: Use trust FQDN directly (GC won't have these)
 
     Args:
         sid: Windows SID to resolve
@@ -1150,7 +1519,8 @@ def resolve_sid(
         ldap_password: Separate LDAP password (for local admin case - plaintext only)
         ldap_hashes: Separate LDAP NTLM hashes (for local admin case - use instead of ldap_password)
         local_domain_sid_prefix: Known local domain SID prefix for foreign domain detection
-        known_domain_prefixes: Set of all known domain SID prefixes (own + trusts)
+        known_domain_prefixes: Dict mapping SID prefixes to TrustInfo (with trust type) or FQDN strings
+        gc_server: Global Catalog server IP (optional, auto-discovers if not provided)
 
     Returns:
         Tuple of (display_name, resolved_username)
@@ -1160,6 +1530,13 @@ def resolve_sid(
     if not is_sid(sid):
         # Not a SID, return as-is
         return sid, None
+
+    # Chain 0: Well-known SIDs - instant static lookup (no network, no cache needed)
+    # This handles S-1-5-18 (SYSTEM), S-1-5-32-* (BUILTIN), etc.
+    if sid in WELL_KNOWN_SIDS:
+        resolved = WELL_KNOWN_SIDS[sid]
+        debug(f"SID {sid} resolved via well-known SID table: {resolved}")
+        return f"{resolved} ({sid})", resolved
 
     # Check cache first
     cache = get_cache()
@@ -1202,8 +1579,56 @@ def resolve_sid(
     # Check for foreign domain SID before attempting LSARPC
     # Foreign SIDs cannot be resolved via local domain's LSARPC (returns STATUS_NONE_MAPPED)
     is_foreign = is_foreign_domain_sid(sid, local_domain_sid_prefix)
+    sid_prefix = get_domain_sid_prefix(sid) if is_foreign else None
+    trust_data = known_domain_prefixes.get(sid_prefix) if (sid_prefix and known_domain_prefixes) else None
+
     if is_foreign:
         debug(f"SID {sid} is from foreign domain (prefix mismatch with {local_domain_sid_prefix}), skipping LSARPC")
+
+        # Check if this is a KNOWN trust
+        if trust_data:
+            trust_fqdn = get_trust_fqdn(trust_data)
+            is_external = is_external_trust(trust_data)
+
+            if is_external:
+                # EXTERNAL TRUST: GC won't have these objects - use trust FQDN directly
+                debug(f"SID {sid} is from EXTERNAL trust {trust_fqdn} - skipping GC (different forest)")
+                trust_name = resolve_trust_sid_to_name(sid, trust_fqdn)
+                if trust_name:
+                    debug(f"SID {sid} resolved via external trust to {trust_fqdn}: {trust_name}")
+                    _cache_success(trust_name)
+                    info(f"[CROSS-TRUST] SID from {trust_fqdn} - for full resolution, collect BloodHound data from trusted domain")
+                    return f"[CROSS-TRUST] {trust_name} ({sid})", trust_name
+                else:
+                    # Trust FQDN known but couldn't resolve name - show domain context
+                    debug(f"SID {sid} from external trust {trust_fqdn} - RID not well-known, showing domain context")
+                    display_name = f"{trust_fqdn}\\SID-{sid.split('-')[-1]}"
+                    _cache_success(display_name)
+                    info(f"[CROSS-TRUST] Unknown account from {trust_fqdn} - collect BloodHound data from trusted domain for full resolution")
+                    return f"[CROSS-TRUST] {display_name} ({sid})", display_name
+            else:
+                # INTRA-FOREST TRUST: GC should have these - continue to GC lookup below
+                debug(f"SID {sid} is from INTRA-FOREST trust {trust_fqdn} - will try GC lookup")
+
+        # Check if this domain prefix is cached as external trust (failed GC lookup previously)
+        elif sid_prefix and sid_prefix in _external_trust_prefixes:
+            debug(f"Skipping GC lookup for SID {sid} - domain prefix {sid_prefix} cached as external trust")
+            return f"{sid} (SID - external trust, unknown domain)", None
+
+        # UNKNOWN foreign domain - not in BloodHound trust data
+        # If there was a real trust, BloodHound would have it. This is likely a local machine SID.
+        # Skip GC entirely to avoid timeouts - resolve to UNKNOWN\<name> or just the SID
+        elif sid_prefix and known_domain_prefixes:
+            debug(f"SID {sid} is from UNKNOWN domain (prefix {sid_prefix} not in BloodHound) - likely local machine SID, skipping GC")
+            local_name = resolve_unknown_sid_to_local_name(sid)
+            if local_name:
+                debug(f"SID {sid} resolved to {local_name} (unknown domain, likely local machine account)")
+                _cache_success(local_name)
+                return f"{local_name} ({sid})", local_name
+            else:
+                # Unknown RID from unknown domain - just return the SID
+                debug(f"SID {sid} from unknown domain - cannot resolve (likely local machine account)")
+                return f"{sid} (SID - unknown domain, likely local)", None
 
     # Tier 3: Try SMB/LSARPC if connection available (skip for foreign domain SIDs)
     # This is very useful when using Kerberos CIFS tickets where LDAP auth might fail
@@ -1225,15 +1650,60 @@ def resolve_sid(
     # This prevents using wrong service ticket (CIFS vs LDAP)
     use_kerberos_for_ldap = kerberos and not (ldap_password or ldap_hashes)
 
+    # For foreign domain SIDs, skip local LDAP (it won't have them) and go straight to GC
     if not no_ldap and ldap_auth_domain and ldap_auth_user:
-        debug(f"Attempting LDAP resolution for SID {sid}")
-        resolved = resolve_sid_via_ldap(
-            sid, ldap_auth_domain, dc_ip, ldap_auth_user, ldap_auth_password, ldap_auth_hashes, use_kerberos_for_ldap
-        )
-        if resolved:
-            debug(f"SID {sid} resolved via LDAP: {resolved}")
-            _cache_success(resolved)
-            return f"{resolved} ({sid})", resolved
+        if not is_foreign:
+            # Local domain SID - try local LDAP (port 389/636)
+            debug(f"Attempting LDAP resolution for SID {sid}")
+            resolved = resolve_sid_via_ldap(
+                sid, ldap_auth_domain, dc_ip, ldap_auth_user, ldap_auth_password, ldap_auth_hashes, use_kerberos_for_ldap
+            )
+            if resolved:
+                debug(f"SID {sid} resolved via LDAP: {resolved}")
+                _cache_success(resolved)
+                return f"{resolved} ({sid})", resolved
+        else:
+            # Chain 2: Foreign domain SID - try Global Catalog
+            # External trusts are already handled above (they skip GC)
+            # If we get here, it's either an intra-forest trust or unknown foreign domain
+            debug(f"Attempting Global Catalog resolution for foreign SID {sid}")
+            # Use explicit gc_server if provided, otherwise discover via DNS
+            # Do NOT assume DC is also a GC - that's unreliable
+            effective_gc_server = gc_server
+            if not effective_gc_server:
+                effective_gc_server = get_discovered_gc_server(ldap_auth_domain)
+            resolved = resolve_sid_via_global_catalog(
+                sid=sid,
+                domain=ldap_auth_domain,
+                gc_server=effective_gc_server,  # Explicit GC or DNS-discovered, None triggers auto-discovery
+                username=ldap_auth_user,
+                password=ldap_auth_password,
+                hashes=ldap_auth_hashes,
+                kerberos=use_kerberos_for_ldap,
+            )
+            if resolved:
+                debug(f"SID {sid} resolved via Global Catalog: {resolved}")
+                _cache_success(resolved)
+                return f"{resolved} ({sid})", resolved
+            else:
+                # GC lookup failed
+                # If this was a known intra-forest trust, something is wrong (GC should have it)
+                # If unknown foreign domain, cache as external trust
+                if trust_data and not is_external_trust(trust_data):
+                    # Intra-forest trust but GC failed - unusual, maybe connectivity issue
+                    trust_fqdn = get_trust_fqdn(trust_data)
+                    debug(f"GC lookup failed for INTRA-FOREST trust SID {sid} from {trust_fqdn} - unexpected")
+                    # Fall back to trust FQDN display
+                    trust_name = resolve_trust_sid_to_name(sid, trust_fqdn)
+                    if trust_name:
+                        _cache_success(trust_name)
+                        return f"{trust_name} ({sid})", trust_name
+                elif sid_prefix:
+                    # Unknown foreign domain - cache as external trust for future lookups
+                    _external_trust_prefixes.add(sid_prefix)
+                    debug(f"GC lookup failed for foreign SID {sid} - caching domain prefix {sid_prefix} as external trust")
+                else:
+                    debug(f"GC lookup failed for foreign SID {sid} - may be external trust (different forest)")
 
     # Check if this is an unknown domain SID (not matching any known domain)
     # This is likely a local machine account that cannot be resolved via DC
@@ -1245,7 +1715,15 @@ def resolve_sid(
             # Try to resolve to UNKNOWN\<name> based on well-known RIDs
             local_name = resolve_unknown_sid_to_local_name(sid)
             if local_name:
-                debug(f"SID {sid} resolved to {local_name} (unknown domain, well-known RID)")
+                # Determine if this is a well-known RID or a fallback
+                try:
+                    rid = int(sid.split("-")[-1])
+                    if rid in WELL_KNOWN_LOCAL_RIDS:
+                        debug(f"SID {sid} resolved to {local_name} (unknown domain, well-known RID {rid})")
+                    else:
+                        debug(f"SID {sid} resolved to {local_name} (unknown domain, local account RID {rid})")
+                except (ValueError, IndexError):
+                    debug(f"SID {sid} resolved to {local_name} (unknown domain)")
                 _cache_success(local_name)
                 return f"{local_name} ({sid})", local_name
 
@@ -1428,16 +1906,15 @@ def batch_get_user_attributes(
                                         entry_attrs["lastLogon"] = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
                                 except (ValueError, OSError):
                                     pass
-                            elif attr_name.lower() == "objectsid":
+                            elif attr_name.lower() == "objectsid" and attr_vals:
                                 # Binary SID - convert to string
-                                if attr_vals:
-                                    try:
-                                        binary_sid = attribute["vals"][0].asOctets()
-                                        sid_str = binary_to_sid(binary_sid)
-                                        if sid_str:
-                                            entry_attrs["sid"] = sid_str
-                                    except Exception:
-                                        pass
+                                try:
+                                    binary_sid = attribute["vals"][0].asOctets()
+                                    sid_str = binary_to_sid(binary_sid)
+                                    if sid_str:
+                                        entry_attrs["sid"] = sid_str
+                                except Exception:
+                                    pass
 
                         if sam_name and entry_attrs:
                             results[sam_name] = entry_attrs
@@ -1537,7 +2014,8 @@ def format_runas_with_sid_resolution(
     ldap_password: Optional[str] = None,
     ldap_hashes: Optional[str] = None,
     local_domain_sid_prefix: Optional[str] = None,
-    known_domain_prefixes: Optional[set] = None,
+    known_domain_prefixes: Optional[Dict[str, TrustData]] = None,
+    gc_server: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Format RunAs field with SID resolution if needed.
@@ -1559,7 +2037,8 @@ def format_runas_with_sid_resolution(
         ldap_password: Separate LDAP password (for local admin case - plaintext only)
         ldap_hashes: Separate LDAP NTLM hashes (for local admin case - use instead of ldap_password)
         local_domain_sid_prefix: Known local domain SID prefix for foreign domain detection
-        known_domain_prefixes: Set of all known domain SID prefixes (own + trusts)
+        known_domain_prefixes: Dict mapping SID prefixes to TrustInfo (with trust type) or FQDN strings
+        gc_server: Global Catalog server IP (optional, auto-discovers if not provided)
 
     Returns:
         Tuple of (display_runas, resolved_username)
@@ -1589,6 +2068,7 @@ def format_runas_with_sid_resolution(
             ldap_hashes,
             local_domain_sid_prefix,
             known_domain_prefixes,
+            gc_server,
         )
     else:
         # Regular username, return as-is

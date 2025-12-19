@@ -61,6 +61,9 @@ class AuthContext:
     ldap_password: Optional[str] = None
     ldap_hashes: Optional[str] = None
 
+    # Global Catalog server (optional, auto-discovers if not set)
+    gc_server: Optional[str] = None
+
     @property
     def has_credentials(self) -> bool:
         """Check if valid credentials are configured."""

@@ -87,10 +87,12 @@ def main():
                         debug(f"Loaded {len(hv.hv_computers)} computer SIDs from BHCE")
 
                 # Load domain SIDs for unknown domain SID detection
+                # BloodHound now provides TrustInfo with trust type from edges:
+                # - SameForestTrust = intra-forest (GC works)
+                # - CrossForestTrust = external (skip GC, use FQDN)
                 if bh_connector and hasattr(bh_connector, "query_all_domain_sids"):
                     hv.hv_domain_sids = bh_connector.query_all_domain_sids()
-                    if hv.hv_domain_sids:
-                        debug(f"Loaded {len(hv.hv_domain_sids)} domain SID prefixes from BHCE")
+                    # Logging is done inside query_all_domain_sids()
 
                 hv.loaded = True
                 hv.format_type = "bloodhound_live"
@@ -128,9 +130,11 @@ def main():
         else:
             warn("Failed to load High Value target data from file")
 
-    # If no BloodHound but have LDAP credentials, fetch domain SIDs for unknown SID detection
-    # This helps classify local machine SIDs vs domain SIDs even without BloodHound
-    if hv is None and not args.no_ldap and args.domain and args.username:
+    # Fetch domain SIDs via LDAP ONLY if BloodHound didn't provide them
+    # BloodHound is preferred because it has trust edge data (SameForestTrust/CrossForestTrust)
+    # LDAP is the fallback when no BloodHound connection is available
+    has_bh_domain_sids = hv is not None and hv.hv_domain_sids
+    if not has_bh_domain_sids and not args.no_ldap and args.domain and args.username:
         from .utils.sid_resolver import fetch_known_domain_sids_via_ldap
 
         ldap_domain = args.ldap_domain if args.ldap_domain else args.domain
@@ -147,11 +151,15 @@ def main():
             kerberos=args.kerberos,
         )
         if domain_sids:
-            # Create empty HV loader just to hold domain SIDs
-            hv = HighValueLoader("")
+            if hv is None:
+                # Create empty HV loader just to hold domain SIDs
+                hv = HighValueLoader("")
+                hv.loaded = True
+            # LDAP data has TrustInfo with is_intra_forest from trustAttributes
             hv.hv_domain_sids = domain_sids
-            hv.loaded = True
-            good(f"Loaded {len(domain_sids)} domain SID prefixes via LDAP (own domain + trusts)")
+            intra_count = sum(1 for t in domain_sids.values() if hasattr(t, 'is_intra_forest') and t.is_intra_forest)
+            external_count = len(domain_sids) - intra_count
+            good(f"Loaded {len(domain_sids)} domain SID prefixes via LDAP ({intra_count} intra-forest, {external_count} external)")
 
     # Initialize LAPS if requested (online mode only)
     laps_cache: Optional[LAPSCache] = None
@@ -335,6 +343,7 @@ def main():
             ldap_user=args.ldap_user,
             ldap_password=args.ldap_password,
             ldap_hashes=args.ldap_hashes,
+            gc_server=getattr(args, "gc_server", None),
         )
 
         # Common kwargs for process_target
@@ -548,23 +557,40 @@ def main():
         # Upload to BloodHound if not disabled and we have credentials
         if not bh_config.bh_no_upload:
             if bh_config.has_credentials():
-                print()
-                success = upload_opengraph_to_bloodhound(
-                    opengraph_file=opengraph_file,
-                    bloodhound_url=bh_config.bh_connector,
-                    username=bh_config.bh_username,
-                    password=bh_config.bh_password,
-                    api_key=bh_config.bh_api_key,
-                    api_key_id=bh_config.bh_api_key_id,
-                    set_icon=True,  # Always set icon on upload
-                    force_icon=bh_config.bh_force_icon,
-                    icon_name=bh_config.bh_icon,
-                    icon_color=bh_config.bh_color,
-                )
+                # Check if there's actually data to upload
+                if opengraph_file:
+                    import json
+                    try:
+                        with open(opengraph_file) as f:
+                            graph_data = json.load(f)
+                        node_count = len(graph_data.get("nodes", []))
+                        edge_count = len(graph_data.get("edges", []))
+                        if node_count == 0 and edge_count == 0:
+                            info("Skipping BloodHound upload - no data to upload (0 nodes, 0 edges)")
+                            info(f"Empty OpenGraph file saved: {opengraph_file}")
+                        else:
+                            print()
+                            success = upload_opengraph_to_bloodhound(
+                                opengraph_file=opengraph_file,
+                                bloodhound_url=bh_config.bh_connector,
+                                username=bh_config.bh_username,
+                                password=bh_config.bh_password,
+                                api_key=bh_config.bh_api_key,
+                                api_key_id=bh_config.bh_api_key_id,
+                                set_icon=True,  # Always set icon on upload
+                                force_icon=bh_config.bh_force_icon,
+                                icon_name=bh_config.bh_icon,
+                                icon_color=bh_config.bh_color,
+                            )
 
-                if not success:
-                    warn("OpenGraph upload failed - files are still saved locally")
-                    warn("You can upload manually via BloodHound UI")
+                            if not success:
+                                warn("OpenGraph upload failed - files are still saved locally")
+                                warn("You can upload manually via BloodHound UI")
+                    except (OSError, json.JSONDecodeError) as e:
+                        warn(f"Could not read OpenGraph file to check for data: {e}")
+                        warn("Skipping upload - file may be corrupted")
+                else:
+                    warn("No OpenGraph file generated - skipping upload")
             else:
                 warn("No BloodHound credentials available - skipping upload")
                 warn("Configure credentials in taskhound.toml [bloodhound] section or use CLI flags")

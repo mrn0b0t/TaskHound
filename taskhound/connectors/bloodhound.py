@@ -10,7 +10,7 @@ Author: 0xr0BIT
 
 import contextlib
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import requests
 
@@ -21,6 +21,7 @@ except ImportError:
 from ..utils.bh_auth import BloodHoundAuthenticator
 from ..utils.helpers import sanitize_json_string
 from ..utils.logging import debug, good, status, warn
+from ..utils.sid_resolver import TrustInfo
 
 
 def _safe_get_sam(data: dict, key: str) -> str:
@@ -604,7 +605,7 @@ class BloodHoundConnector:
             warn(f"Error querying domain '{netbios_name}': {e}")
             return None
 
-    def query_all_domain_sids(self) -> Dict[str, str]:
+    def query_all_domain_sids(self) -> Dict[str, Union[str, TrustInfo]]:
         """
         Query BloodHound for all domain SID prefixes (own domain + trusts).
 
@@ -612,17 +613,22 @@ class BloodHoundConnector:
         efficient classification of SIDs during scanning. Unknown SID prefixes
         are likely local machine accounts that cannot be resolved via DC.
 
+        Also queries trust relationships to determine trust type:
+        - SameForestTrust: Intra-forest trust (GC will work for resolution)
+        - CrossForestTrust: External trust (GC won't work, need DNS/FQDN)
+
         Returns:
-            Dict mapping domain SID prefix -> domain FQDN (e.g., "S-1-5-21-123-456-789" -> "CORP.LOCAL")
+            Dict mapping domain SID prefix -> TrustInfo (for trusts) or domain FQDN string (for own domain)
+            e.g., "S-1-5-21-123-456-789" -> TrustInfo(fqdn="CHILD.CORP.LOCAL", is_intra_forest=True)
         """
-        result: Dict[str, str] = {}
+        result: Dict[str, Union[str, TrustInfo]] = {}
 
         if self.bh_type != "bhce":
             debug("Domain SID query only supported for BloodHound CE")
             return result
 
         try:
-            # Query all Domain nodes - they contain the domain SID as objectId
+            # First, query all Domain nodes - they contain the domain SID as objectId
             query = "MATCH (d:Domain) RETURN d"
             data = self.run_cypher_query(query)
 
@@ -638,11 +644,53 @@ class BloodHoundConnector:
                     if name and objectid and objectid.startswith("S-1-5-21-"):
                         # Store the SID prefix (domains don't have trailing RID in objectid)
                         # Domain SIDs are S-1-5-21-X-Y-Z format
+                        # Initially store as string (own domain), will upgrade trusts below
                         result[objectid] = name
                         debug(f"Cached domain SID: {objectid} -> {name}")
 
+            # Now query trust relationships to determine trust type
+            # SameForestTrust = intra-forest, CrossForestTrust = external
+            trust_query = "MATCH p = (:Domain)-[r:SameForestTrust|CrossForestTrust]->(:Domain) RETURN p"
+            trust_data = self.run_cypher_query(trust_query)
+
+            if trust_data:
+                # BHCE response: nodes is dict {id: node}, edges is list of edge objects
+                data_section = trust_data.get("data", {})
+                edges = data_section.get("edges", [])  # List of edge dicts
+                nodes = data_section.get("nodes", {})  # Dict of node_id -> node
+
+                for edge_data in edges:
+                    edge_kind = edge_data.get("kind", "")
+                    target_node_id = str(edge_data.get("target", ""))
+
+                    # Find target domain node to get its SID
+                    target_node = nodes.get(target_node_id, {})
+                    target_sid = target_node.get("objectId", "")
+                    target_name = target_node.get("label", "")
+
+                    if target_sid and target_sid.startswith("S-1-5-21-"):
+                        # Determine trust type from edge kind
+                        is_intra_forest = edge_kind == "SameForestTrust"
+
+                        # Upgrade from string to TrustInfo
+                        result[target_sid] = TrustInfo(
+                            fqdn=target_name,
+                            is_intra_forest=is_intra_forest,
+                            trust_attributes=None,  # BloodHound doesn't expose this
+                        )
+                        trust_type = "intra-forest" if is_intra_forest else "external"
+                        debug(f"Trust type for {target_name}: {trust_type}")
+
             if result:
-                good(f"Loaded {len(result)} domain SID prefixes from BloodHound")
+                # Count trust types for logging
+                # Note: "own" domain is determined at runtime by SID resolver using local_domain_sid_prefix
+                # Here we just report what BloodHound knows about trust relationships
+                intra_count = sum(1 for v in result.values() if isinstance(v, TrustInfo) and v.is_intra_forest)
+                external_count = sum(1 for v in result.values() if isinstance(v, TrustInfo) and not v.is_intra_forest)
+                trust_info = ""
+                if intra_count or external_count:
+                    trust_info = f" ({intra_count} intra-forest, {external_count} external trusts)"
+                good(f"Loaded {len(result)} domain SID prefixes from BloodHound{trust_info}")
 
         except Exception as e:
             warn(f"Error querying domain SIDs from BloodHound: {e}")

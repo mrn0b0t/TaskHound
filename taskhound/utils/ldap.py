@@ -466,6 +466,140 @@ def get_netbios_domain_name(
                 conn.close()
 
 
+def get_global_catalog_connection(
+    gc_server: Optional[str],
+    domain: str,
+    username: str,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+    aes_key: Optional[str] = None,
+    use_tcp: bool = False,
+    nameserver: Optional[str] = None,
+    timeout: int = 10,
+) -> ldap_impacket.LDAPConnection:
+    """
+    Establish connection to Global Catalog server.
+
+    Global Catalog is an LDAP service that contains a partial replica of ALL
+    objects in the AD forest. It runs on ports 3268 (GC) and 3269 (GC-SSL).
+    Any DC can be a GC server - we discover one via DNS SRV records.
+
+    Use this for resolving SIDs from OTHER domains in the SAME forest, where
+    local LDAP (port 389) cannot find them because they're in different partitions.
+
+    Args:
+        gc_server: Global Catalog server IP (optional - will auto-discover if not provided)
+        domain: Forest root domain name (FQDN format)
+        username: Username for authentication
+        password: Password (plaintext)
+        hashes: NTLM hashes in LM:NT or NT format
+        kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos
+        use_tcp: Force DNS queries over TCP (required for SOCKS proxies)
+        nameserver: DNS server for lookups
+        timeout: Timeout for GC discovery
+
+    Returns:
+        LDAPConnection object connected to Global Catalog
+
+    Raises:
+        LDAPConnectionError: If connection fails
+    """
+    from .dns import get_working_gc
+
+    # If no GC server provided, discover one via DNS
+    if not gc_server:
+        effective_ns = nameserver
+        gc_server = get_working_gc(
+            domain=domain,
+            nameserver=effective_ns,
+            use_tcp=use_tcp,
+            timeout=timeout,
+        )
+        if not gc_server:
+            raise LDAPConnectionError(
+                f"Could not discover Global Catalog for forest {domain}. "
+                "No GC servers found or all unreachable."
+            )
+        debug(f"GC: Auto-discovered Global Catalog server: {gc_server}")
+
+    # Global Catalog uses empty base DN (forest-wide search)
+    # or we can use the forest root DN
+    base_dn = ",".join([f"DC={part}" for part in domain.split(".")])
+
+    # Parse hashes
+    lmhash, nthash = parse_ntlm_hashes(hashes)
+
+    # For Kerberos, we need the GC hostname for the SPN
+    kerberos_target = None
+    if kerberos or aes_key:
+        kerberos_target = resolve_dc_hostname(gc_server, domain, use_tcp=use_tcp)
+        if kerberos_target:
+            debug(f"GC: Resolved GC hostname for Kerberos SPN: {kerberos_target}")
+        else:
+            debug("GC: Could not resolve GC hostname, Kerberos may fail")
+            kerberos_target = gc_server
+
+    # Try GC-SSL first (port 3269), then GC (port 3268)
+    connection_attempts = [
+        ("ldaps", 3269, True),   # GC-SSL
+        ("ldap", 3268, False),   # Plain GC
+    ]
+
+    last_error = None
+    for protocol, port, use_ssl in connection_attempts:
+        try:
+            if (kerberos or aes_key) and kerberos_target:
+                # For Kerberos, use hostname but still specify port for GC
+                ldap_url = f"{protocol}://{kerberos_target}:{port}"
+            else:
+                ldap_url = f"{protocol}://{gc_server}:{port}"
+            debug(f"GC: Attempting {protocol.upper()} connection to {ldap_url} (Global Catalog)")
+
+            gc_conn = ldap_impacket.LDAPConnection(
+                ldap_url,
+                baseDN=base_dn,
+                dstIp=gc_server,
+            )
+
+            # Authenticate
+            if kerberos or aes_key:
+                gc_conn.kerberosLogin(
+                    user=username,
+                    password=password or "",
+                    domain=domain,
+                    lmhash=lmhash,
+                    nthash=nthash,
+                    aesKey=aes_key or "",
+                    kdcHost=kerberos_target,
+                )
+            else:
+                gc_conn.login(
+                    user=username,
+                    password=password or "",
+                    domain=domain,
+                    lmhash=lmhash,
+                    nthash=nthash,
+                )
+
+            debug(f"GC: Successfully connected to Global Catalog via {protocol.upper()} (port {port})")
+            return gc_conn
+
+        except Exception as e:
+            error_str = str(e)
+            debug(f"GC: {protocol.upper()} connection to port {port} failed: {error_str}")
+            last_error = e
+
+            # If SSL error on GC-SSL, try plain GC
+            if use_ssl and ("certificate" in error_str.lower() or "ssl" in error_str.lower()):
+                debug("GC: SSL/certificate issue, trying plain GC...")
+                continue
+            continue
+
+    raise LDAPConnectionError(f"Global Catalog connection failed: {last_error}")
+
+
 class LDAPConnectionError(Exception):
     """Failed to connect to domain controller via LDAP"""
 

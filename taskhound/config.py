@@ -597,6 +597,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable LDAP-based Tier-0 detection via group membership queries. Checks if runas accounts are members of privileged groups (Domain Admins, Enterprise Admins, etc.) without requiring BloodHound data.",
     )
+    ldap.add_argument(
+        "--gc-server",
+        help="Global Catalog server IP for resolving foreign domain SIDs. If not specified, auto-discovers via DNS SRV records (_gc._tcp.<domain>). Use this when auto-discovery fails or you want to target a specific GC.",
+    )
 
     # LAPS (Local Administrator Password Solution) options
     laps_group = ap.add_argument_group(

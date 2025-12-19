@@ -271,3 +271,119 @@ def _test_port(host: str, port: int, timeout: int = 3) -> bool:
         return result == 0
     except Exception:
         return False
+
+
+def discover_global_catalog_servers(
+    domain: str,
+    nameserver: Optional[str] = None,
+    use_tcp: bool = False,
+    timeout: int = DEFAULT_DNS_TIMEOUT,
+) -> List[str]:
+    """
+    Discover Global Catalog servers via DNS SRV records.
+
+    Queries _gc._tcp.<forest_root> SRV record to find GC servers.
+    Global Catalog runs on ports 3268 (GC) and 3269 (GC-SSL).
+
+    Args:
+        domain: Forest root domain name (e.g., "corp.local")
+        nameserver: Optional DNS server to use
+        use_tcp: Force DNS queries over TCP
+        timeout: DNS query timeout in seconds
+
+    Returns:
+        List of GC server hostnames/IPs
+    """
+    gc_servers = []
+
+    try:
+        import dns.resolver
+
+        resolver = dns.resolver.Resolver(configure=True)
+        if nameserver:
+            resolver.nameservers = [nameserver]
+        resolver.timeout = timeout
+        resolver.lifetime = timeout
+
+        # Query SRV record for Global Catalog
+        srv_name = f"_gc._tcp.{domain}"
+        debug(f"DNS: Querying SRV record {srv_name} for Global Catalog")
+
+        answers = resolver.resolve(srv_name, "SRV", tcp=use_tcp)
+        for rdata in answers:
+            gc_host = str(rdata.target).rstrip(".")
+            if gc_host:
+                gc_servers.append(gc_host)
+                debug(f"DNS: Found GC via SRV: {gc_host} (priority={rdata.priority})")
+
+        if gc_servers:
+            debug(f"DNS: Discovered {len(gc_servers)} GC servers via SRV records")
+            return gc_servers
+
+    except ImportError:
+        debug("DNS: dnspython not available for GC discovery")
+    except Exception as e:
+        debug(f"DNS: GC SRV lookup failed: {e}")
+
+    return gc_servers
+
+
+def get_working_gc(
+    domain: str,
+    gc_server: Optional[str] = None,
+    nameserver: Optional[str] = None,
+    use_tcp: bool = False,
+    timeout: int = DEFAULT_LDAP_TIMEOUT,
+) -> Optional[str]:
+    """
+    Get a working Global Catalog server IP.
+
+    Global Catalog is used for cross-domain SID resolution within
+    the same AD forest. It contains a partial replica of all objects.
+
+    Args:
+        domain: Forest root domain name
+        gc_server: User-specified GC IP (if provided, used directly)
+        nameserver: DNS server for discovery
+        use_tcp: Force DNS over TCP
+        timeout: Connection timeout for testing
+
+    Returns:
+        GC server IP address, or None if no working GC found
+    """
+    # User explicitly specified GC - use it
+    if gc_server:
+        return gc_server
+
+    # Discover GC servers
+    gc_servers = discover_global_catalog_servers(domain, nameserver=nameserver, use_tcp=use_tcp)
+
+    if not gc_servers:
+        debug(f"DNS: Could not discover any GC servers for forest {domain}")
+        return None
+
+    # Resolve hostnames to IPs and test connectivity
+    for gc in gc_servers:
+        gc_resolved = resolve_hostname(gc, nameserver=nameserver, use_tcp=use_tcp, timeout=timeout)
+        if not gc_resolved:
+            debug(f"DNS: Could not resolve GC hostname {gc}")
+            continue
+
+        # Test GC port connectivity (3269 SSL, 3268 plain)
+        if _test_port(gc_resolved, 3269, timeout=min(timeout, 3)):
+            debug(f"DNS: GC {gc_resolved} is reachable on GC-SSL (3269)")
+            return gc_resolved
+        elif _test_port(gc_resolved, 3268, timeout=min(timeout, 3)):
+            debug(f"DNS: GC {gc_resolved} is reachable on GC (3268)")
+            return gc_resolved
+        else:
+            debug(f"DNS: GC {gc_resolved} not reachable on GC ports")
+
+    # If no GC responded on ports, return first one anyway
+    if gc_servers:
+        first_gc = resolve_hostname(gc_servers[0], nameserver=nameserver, use_tcp=use_tcp)
+        if first_gc:
+            debug(f"DNS: No GC responded on ports, trying {first_gc} anyway")
+            return first_gc
+
+    return None

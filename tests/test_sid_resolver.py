@@ -443,7 +443,7 @@ class TestUnknownDomainSIDDetection:
         }
 
         # Unknown domain SID (different prefix)
-        unknown_sid = "S-1-5-21-1406697320-1662514025-3551983607-500"
+        unknown_sid = "S-1-5-21-555666777-888999000-111222333-500"
 
         assert is_unknown_domain_sid(unknown_sid, known_prefixes) is True
 
@@ -465,7 +465,7 @@ class TestUnknownDomainSIDDetection:
         """Should return False when known set is empty (can't classify)"""
         from taskhound.utils.sid_resolver import is_unknown_domain_sid
 
-        unknown_sid = "S-1-5-21-1406697320-1662514025-3551983607-500"
+        unknown_sid = "S-1-5-21-555666777-888999000-111222333-500"
 
         assert is_unknown_domain_sid(unknown_sid, set()) is False
         assert is_unknown_domain_sid(unknown_sid, None) is False
@@ -488,7 +488,7 @@ class TestResolveUnknownSIDToLocalName:
         """Should resolve RID 500 to UNKNOWN\\Administrator"""
         from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
 
-        sid = "S-1-5-21-1406697320-1662514025-3551983607-500"
+        sid = "S-1-5-21-555666777-888999000-111222333-500"
         result = resolve_unknown_sid_to_local_name(sid)
 
         assert result == "UNKNOWN\\Administrator"
@@ -497,7 +497,7 @@ class TestResolveUnknownSIDToLocalName:
         """Should resolve RID 501 to UNKNOWN\\Guest"""
         from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
 
-        sid = "S-1-5-21-1406697320-1662514025-3551983607-501"
+        sid = "S-1-5-21-555666777-888999000-111222333-501"
         result = resolve_unknown_sid_to_local_name(sid)
 
         assert result == "UNKNOWN\\Guest"
@@ -506,7 +506,7 @@ class TestResolveUnknownSIDToLocalName:
         """Should resolve high RIDs (>=1000) to UNKNOWN\\User-<RID>"""
         from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
 
-        sid = "S-1-5-21-1406697320-1662514025-3551983607-1001"
+        sid = "S-1-5-21-555666777-888999000-111222333-1001"
         result = resolve_unknown_sid_to_local_name(sid)
 
         assert result == "UNKNOWN\\User-1001"
@@ -516,7 +516,7 @@ class TestResolveUnknownSIDToLocalName:
         from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
 
         # RID 600 is not well-known and < 1000
-        sid = "S-1-5-21-1406697320-1662514025-3551983607-600"
+        sid = "S-1-5-21-555666777-888999000-111222333-600"
         result = resolve_unknown_sid_to_local_name(sid)
 
         assert result is None
@@ -564,3 +564,454 @@ class TestFetchKnownDomainSIDsViaLDAP:
             # No password or hashes
         )
         assert result == {}
+
+
+class TestWellKnownSIDs:
+    """Tests for Chain 0: Well-Known SID Static Lookup"""
+
+    def test_well_known_sids_dict_exists(self):
+        """Should have WELL_KNOWN_SIDS dictionary"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_SIDS
+
+        assert isinstance(WELL_KNOWN_SIDS, dict)
+        assert len(WELL_KNOWN_SIDS) > 0
+
+    def test_system_sid_in_lookup_table(self):
+        """Should have NT AUTHORITY\\SYSTEM in lookup table"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_SIDS
+
+        assert "S-1-5-18" in WELL_KNOWN_SIDS
+        assert WELL_KNOWN_SIDS["S-1-5-18"] == "NT AUTHORITY\\SYSTEM"
+
+    def test_local_service_sid_in_lookup_table(self):
+        """Should have NT AUTHORITY\\LOCAL SERVICE in lookup table"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_SIDS
+
+        assert "S-1-5-19" in WELL_KNOWN_SIDS
+        assert WELL_KNOWN_SIDS["S-1-5-19"] == "NT AUTHORITY\\LOCAL SERVICE"
+
+    def test_network_service_sid_in_lookup_table(self):
+        """Should have NT AUTHORITY\\NETWORK SERVICE in lookup table"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_SIDS
+
+        assert "S-1-5-20" in WELL_KNOWN_SIDS
+        assert WELL_KNOWN_SIDS["S-1-5-20"] == "NT AUTHORITY\\NETWORK SERVICE"
+
+    def test_builtin_administrators_sid_in_lookup_table(self):
+        """Should have BUILTIN\\Administrators in lookup table"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_SIDS
+
+        assert "S-1-5-32-544" in WELL_KNOWN_SIDS
+        assert WELL_KNOWN_SIDS["S-1-5-32-544"] == "BUILTIN\\Administrators"
+
+    def test_everyone_sid_in_lookup_table(self):
+        """Should have Everyone SID in lookup table"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_SIDS
+
+        assert "S-1-1-0" in WELL_KNOWN_SIDS
+        assert WELL_KNOWN_SIDS["S-1-1-0"] == "Everyone"
+
+
+class TestResolveSidChain0:
+    """Tests for resolve_sid() Chain 0 - Well-Known SID instant lookup"""
+
+    def test_resolves_system_sid_instantly(self):
+        """Should resolve S-1-5-18 to NT AUTHORITY\\SYSTEM without network"""
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        display_name, resolved = resolve_sid("S-1-5-18")
+
+        assert resolved == "NT AUTHORITY\\SYSTEM"
+        assert "S-1-5-18" in display_name
+        assert "NT AUTHORITY\\SYSTEM" in display_name
+
+    def test_resolves_local_service_sid_instantly(self):
+        """Should resolve S-1-5-19 to NT AUTHORITY\\LOCAL SERVICE without network"""
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        display_name, resolved = resolve_sid("S-1-5-19")
+
+        assert resolved == "NT AUTHORITY\\LOCAL SERVICE"
+
+    def test_resolves_network_service_sid_instantly(self):
+        """Should resolve S-1-5-20 to NT AUTHORITY\\NETWORK SERVICE without network"""
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        display_name, resolved = resolve_sid("S-1-5-20")
+
+        assert resolved == "NT AUTHORITY\\NETWORK SERVICE"
+
+    def test_resolves_builtin_administrators_instantly(self):
+        """Should resolve S-1-5-32-544 to BUILTIN\\Administrators without network"""
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        display_name, resolved = resolve_sid("S-1-5-32-544")
+
+        assert resolved == "BUILTIN\\Administrators"
+
+    def test_resolves_everyone_instantly(self):
+        """Should resolve S-1-1-0 to Everyone without network"""
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        display_name, resolved = resolve_sid("S-1-1-0")
+
+        assert resolved == "Everyone"
+
+    def test_domain_sid_not_in_well_known(self):
+        """Domain SIDs should NOT be resolved by Chain 0"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_SIDS
+
+        # Domain user SID should not be in well-known table
+        domain_sid = "S-1-5-21-123456789-987654321-111111111-1001"
+        assert domain_sid not in WELL_KNOWN_SIDS
+
+
+class TestGlobalCatalogDNS:
+    """Tests for Global Catalog DNS discovery functions"""
+
+    def test_discover_global_catalog_servers_returns_list(self):
+        """Should return a list (possibly empty) for GC discovery"""
+        from taskhound.utils.dns import discover_global_catalog_servers
+
+        # This will fail without real DNS, but should return empty list not error
+        result = discover_global_catalog_servers("nonexistent.local")
+        assert isinstance(result, list)
+
+    def test_get_working_gc_returns_explicit_server(self):
+        """Should return user-provided GC server directly"""
+        from taskhound.utils.dns import get_working_gc
+
+        result = get_working_gc(domain="test.local", gc_server="192.168.1.1")
+        assert result == "192.168.1.1"
+
+    def test_get_working_gc_returns_none_without_discovery(self):
+        """Should return None if no GC found and none specified"""
+        from taskhound.utils.dns import get_working_gc
+
+        # Will fail to discover in test environment
+        result = get_working_gc(domain="nonexistent.local")
+        assert result is None
+
+
+class TestResolveSidViaGlobalCatalog:
+    """Tests for resolve_sid_via_global_catalog function"""
+
+    def test_returns_none_without_credentials(self):
+        """Should return None when no credentials provided"""
+        from taskhound.utils.sid_resolver import resolve_sid_via_global_catalog
+
+        result = resolve_sid_via_global_catalog(
+            sid="S-1-5-21-123456789-987654321-111111111-1001",
+            domain="corp.local",
+            # No credentials
+        )
+        assert result is None
+
+    def test_returns_none_for_invalid_domain(self):
+        """Should return None for invalid domain format"""
+        from taskhound.utils.sid_resolver import resolve_sid_via_global_catalog
+
+        result = resolve_sid_via_global_catalog(
+            sid="S-1-5-21-123456789-987654321-111111111-1001",
+            domain="nodots",  # Invalid - no dots
+            username="test",
+            password="test",
+        )
+        assert result is None
+
+    def test_returns_none_for_empty_domain(self):
+        """Should return None for empty domain"""
+        from taskhound.utils.sid_resolver import resolve_sid_via_global_catalog
+
+        result = resolve_sid_via_global_catalog(
+            sid="S-1-5-21-123456789-987654321-111111111-1001",
+            domain="",
+            username="test",
+            password="test",
+        )
+        assert result is None
+
+
+class TestGcServerParameter:
+    """Tests for --gc-server CLI flag support"""
+
+    def test_resolve_sid_accepts_gc_server_parameter(self):
+        """resolve_sid should accept gc_server parameter"""
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        # Call with gc_server parameter - should not raise
+        display, resolved = resolve_sid(
+            sid="S-1-5-18",  # SYSTEM - will be resolved from well-known table
+            gc_server="10.0.0.1",
+        )
+        # Well-known SID should still resolve instantly
+        assert "SYSTEM" in display
+
+    def test_format_runas_accepts_gc_server_parameter(self):
+        """format_runas_with_sid_resolution should accept gc_server parameter"""
+        from taskhound.utils.sid_resolver import format_runas_with_sid_resolution
+
+        # Call with gc_server parameter - should not raise
+        display, resolved = format_runas_with_sid_resolution(
+            runas="S-1-5-18",  # SYSTEM - will be resolved from well-known table
+            gc_server="10.0.0.1",
+        )
+        # Well-known SID should still resolve instantly
+        assert "SYSTEM" in display
+
+    def test_auth_context_has_gc_server_field(self):
+        """AuthContext should have gc_server field"""
+        from taskhound.auth import AuthContext
+
+        auth = AuthContext(
+            username="test",
+            password="test",
+            domain="test.local",
+            gc_server="192.168.1.100",
+        )
+        assert auth.gc_server == "192.168.1.100"
+
+    def test_auth_context_gc_server_defaults_to_none(self):
+        """AuthContext gc_server should default to None"""
+        from taskhound.auth import AuthContext
+
+        auth = AuthContext(
+            username="test",
+            password="test",
+            domain="test.local",
+        )
+        assert auth.gc_server is None
+
+
+class TestExternalTrustPrefixCaching:
+    """Tests for external trust domain prefix caching"""
+
+    def test_external_trust_prefixes_set_exists(self):
+        """Module should have _external_trust_prefixes set"""
+        from taskhound.utils import sid_resolver
+
+        assert hasattr(sid_resolver, '_external_trust_prefixes')
+        assert isinstance(sid_resolver._external_trust_prefixes, set)
+
+    def test_resolve_unknown_sid_distinguishes_well_known_from_fallback(self):
+        """resolve_unknown_sid_to_local_name returns proper names for well-known vs custom RIDs"""
+        from taskhound.utils.sid_resolver import resolve_unknown_sid_to_local_name
+
+        # Well-known RID 500 (Administrator)
+        result_500 = resolve_unknown_sid_to_local_name("S-1-5-21-123456789-987654321-111111111-500")
+        assert result_500 == "UNKNOWN\\Administrator"
+
+        # Custom local account RID 1000 (NOT well-known, just a fallback)
+        result_1000 = resolve_unknown_sid_to_local_name("S-1-5-21-123456789-987654321-111111111-1000")
+        assert result_1000 == "UNKNOWN\\User-1000"
+
+        # Custom local account RID 1234
+        result_1234 = resolve_unknown_sid_to_local_name("S-1-5-21-123456789-987654321-111111111-1234")
+        assert result_1234 == "UNKNOWN\\User-1234"
+
+    def test_rid_1000_is_not_well_known(self):
+        """RID 1000 should NOT be in WELL_KNOWN_LOCAL_RIDS"""
+        from taskhound.utils.sid_resolver import WELL_KNOWN_LOCAL_RIDS
+
+        # RID 1000 is a local user account, not a well-known system account
+        assert 1000 not in WELL_KNOWN_LOCAL_RIDS
+        # But 500 (Administrator) should be
+        assert 500 in WELL_KNOWN_LOCAL_RIDS
+
+
+class TestResolveTrustSidToName:
+    """Tests for resolve_trust_sid_to_name function"""
+
+    def test_resolves_well_known_rid_to_upn_format(self):
+        """Should resolve well-known RID 500 to UPN format"""
+        from taskhound.utils.sid_resolver import resolve_trust_sid_to_name
+
+        # Administrator (RID 500)
+        result = resolve_trust_sid_to_name(
+            "S-1-5-21-111111111-222222222-333333333-500",
+            "TRUSTEDFOREST.LOCAL"
+        )
+        assert result == "Administrator@TRUSTEDFOREST.LOCAL"
+
+    def test_resolves_guest_rid_to_upn_format(self):
+        """Should resolve well-known RID 501 (Guest) to UPN format"""
+        from taskhound.utils.sid_resolver import resolve_trust_sid_to_name
+
+        result = resolve_trust_sid_to_name(
+            "S-1-5-21-111111111-222222222-333333333-501",
+            "TRUSTEDFOREST.LOCAL"
+        )
+        assert result == "Guest@TRUSTEDFOREST.LOCAL"
+
+    def test_resolves_custom_rid_to_domain_fallback(self):
+        """Should resolve custom RID (>= 1000) to domain\\User-RID format"""
+        from taskhound.utils.sid_resolver import resolve_trust_sid_to_name
+
+        result = resolve_trust_sid_to_name(
+            "S-1-5-21-111111111-222222222-333333333-1234",
+            "TRUSTEDFOREST.LOCAL"
+        )
+        assert result == "TRUSTEDFOREST.LOCAL\\User-1234"
+
+    def test_returns_none_for_invalid_sid(self):
+        """Should return None for invalid SID"""
+        from taskhound.utils.sid_resolver import resolve_trust_sid_to_name
+
+        assert resolve_trust_sid_to_name("invalid", "TRUSTEDFOREST.LOCAL") is None
+        assert resolve_trust_sid_to_name("", "TRUSTEDFOREST.LOCAL") is None
+        assert resolve_trust_sid_to_name(None, "TRUSTEDFOREST.LOCAL") is None
+
+    def test_returns_none_for_non_domain_sid(self):
+        """Should return None for non-domain SID (e.g., S-1-5-18)"""
+        from taskhound.utils.sid_resolver import resolve_trust_sid_to_name
+
+        # SYSTEM SID doesn't have domain format
+        assert resolve_trust_sid_to_name("S-1-5-18", "TRUSTEDFOREST.LOCAL") is None
+
+    def test_returns_none_for_missing_fqdn(self):
+        """Should return None if trust FQDN is missing"""
+        from taskhound.utils.sid_resolver import resolve_trust_sid_to_name
+
+        assert resolve_trust_sid_to_name(
+            "S-1-5-21-111111111-222222222-333333333-500",
+            ""
+        ) is None
+        assert resolve_trust_sid_to_name(
+            "S-1-5-21-111111111-222222222-333333333-500",
+            None
+        ) is None
+
+
+class TestCrossTrustResolution:
+    """Tests for cross-trust SID resolution with [CROSS-TRUST] prefix"""
+
+    def test_is_unknown_domain_sid_accepts_dict(self):
+        """is_unknown_domain_sid should work with Dict[str, str]"""
+        from taskhound.utils.sid_resolver import is_unknown_domain_sid
+
+        known_prefixes = {
+            "S-1-5-21-123456789-987654321-111111111": "CORP.LOCAL",
+            "S-1-5-21-444444444-555555555-666666666": "TRUSTEDFOREST.LOCAL",
+        }
+
+        # SID in known prefixes - not unknown
+        result = is_unknown_domain_sid(
+            "S-1-5-21-123456789-987654321-111111111-500",
+            known_prefixes
+        )
+        assert result is False
+
+        # SID NOT in known prefixes - unknown
+        result = is_unknown_domain_sid(
+            "S-1-5-21-999999999-888888888-777777777-500",
+            known_prefixes
+        )
+        assert result is True
+
+    def test_known_domain_prefixes_type_hint_is_dict(self):
+        """resolve_sid known_domain_prefixes should be Dict[str, str]"""
+        import inspect
+
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        sig = inspect.signature(resolve_sid)
+        known_domain_prefixes_param = sig.parameters['known_domain_prefixes']
+
+        # Check the annotation includes Dict
+        annotation_str = str(known_domain_prefixes_param.annotation)
+        assert "Dict" in annotation_str or "dict" in annotation_str
+
+    def test_external_trust_skips_gc_for_all_rids(self):
+        """EXTERNAL trusts should ALWAYS skip GC, not just for well-known RIDs"""
+        from taskhound.utils.sid_resolver import TrustInfo, resolve_sid
+
+        # A non-well-known RID (like 1234) from a KNOWN EXTERNAL trust
+        # Should resolve without GC attempt
+        known_prefixes = {
+            "S-1-5-21-444444444-555555555-666666666": TrustInfo(
+                fqdn="TRUSTEDFOREST.LOCAL",
+                is_intra_forest=False,  # External trust - skip GC
+            ),
+        }
+
+        # RID 1234 is not a well-known RID - but trust IS known and EXTERNAL
+        display, resolved = resolve_sid(
+            "S-1-5-21-444444444-555555555-666666666-1234",
+            no_ldap=True,  # Disable LDAP to force trust path
+            known_domain_prefixes=known_prefixes,
+            local_domain_sid_prefix="S-1-5-21-111111111-222222222-333333333",
+        )
+
+        # Should get CROSS-TRUST prefix and domain context
+        assert "[CROSS-TRUST]" in display
+        assert "TRUSTEDFOREST.LOCAL" in display
+
+    def test_external_trust_shows_user_rid_format(self):
+        """Non-well-known RIDs from EXTERNAL trusts should show User-{RID} format"""
+        from taskhound.utils.sid_resolver import TrustInfo, resolve_sid
+
+        known_prefixes = {
+            "S-1-5-21-444444444-555555555-666666666": TrustInfo(
+                fqdn="TRUSTEDFOREST.LOCAL",
+                is_intra_forest=False,  # External trust
+            ),
+        }
+
+        # RID 1500 - a typical user RID, not well-known
+        display, resolved = resolve_sid(
+            "S-1-5-21-444444444-555555555-666666666-1500",
+            no_ldap=True,
+            known_domain_prefixes=known_prefixes,
+            local_domain_sid_prefix="S-1-5-21-111111111-222222222-333333333",
+        )
+
+        # Should show User-{RID} format from resolve_trust_sid_to_name
+        assert "[CROSS-TRUST]" in display
+        assert "TRUSTEDFOREST.LOCAL" in display
+        assert "User-1500" in display or "1500" in display
+
+    def test_intra_forest_trust_tries_gc(self):
+        """INTRA-FOREST trusts should try GC lookup first"""
+        from taskhound.utils.sid_resolver import TrustInfo, resolve_sid
+
+        # Intra-forest trust - GC should be tried (not skipped)
+        known_prefixes = {
+            "S-1-5-21-444444444-555555555-666666666": TrustInfo(
+                fqdn="CHILD.CORP.LOCAL",
+                is_intra_forest=True,  # Intra-forest - GC will work
+            ),
+        }
+
+        # With no_ldap=True, GC won't be tried, so we should NOT get CROSS-TRUST
+        # because we're not skipping GC for intra-forest trusts
+        display, resolved = resolve_sid(
+            "S-1-5-21-444444444-555555555-666666666-1500",
+            no_ldap=True,
+            known_domain_prefixes=known_prefixes,
+            local_domain_sid_prefix="S-1-5-21-111111111-222222222-333333333",
+        )
+
+        # Intra-forest trusts DON'T get [CROSS-TRUST] prefix - they use GC
+        # With no_ldap=True, the SID won't be resolved (GC path blocked)
+        assert "[CROSS-TRUST]" not in display
+
+    def test_string_trust_data_backwards_compat(self):
+        """String trust data (backwards compat) should try GC first"""
+        from taskhound.utils.sid_resolver import resolve_sid
+
+        # Old-style string dict (from BloodHound) - should try GC
+        known_prefixes = {
+            "S-1-5-21-444444444-555555555-666666666": "SOMEFOREST.LOCAL",
+        }
+
+        display, resolved = resolve_sid(
+            "S-1-5-21-444444444-555555555-666666666-1500",
+            no_ldap=True,
+            known_domain_prefixes=known_prefixes,
+            local_domain_sid_prefix="S-1-5-21-111111111-222222222-333333333",
+        )
+
+        # String format doesn't know trust type - defaults to try GC
+        # So no [CROSS-TRUST] prefix
+        assert "[CROSS-TRUST]" not in display
+
