@@ -335,6 +335,17 @@ def format_block(
 
     # Password analysis
     if password_analysis:
+        # If credential validation shows VALID, update stale warning since we've confirmed it works
+        if (
+            cred_validation
+            and cred_validation.get("cred_password_valid") is True
+            and "could be stale" in password_analysis.lower()
+        ):
+            # Replace the stale warning with validated message
+            password_analysis = password_analysis.replace(
+                "Password could be stale",
+                "Credential validated as working"
+            )
         rows.append(("Pwd Analysis", password_analysis))
 
     # Credential validation results
