@@ -24,7 +24,6 @@ def mock_args_minimal():
     """Create minimal mock args with required fields"""
     args = Namespace(
         bh_opengraph=False,
-        bh_output="./opengraph",
         bh_no_upload=False,
         bh_connector=None,
         bh_user=None,
@@ -47,7 +46,6 @@ def mock_args_with_creds():
     """Create mock args with username/password credentials"""
     args = Namespace(
         bh_opengraph=True,
-        bh_output="./custom_output",
         bh_no_upload=False,
         bh_connector="http://localhost:8080",
         bh_user="admin",
@@ -70,7 +68,6 @@ def mock_args_with_api_key():
     """Create mock args with API key credentials"""
     args = Namespace(
         bh_opengraph=True,
-        bh_output="./output",
         bh_no_upload=True,
         bh_connector="http://localhost:8080",
         bh_user=None,
@@ -101,7 +98,6 @@ class TestBloodHoundConfigInit:
         config = BloodHoundConfig()
 
         assert config.bh_opengraph is False
-        assert config.bh_output == "./opengraph"
         assert config.bh_no_upload is False
         assert config.bh_connector is None
         assert config.bh_username is None
@@ -119,13 +115,11 @@ class TestBloodHoundConfigInit:
         """Should accept custom values"""
         config = BloodHoundConfig(
             bh_opengraph=True,
-            bh_output="./custom",
             bh_connector="http://localhost:8080",
             bh_type="bhce"
         )
 
         assert config.bh_opengraph is True
-        assert config.bh_output == "./custom"
         assert config.bh_connector == "http://localhost:8080"
         assert config.bh_type == "bhce"
 
@@ -143,7 +137,6 @@ class TestFromArgsAndConfig:
         config = BloodHoundConfig.from_args_and_config(mock_args_minimal)
 
         assert config.bh_opengraph is False
-        assert config.bh_output == "./opengraph"
         assert config.bh_type == "bhce"  # Default when neither bhce nor legacy set
 
     def test_with_credentials(self, mock_args_with_creds):
@@ -151,7 +144,6 @@ class TestFromArgsAndConfig:
         config = BloodHoundConfig.from_args_and_config(mock_args_with_creds)
 
         assert config.bh_opengraph is True
-        assert config.bh_output == "./custom_output"
         assert config.bh_connector == "http://localhost:8080"
         assert config.bh_username == "admin"
         assert config.bh_password == "password123"

@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 from pathlib import Path
@@ -107,9 +108,12 @@ def _handle_opengraph(
             api_key_id=bh_config.bh_api_key_id,
         )
 
+    # OpenGraph files go to {output_dir}/opengraph/
+    opengraph_output_dir = os.path.join(args.output_dir, "opengraph")
+
     # Generate OpenGraph files
     opengraph_file = generate_opengraph_files(
-        output_dir=bh_config.bh_output,
+        output_dir=opengraph_output_dir,
         tasks=all_rows,
         bh_connector=bh_connector,
         ldap_config=ldap_config,
@@ -211,30 +215,52 @@ def _handle_exports(
     Returns:
         Tuple of (opengraph_json_path, opengraph_json_overwrites) for OpenGraph handling.
     """
-    import os
+    output_dir = args.output_dir
+    output_formats = args.output_formats
 
     # Track if we need to auto-generate JSON for OpenGraph
     opengraph_json_path = None
     opengraph_json_overwrites = False
-    is_opengraph_json = False
-    if args.bh_opengraph and not args.json:
-        os.makedirs(args.bh_output, exist_ok=True)
-        opengraph_json_path = f"{args.bh_output}/taskhound_data.json"
+
+    # Handle OpenGraph JSON (goes to same output_dir/opengraph/ as other OpenGraph files)
+    if args.bh_opengraph:
+        opengraph_dir = os.path.join(output_dir, "opengraph")
+        os.makedirs(opengraph_dir, exist_ok=True)
+        opengraph_json_path = os.path.join(opengraph_dir, "taskhound_data.json")
         opengraph_json_overwrites = os.path.exists(opengraph_json_path)
-        args.json = opengraph_json_path
-        is_opengraph_json = True
+        # Write OpenGraph JSON separately
+        if all_rows:
+            write_json(opengraph_json_path, all_rows, silent=True)
 
-    # Write export files (silently for OpenGraph JSON - will be shown in panel later)
-    if args.json:
-        write_json(args.json, all_rows, silent=is_opengraph_json)
-    if args.csv:
-        write_csv(args.csv, all_rows)
+    # Write outputs based on --output formats
+    if all_rows:
+        # Plain text output
+        if "plain" in output_formats:
+            plain_dir = os.path.join(output_dir, "plain")
+            write_rich_plain(plain_dir, all_rows)
 
-    # Plain text output - explicit path or auto-generate to ./output
-    if args.plain:
-        write_rich_plain(args.plain, all_rows)
-    elif all_rows:
-        write_rich_plain("./output", all_rows)
+        # JSON output
+        if "json" in output_formats:
+            json_dir = os.path.join(output_dir, "json")
+            os.makedirs(json_dir, exist_ok=True)
+            json_path = os.path.join(json_dir, "taskhound_results.json")
+            write_json(json_path, all_rows)
+
+        # CSV output
+        if "csv" in output_formats:
+            csv_dir = os.path.join(output_dir, "csv")
+            os.makedirs(csv_dir, exist_ok=True)
+            csv_path = os.path.join(csv_dir, "taskhound_results.csv")
+            write_csv(csv_path, all_rows)
+
+        # HTML report output
+        if "html" in output_formats:
+            from .output.html_report import generate_html_report
+            html_dir = os.path.join(output_dir, "html")
+            os.makedirs(html_dir, exist_ok=True)
+            html_path = os.path.join(html_dir, "taskhound_report.html")
+            generate_html_report(all_rows, html_path)
+            print_audit_report_section(html_path)
 
     # Print decrypted credentials summary
     print_decrypted_credentials(all_rows)
@@ -247,20 +273,11 @@ def _handle_exports(
         if laps_cache is not None:
             print_laps_summary(laps_cache, laps_successes, laps_failures)
 
-    # Print backup section (if backup was enabled)
-    backup_dir = args.backup if hasattr(args, "backup") and args.backup else None
-    if backup_dir:
-        print_backup_section(backup_dir)
-
-    # HTML report generation
-    if getattr(args, "html_report", None) or getattr(args, "audit_mode", False):
-        from .output.html_report import generate_html_report
-        report_path = getattr(args, "html_report", None) or "taskhound_audit_report.html"
-        if all_rows:
-            generate_html_report(all_rows, report_path)
-            print_audit_report_section(report_path)
-        else:
-            warn("No tasks found - skipping HTML report generation")
+    # Print backup section (if backup was enabled and we have backups)
+    if args.backup:
+        backup_dir = os.path.join(output_dir, "raw_backups")
+        if os.path.exists(backup_dir):
+            print_backup_section(backup_dir)
 
     return opengraph_json_path, opengraph_json_overwrites
 
@@ -705,11 +722,14 @@ def main():
         # Offline disk mode: extract from mounted Windows filesystem, then process
         from .engine.disk_loader import extract_dpapi_key_from_registry, find_windows_root, load_from_disk
 
+        # Compute backup directory path (if backup enabled)
+        disk_backup_dir = os.path.join(args.output_dir, "raw_backups") if args.backup else None
+
         hostname, backup_path = load_from_disk(
             mount_path=args.offline_disk,
-            backup_dir=getattr(args, "backup", None),
+            backup_dir=disk_backup_dir,
             hostname=getattr(args, "disk_hostname", None),
-            no_backup=getattr(args, "no_backup", False),
+            no_backup=args.no_backup,
             verbose=args.verbose,
             debug=args.debug,
         )
@@ -821,6 +841,9 @@ def main():
             gc_server=getattr(args, "gc_server", None),
         )
 
+        # Compute backup directory path for online scanning
+        online_backup_dir = os.path.join(args.output_dir, "raw_backups") if args.backup else None
+
         # Common kwargs for process_target
         process_kwargs = {
             "auth": auth,
@@ -829,7 +852,7 @@ def main():
             "hv": hv,
             "debug": args.debug,
             "show_unsaved_creds": args.unsaved_creds,
-            "backup_dir": args.backup,
+            "backup_dir": online_backup_dir,
             "credguard_detect": args.credguard_detect,
             "no_ldap": args.no_ldap,
             "no_rpc": getattr(args, 'no_rpc', False),

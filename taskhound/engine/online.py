@@ -323,12 +323,15 @@ def process_target(
         # Skipped when RPC is disabled (remote registry requires RPC)
         if credguard_detect and not no_rpc:
             credguard_status = check_credential_guard(smb, target)
-            if credguard_status:
-                info(f"{target}: Credential Guard detected (LsaCfgFlags/IsolatedUserMode)")
+            if credguard_status is True:
+                warn(f"{target}: Credential Guard detected - DPAPI credential extraction will fail")
+            elif credguard_status is False:
+                log_debug(f"{target}: Credential Guard not detected")
             else:
-                info(f"{target}: Credential Guard not detected")
+                # None = couldn't check (Remote Registry service disabled)
+                log_debug(f"{target}: Credential Guard status unknown (Remote Registry service likely disabled)")
         elif credguard_detect and no_rpc:
-            info(f"{target}: Skipping Credential Guard check (--no-rpc mode)")
+            log_debug(f"{target}: Skipping Credential Guard check (--no-rpc mode)")
     except Exception as e:
         if debug:
             traceback.print_exc()

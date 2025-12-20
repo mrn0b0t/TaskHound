@@ -292,8 +292,7 @@ def load_config() -> Dict[str, Any]:
     bhog = bh.get("opengraph", {})
     if "enabled" in bhog:
         defaults["bh_opengraph"] = bhog["enabled"]
-    if "output_dir" in bhog:
-        defaults["bh_output"] = bhog["output_dir"]
+    # Note: output_dir is deprecated - OpenGraph now uses {output_dir}/opengraph/
     if "no_upload" in bhog:
         defaults["bh_no_upload"] = bhog["no_upload"]
     # Note: set_icon removed - icon is now always set on upload
@@ -325,28 +324,19 @@ def load_config() -> Dict[str, Any]:
 
     # Output
     output = config_data.get("output", {})
-    if "plain" in output:
-        defaults["plain"] = output["plain"]
-    if "json" in output:
-        defaults["json"] = output["json"]
-    if "csv" in output:
-        defaults["csv"] = output["csv"]
-    # Note: opengraph removed - use [bloodhound.opengraph] output_dir instead
-    if "backup" in output:
-        defaults["backup"] = output["backup"]
+    if "formats" in output:
+        # New-style: output.formats = ["plain", "json"]
+        defaults["output"] = ",".join(output["formats"])
+    if "dir" in output:
+        defaults["output_dir"] = output["dir"]
+    if "no_backup" in output:
+        defaults["no_backup"] = output["no_backup"]
     if "no_summary" in output:
         defaults["no_summary"] = output["no_summary"]
     if "debug" in output:
         defaults["debug"] = output["debug"]
     if "verbose" in output:
         defaults["verbose"] = output["verbose"]
-
-    # Audit Mode
-    audit = config_data.get("audit", {})
-    if "enabled" in audit:
-        defaults["audit_mode"] = audit["enabled"]
-    if "html_report" in audit:
-        defaults["html_report"] = audit["html_report"]
 
     return defaults
 
@@ -520,10 +510,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--bh-opengraph",
         action="store_true",
         help="Generate BloodHound OpenGraph JSON files (auto-enabled if taskhound.toml has valid BHCE credentials). "
-        "REQUIRES --bhce or type=bhce in config - NOT compatible with Legacy BloodHound!",
-    )
-    bhog.add_argument(
-        "--bh-output", default="./opengraph", help="Directory to save BloodHound OpenGraph files (default: ./opengraph)"
+        "REQUIRES --bhce or type=bhce in config - NOT compatible with Legacy BloodHound! "
+        "Files are saved to {output_dir}/opengraph/",
     )
     bhog.add_argument(
         "--bh-no-upload",
@@ -670,32 +658,25 @@ def build_parser() -> argparse.ArgumentParser:
     cache_group.add_argument("--cache-file", help="Path to cache file (default: ~/.taskhound/cache.db)")
 
     # Output options
-    out = ap.add_argument_group("Output options")
-    out.add_argument("--plain", help="Directory to save normal text output (per target)")
-    out.add_argument("--json", help="Write all results to a JSON file")
-    out.add_argument("--csv", help="Write all results to a CSV file")
-    out.add_argument("--backup", help="Directory to save raw XML task files (per target)")
+    out = ap.add_argument_group(
+        "Output options",
+        description="Control output formats and directory structure. All outputs go to --output-dir with type-specific subdirectories."
+    )
+    out.add_argument(
+        "-o", "--output",
+        help="Output formats (comma-separated): plain,json,csv,html. Example: --output json,html (default: plain)",
+    )
+    out.add_argument(
+        "--output-dir",
+        default="./output",
+        help="Base output directory (default: ./output). Creates subdirs per output type.",
+    )
     out.add_argument(
         "--no-backup",
         action="store_true",
-        help="Disable automatic backup when using --offline-disk (ephemeral analysis, nothing saved)",
+        help="Disable raw backup collection (XML task files + DPAPI loot). By default, backups are saved to <output-dir>/raw_backups/",
     )
     out.add_argument("--no-summary", action="store_true", help="Disable summary table at the end of the run")
-
-    # Audit Mode options
-    audit = ap.add_argument_group(
-        "Audit Mode",
-        description="Generate comprehensive security audit reports with severity scoring and remediation recommendations."
-    )
-    audit.add_argument(
-        "--audit-mode",
-        action="store_true",
-        help="Enable audit mode: Generate HTML security report with severity scoring, statistics, and recommendations.",
-    )
-    audit.add_argument(
-        "--html-report",
-        help="Path to save the HTML audit report (default: taskhound_audit_report.html). Implies --audit-mode.",
-    )
 
     # Misc
     misc = ap.add_argument_group("Misc")
@@ -709,10 +690,31 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+# Valid output format types
+VALID_OUTPUT_FORMATS = {"plain", "json", "csv", "html"}
+
+
 def validate_args(args):
     # Initialize no_rpc if not present (for backwards compatibility)
     if not hasattr(args, 'no_rpc'):
         args.no_rpc = False
+
+    # Parse and validate --output formats
+    args.output_formats = set()
+    if args.output:
+        for fmt in args.output.lower().split(","):
+            fmt = fmt.strip()
+            if fmt not in VALID_OUTPUT_FORMATS:
+                print(f"[!] ERROR: Invalid output format '{fmt}'")
+                print(f"[!] Valid formats: {', '.join(sorted(VALID_OUTPUT_FORMATS))}")
+                sys.exit(1)
+            args.output_formats.add(fmt)
+    else:
+        # Default to plain output
+        args.output_formats = {"plain"}
+
+    # Derive backup flag (default ON, --no-backup disables)
+    args.backup = not getattr(args, 'no_backup', False)
 
     # Handle --opsec as alias for all noise-reducing flags
     # --opsec sets all disable flags for maximum stealth

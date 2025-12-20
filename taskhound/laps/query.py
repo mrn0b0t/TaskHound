@@ -199,7 +199,8 @@ def query_laps_passwords(
                 if cred:
                     cache.add(cred)
                     debug(f"LAPS: Found {cred.laps_type} password for {cred.computer_name}")
-                    if cred.laps_type == "mslaps-encrypted":
+                    # Count successfully decrypted Windows LAPS (encrypted type but now decrypted)
+                    if cred.laps_type == "mslaps-encrypted" and not cred.encrypted:
                         decrypted_count += 1
             except Exception as e:
                 debug(f"LAPS: Failed to parse entry: {e}")

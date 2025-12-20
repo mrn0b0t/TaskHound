@@ -336,7 +336,7 @@ class TestProcessOfflineDPAPIDecryption:
             mock_decrypt.assert_called_once()
 
     def test_combined_backup_loot_structure(self):
-        """Detects combined --backup --loot structure."""
+        """Detects combined backup + loot structure (raw_backups/<host>/dpapi_loot/)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create combined structure: host_dir/dpapi_loot/
             dpapi_dir = os.path.join(tmpdir, "dpapi_loot")

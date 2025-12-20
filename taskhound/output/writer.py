@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from rich import box
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from ..utils.logging import good
@@ -17,12 +18,15 @@ def _rows_to_dicts(rows: List[Any]) -> List[Dict]:
     return [row.to_dict() if hasattr(row, "to_dict") else row for row in rows]
 
 
-def _format_task_table(row_dict: Dict[str, Any]) -> Table:
+def _format_task_table(row_dict: Dict[str, Any], hostname: str = None) -> Table:
     """
-    Format a single task as a Rich table.
+    Format a single task as a Rich table matching README demo format.
+
+    Uses SQUARE box style with title as header row for clean output.
 
     Args:
         row_dict: Task data as dictionary
+        hostname: Optional hostname to include in title
 
     Returns:
         Rich Table object
@@ -44,72 +48,172 @@ def _format_task_table(row_dict: Dict[str, Any]) -> Table:
         tag = "[TASK]"
 
     rel_path = row_dict.get("path", "Unknown")
-    title = f"[{header_style}]{tag}[/] {rel_path}"
+    
+    # Build title with hostname if provided
+    if hostname:
+        title = f"[{header_style}]{tag}[/] {hostname} - {rel_path}"
+    else:
+        title = f"[{header_style}]{tag}[/] {rel_path}"
 
+    # Use SQUARE box style with title as header - matches README format
     table = Table(
-        title=title,
-        title_style=header_style,
+        box=box.SQUARE,
+        show_header=True,
+        header_style=header_style,
         border_style=border_style,
-        box=box.ROUNDED,
-        show_header=False,
         expand=False,
         padding=(0, 1),
+        width=80,
     )
 
-    table.add_column("Field", style=COLORS["label"], width=18)
-    table.add_column("Value", style=COLORS["value"])
+    # Single column with title as header
+    table.add_column(title, style=COLORS["value"])
+
+    # Helper to format field rows in README style: "Field          │ Value"
+    def add_field(label: str, value: str):
+        # Pad label to 16 chars for alignment
+        formatted = f"[{COLORS['label']}]{label:<16}[/] │ {value}"
+        table.add_row(formatted)
 
     # Build rows from task data
     if row_dict.get("enabled"):
-        table.add_row("Enabled", row_dict["enabled"])
+        add_field("Enabled", row_dict["enabled"])
 
     runas = row_dict.get("runas", "")
     resolved = row_dict.get("resolved_runas")
     display_runas = f"{resolved} ({runas})" if resolved and runas.startswith("S-1-5-") else runas
     if display_runas:
-        table.add_row("RunAs", display_runas)
+        add_field("RunAs", display_runas)
 
     if row_dict.get("decrypted_password"):
-        table.add_row("Decrypted Pwd", f"[{COLORS['password']}]{row_dict['decrypted_password']}[/]")
+        add_field("Decrypted Pwd", f"[{COLORS['password']}]{row_dict['decrypted_password']}[/]")
 
     if row_dict.get("logon_type"):
-        table.add_row("Logon Type", row_dict["logon_type"])
+        add_field("Logon Type", row_dict["logon_type"])
 
     command = row_dict.get("command", "")
     args = row_dict.get("arguments", "")
     what = f"{command} {args}".strip() if args else command
     if what:
-        table.add_row("Command", what)
+        add_field("What", what)
 
     if row_dict.get("author"):
-        table.add_row("Author", row_dict["author"])
+        add_field("Author", row_dict["author"])
 
     if row_dict.get("date"):
-        table.add_row("Date", row_dict["date"])
+        add_field("Date", row_dict["date"])
+
+    # Trigger information
+    trigger_type = row_dict.get("trigger_type")
+    if trigger_type:
+        trigger_info = _format_trigger_display(row_dict)
+        add_field("Trigger", trigger_info)
 
     if row_dict.get("password_analysis"):
-        table.add_row("Password Age", row_dict["password_analysis"])
+        add_field("Pwd Analysis", row_dict["password_analysis"])
 
     if row_dict.get("cred_status"):
         cred_val = row_dict.get("cred_detail", row_dict["cred_status"])
         if row_dict.get("cred_password_valid"):
-            table.add_row("Cred Validation", f"[green][+] {cred_val}[/]")
+            add_field("Cred Validation", f"[green]{cred_val}[/]")
         elif row_dict["cred_status"] == "invalid":
-            table.add_row("Cred Validation", f"[red][-] {cred_val}[/]")
+            add_field("Cred Validation", f"[red]{cred_val}[/]")
         else:
-            table.add_row("Cred Validation", f"[yellow][?] {cred_val}[/]")
+            add_field("Cred Validation", f"[yellow]{cred_val}[/]")
+
+        # Show last run time if available
+        if row_dict.get("cred_last_run"):
+            add_field("Last Run", row_dict["cred_last_run"])
+
+        # Show return code with description if available
+        if row_dict.get("cred_return_code"):
+            code = row_dict["cred_return_code"]
+            code_desc = _get_return_code_desc(code)
+            add_field("Return Code", f"{code} ({code_desc})" if code_desc else code)
 
     # Credential Guard status - show both enabled and disabled states
     if row_dict.get("credential_guard") is not None:
         if row_dict["credential_guard"]:
-            table.add_row("Cred Guard", "[red]ENABLED[/] - DPAPI extraction will fail")
+            add_field("Cred Guard", "[red]ENABLED - DPAPI extraction will fail[/]")
         else:
-            table.add_row("Cred Guard", "[green]DISABLED[/] - DPAPI extraction possible")
+            add_field("Cred Guard", "[green]DISABLED - DPAPI extraction possible[/]")
 
     if row_dict.get("reason"):
-        table.add_row("Reason", row_dict["reason"])
+        add_field("Reason", row_dict["reason"])
 
     return table
+
+
+def _format_trigger_display(row_dict: Dict[str, Any]) -> str:
+    """Format trigger information for plain text display."""
+    trigger_type = row_dict.get("trigger_type", "")
+    parts = [trigger_type]
+
+    start_boundary = row_dict.get("start_boundary")
+    interval = row_dict.get("interval")
+    days_interval = row_dict.get("days_interval")
+
+    details = []
+
+    if start_boundary:
+        # Simplify ISO date for display
+        if "T" in start_boundary:
+            date_part = start_boundary.split("T")[0]
+            time_part = start_boundary.split("T")[1].split(".")[0].split("+")[0].split("-")[0][:5]
+            details.append(f"starts {date_part} {time_part}")
+        else:
+            details.append(f"starts {start_boundary}")
+
+    if interval:
+        # Parse ISO 8601 duration (PT5M = 5 minutes, PT1H = 1 hour)
+        if interval.startswith("PT"):
+            interval_clean = interval[2:]
+            if interval_clean.endswith("M"):
+                details.append(f"every {interval_clean[:-1]}min")
+            elif interval_clean.endswith("H"):
+                details.append(f"every {interval_clean[:-1]}h")
+            elif interval_clean.endswith("S"):
+                details.append(f"every {interval_clean[:-1]}s")
+            else:
+                details.append(f"every {interval}")
+        else:
+            details.append(f"every {interval}")
+
+    if days_interval:
+        if days_interval == "1":
+            details.append("daily")
+        else:
+            details.append(f"every {days_interval} days")
+
+    if details:
+        return f"{trigger_type} ({', '.join(details)})"
+    return trigger_type
+
+
+def _get_return_code_desc(code: str) -> str:
+    """Get human-readable description for common return codes."""
+    try:
+        code_int = int(code, 16) if code.startswith("0x") else int(code)
+    except (ValueError, TypeError):
+        return ""
+
+    # Common scheduled task return codes
+    code_map = {
+        0x0: "Success",
+        0x1: "Incorrect function",
+        0x41300: "Task is ready to run",
+        0x41301: "Task is running",
+        0x41302: "Task is disabled",
+        0x41303: "Task not yet run",
+        0x41304: "No more runs scheduled",
+        0x41306: "Task terminated",
+        0x8007052E: "Logon failure (wrong password)",
+        0x80070532: "Password expired",
+        0x80070005: "Access denied",
+        0x80070002: "File not found",
+        0x800704DD: "Service not available",
+    }
+    return code_map.get(code_int, "")
 
 
 def write_rich_plain(outdir: str, all_rows: List[Any], force_color: bool = True):
@@ -246,35 +350,45 @@ def _write_summary_file(outdir: str, hosts: Dict[str, List[Dict]], force_color: 
         border_style="dim",
         show_header=True,
         header_style="bold white",
+        box=None,
     )
-    host_table.add_column("Host", style="white")
-    host_table.add_column("TIER-0", style="red", justify="right")
-    host_table.add_column("PRIV", style="yellow", justify="right")
-    host_table.add_column("TASK", style="green", justify="right")
-    host_table.add_column("Status", style="dim")
+    host_table.add_column("Hostname", style="white")
+    host_table.add_column("Tier-0", style="red", justify="center")
+    host_table.add_column("Privileged", style="yellow", justify="center")
+    host_table.add_column("Normal", style="green", justify="center")
 
     for host, rows in sorted(hosts.items()):
         t0 = sum(1 for r in rows if r.get("type") == "TIER-0")
         priv = sum(1 for r in rows if r.get("type") == "PRIV")
         task = sum(1 for r in rows if r.get("type") == "TASK")
-        failures = [r for r in rows if r.get("type") == "FAILURE"]
 
-        if failures:
-            status = f"[red][-] {failures[0].get('reason', 'Failed')}[/]"
-        elif t0 > 0:
-            status = "[bold red][!] HIGH VALUE[/]"
-        elif priv > 0:
-            status = "[yellow][+] Privileged found[/]"
-        else:
-            status = "[green][+] OK[/]"
+        host_table.add_row(host, str(t0), str(priv), str(task))
 
-        host_table.add_row(host, str(t0), str(priv), str(task), status)
-
-    file_console.print(host_table)
+    # Wrap in panel to match README demo format
+    file_console.print(Panel(host_table, title="[bold]TASK SUMMARY[/]", border_style="cyan"))
     file_console.print()
 
+    # Failed hosts section
+    failed_hosts = [(h, r) for h, r in hosts.items() if any(row.get("type") == "FAILURE" for row in r)]
+    if failed_hosts:
+        failed_table = Table(
+            border_style="dim",
+            show_header=True,
+            header_style="bold white",
+            box=None,
+        )
+        failed_table.add_column("Hostname", style="white")
+        failed_table.add_column("Error", style="red")
+
+        for host, rows in failed_hosts:
+            failure = next((r for r in rows if r.get("type") == "FAILURE"), None)
+            if failure:
+                failed_table.add_row(host, failure.get("reason", "Unknown error"))
+
+        file_console.print(Panel(failed_table, title="[bold]FAILED HOSTS[/]", border_style="red"))
+        file_console.print()
+
     # Footer with output location info
-    file_console.print("[dim]─" * 60 + "[/]")
     file_console.print("[dim]Task details are in per-host subdirectories (host/tasks.txt)[/]")
     file_console.print()
 

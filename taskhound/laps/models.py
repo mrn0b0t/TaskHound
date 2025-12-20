@@ -107,7 +107,8 @@ class LAPSCache:
             self.mslaps_count += 1
 
         # Persist to SQLite cache if enabled
-        if persist:
+        # Don't persist encrypted/failed credentials - they should be retried with fresh auth
+        if persist and not cred.encrypted:
             self._persist_credential(key, cred)
 
     @staticmethod
@@ -295,11 +296,16 @@ class LAPSCache:
                         sqlite_cache.delete(LAPS_CACHE_CATEGORY, key)
                         continue
 
+                    # Skip encrypted credentials - they should be retried with fresh auth
+                    # (these shouldn't be in the cache anymore, but handle legacy entries)
+                    if cred.encrypted:
+                        debug(f"LAPS: Skipping encrypted cached credential {key} (requires fresh auth)")
+                        sqlite_cache.delete(LAPS_CACHE_CATEGORY, key)
+                        continue
+
                     # Add to cache without re-persisting
                     cache._cache[normalized_key] = cred
-                    if cred.encrypted:
-                        cache.encrypted_count += 1
-                    elif cred.laps_type == "legacy":
+                    if cred.laps_type == "legacy":
                         cache.legacy_count += 1
                     elif cred.laps_type in ("mslaps", "mslaps-encrypted"):
                         cache.mslaps_count += 1

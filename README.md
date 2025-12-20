@@ -302,10 +302,13 @@ nxc smb moe.thesimpsons.local -u homer.simpson -p 'Doh!123' --lsa
 # Step 2a: Loot + decrypt immediately (looting is default, just add key)
 taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --dpapi-key 0x51e43225...
 
-# Step 2b: Or collect now (default), decrypt later
-taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --backup ./collected
+# Step 2b: Or collect now (default saves to ./output/raw_backups/), decrypt later
+taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local
 # Later:
-taskhound --offline ./collected/moe.thesimpsons.local --dpapi-key 0x51e43225...
+taskhound --offline ./output/raw_backups/moe.thesimpsons.local --dpapi-key 0x51e43225...
+
+# Custom output directory
+taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --output-dir ./collected
 
 # Disable DPAPI looting explicitly
 taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --no-loot
@@ -342,13 +345,19 @@ Output includes validation status:
 Generate HTML security reports for blue team assessments.
 
 ```bash
-taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets --audit-mode --html-report ./audit_report.html
+# Generate HTML report (add html to output formats)
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o html
+
+# Multiple output formats
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o plain,json,html
+
+# Custom output directory
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o html --output-dir ./audit_results
 ```
 
 Reports include:
 - Severity scoring per task
 - Task details and metadata
-- Exportable findings
 
 ---
 
@@ -467,7 +476,10 @@ TaskHound is **very noisy by default** - all features are enabled for maximum vi
 - **LDAP resolution** - Enabled by default (disable with `--no-ldap`)
 - **RPC operations** - Enabled by default (disable with `--no-rpc`)
 
-For red team/stealth operations, use `--opsec` to disable all noisy features at once. (Or use the BOF).
+> [!WARNING]
+> **Credential Guard checks are HIGHLY detectable.** Since the Remote Registry service is stopped by default on modern Windows, TaskHound will remotely **start the service** via SCM, perform the checks, then stop it (Just like secretsdump). This will make any decent SOC light up like a Christmas tree. **Definitely use `--no-credguard` if you want to avoid this in engagements!**
+
+Speaking of Engagements: For red team/stealth operations, use `--opsec` to disable all noisy features at once. (Or use the BOF).
 
 ### Usage Examples
 
@@ -591,16 +603,21 @@ CACHE OPTIONS
   --cache-file          Cache file path
 
 OUTPUT OPTIONS
-  --plain               Save text output per target
-  --json                Export to JSON file
-  --csv                 Export to CSV file
-  --backup              Save raw XML files
-  --no-backup           Disable auto-backup (offline-disk)
+  -o, --output          Output formats (comma-separated: plain,json,csv,html)
+                        Default: plain
+  --output-dir          Base output directory (default: ./output)
+  --no-backup           Disable raw XML backup collection
   --no-summary          Disable summary table
 
-AUDIT OPTIONS
-  --audit-mode          Generate HTML security report
-  --html-report         HTML report path
+  Output directory structure:
+    ./output/
+    ├── plain/<host>/tasks.txt    # Plain text output
+    ├── json/taskhound.json       # JSON export
+    ├── csv/taskhound.csv         # CSV export
+    ├── html/taskhound.html       # HTML security report
+    └── raw_backups/<host>/       # Raw XML + DPAPI files
+        ├── tasks/                # Task XML files
+        └── dpapi_loot/           # DPAPI files (with --loot)
 
 MISC
   --verbose             Verbose output

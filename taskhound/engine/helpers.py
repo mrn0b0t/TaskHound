@@ -42,18 +42,25 @@ def setup_backup_directory(target: str, backup_dir: Optional[str], debug: bool =
     """
     Create backup directory structure for raw XML files.
 
+    Directory structure:
+        backup_dir/
+        └── <target>/
+            └── tasks/       <- XML files go here
+                └── *.xml
+
     Args:
         target: Target host identifier
-        backup_dir: Base backup directory path
+        backup_dir: Base backup directory path (e.g., ./output/raw_backups)
         debug: Enable debug output
 
     Returns:
-        Path to target-specific backup directory, or None if disabled/failed
+        Path to target-specific tasks backup directory, or None if disabled/failed
     """
     if not backup_dir:
         return None
 
-    backup_target_dir = os.path.join(backup_dir, target)
+    # Create tasks subdirectory for XML files
+    backup_target_dir = os.path.join(backup_dir, target, "tasks")
     try:
         os.makedirs(backup_target_dir, exist_ok=True)
         good(f"{target}: Raw XML backup enabled - saving to {backup_target_dir}")
@@ -214,8 +221,12 @@ def perform_dpapi_looting(
             from ..dpapi.looter import collect_dpapi_files
 
             # Create loot directory structure
+            # backup_target_dir points to raw_backups/<host>/tasks/
+            # We need dpapi to go to raw_backups/<host>/dpapi_loot/
             if backup_target_dir:
-                loot_target_dir = os.path.join(backup_target_dir, "dpapi_loot")
+                # Go up from tasks/ to host dir, then into dpapi_loot/
+                host_backup_dir = os.path.dirname(backup_target_dir)
+                loot_target_dir = os.path.join(host_backup_dir, "dpapi_loot")
             else:
                 loot_base_dir = "dpapi_loot"
                 loot_target_dir = os.path.join(loot_base_dir, target)
@@ -245,7 +256,7 @@ def perform_dpapi_looting(
                 "",
                 "  2. Decrypt with the userkey:",
                 f"     taskhound -t {target} -u <user> -p <pass> \\",
-                "              --loot --dpapi-key <dpapi_userkey>",
+                "              --dpapi-key <dpapi_userkey>",
                 "",
                 f"See {os.path.join(loot_target_dir, 'README.txt')} for detailed instructions",
                 "=" * 80,

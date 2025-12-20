@@ -407,7 +407,8 @@ class TestWriteRichPlain:
 
         summary = (temp_output_dir / "summary.txt").read_text()
         assert "Hosts Scanned" in summary
-        assert "TIER-0" in summary
+        # Summary shows "Tier-0" in table header (title case)
+        assert "Tier-0" in summary
         assert "Privileged" in summary
 
 
@@ -415,20 +416,21 @@ class TestFormatTaskTable:
     """Tests for _format_task_table helper function"""
 
     def test_tier0_styling(self):
-        """Should use red styling for TIER-0 tasks"""
+        """Should include TIER-0 tag in header column"""
         table = _format_task_table({"type": "TIER-0", "path": "\\Task1"})
-        assert table.title is not None
-        assert "TIER-0" in table.title
+        # Title is now in the column header, not table.title
+        assert table.columns[0].header is not None
+        assert "TIER-0" in str(table.columns[0].header)
 
     def test_priv_styling(self):
-        """Should use yellow styling for PRIV tasks"""
+        """Should include PRIV tag in header column"""
         table = _format_task_table({"type": "PRIV", "path": "\\Task1"})
-        assert "PRIV" in table.title
+        assert "PRIV" in str(table.columns[0].header)
 
     def test_task_styling(self):
-        """Should use green styling for TASK tasks"""
+        """Should include TASK tag in header column"""
         table = _format_task_table({"type": "TASK", "path": "\\Task1"})
-        assert "TASK" in table.title
+        assert "TASK" in str(table.columns[0].header)
 
     def test_includes_runas(self):
         """Should include RunAs in table"""
@@ -449,3 +451,57 @@ class TestFormatTaskTable:
             "resolved_runas": "DOMAIN\\user"
         })
         assert table.row_count > 0
+
+    def test_trigger_info_calendar(self):
+        """Should include trigger information for calendar triggers"""
+        table = _format_task_table({
+            "type": "TASK",
+            "path": "\\Task1",
+            "trigger_type": "Calendar",
+            "start_boundary": "2024-01-01T08:00:00",
+            "interval": "PT30M",
+            "days_interval": "1"
+        })
+        assert table.row_count > 0
+
+    def test_cred_validation_with_last_run(self):
+        """Should include last run time in credential validation output"""
+        table = _format_task_table({
+            "type": "TASK",
+            "path": "\\Task1",
+            "cred_status": "valid",
+            "cred_password_valid": True,
+            "cred_last_run": "2024-01-15T10:30:00",
+            "cred_return_code": "0x0"
+        })
+        assert table.row_count > 0
+
+    def test_return_code_description(self):
+        """Should include return code description for known codes"""
+        from taskhound.output.writer import _get_return_code_desc
+        assert _get_return_code_desc("0x0") == "Success"
+        assert _get_return_code_desc("0x8007052E") == "Logon failure (wrong password)"
+        assert _get_return_code_desc("0x80070532") == "Password expired"
+        assert _get_return_code_desc("0xDEADBEEF") == ""  # Unknown code
+
+    def test_trigger_display_formatting(self):
+        """Should format trigger display with details"""
+        from taskhound.output.writer import _format_trigger_display
+        
+        # Calendar with interval
+        result = _format_trigger_display({
+            "trigger_type": "Calendar",
+            "interval": "PT5M",
+            "days_interval": "1"
+        })
+        assert "Calendar" in result
+        assert "5min" in result
+        assert "daily" in result
+        
+        # Time trigger with start boundary
+        result = _format_trigger_display({
+            "trigger_type": "Time",
+            "start_boundary": "2024-01-01T08:00:00"
+        })
+        assert "Time" in result
+        assert "2024-01-01" in result

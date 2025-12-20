@@ -14,10 +14,9 @@ def mock_tomllib():
 def test_load_output_config(mock_tomllib):
     toml_content = {
         "output": {
-            "plain": "./out/plain",
-            "json": "./out/results.json",
-            "csv": "./out/results.csv",
-            "backup": "./out/backup",
+            "formats": ["plain", "json", "csv"],
+            "dir": "./out",
+            "no_backup": False,
             "no_summary": True,
             "debug": True,
         }
@@ -28,10 +27,9 @@ def test_load_output_config(mock_tomllib):
     with patch("builtins.open", mock_open(read_data=b"mock data")), patch("os.path.exists", return_value=True):
         config = load_config()
 
-    assert config["plain"] == "./out/plain"
-    assert config["json"] == "./out/results.json"
-    assert config["csv"] == "./out/results.csv"
-    assert config["backup"] == "./out/backup"
+    assert config["output"] == "plain,json,csv"
+    assert config["output_dir"] == "./out"
+    assert config["no_backup"] is False
     assert config["no_summary"] is True
     assert config["debug"] is True
 
@@ -429,3 +427,96 @@ class TestValidateArgs:
         validate_args(args)
         assert args.no_rpc is True
         assert args.no_ldap is False
+
+
+class TestOutputFlags:
+    """Tests for --output flag system."""
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_default_output_plain(self, mock_exists, mock_isdir):
+        """Test that default output is plain."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path"])
+        validate_args(args)
+        assert args.output_formats == {"plain"}
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_output_single_format(self, mock_exists, mock_isdir):
+        """Test single output format."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path", "-o", "json"])
+        validate_args(args)
+        assert args.output_formats == {"json"}
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_output_multiple_formats(self, mock_exists, mock_isdir):
+        """Test multiple output formats (comma-separated)."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path", "-o", "plain,json,csv"])
+        validate_args(args)
+        assert args.output_formats == {"plain", "json", "csv"}
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_output_all_formats(self, mock_exists, mock_isdir):
+        """Test all output formats."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path", "-o", "plain,json,csv,html"])
+        validate_args(args)
+        assert args.output_formats == {"plain", "json", "csv", "html"}
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_output_with_spaces_trimmed(self, mock_exists, mock_isdir):
+        """Test that spaces in format list are trimmed."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path", "-o", "plain, json, csv"])
+        validate_args(args)
+        assert args.output_formats == {"plain", "json", "csv"}
+
+    @patch("taskhound.config.sys.exit")
+    def test_output_invalid_format(self, mock_exit):
+        """Test that invalid output format causes exit."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path", "-o", "invalid"])
+        validate_args(args)
+        mock_exit.assert_called()
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_output_dir_default(self, mock_exists, mock_isdir):
+        """Test default output directory."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path"])
+        validate_args(args)
+        assert args.output_dir == "./output"
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_output_dir_custom(self, mock_exists, mock_isdir):
+        """Test custom output directory."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path", "--output-dir", "/custom/out"])
+        validate_args(args)
+        assert args.output_dir == "/custom/out"
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_backup_enabled_by_default(self, mock_exists, mock_isdir):
+        """Test that backup is enabled by default."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path"])
+        validate_args(args)
+        assert args.backup is True
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_no_backup_flag(self, mock_exists, mock_isdir):
+        """Test --no-backup disables backup."""
+        parser = build_parser()
+        args = parser.parse_args(["--offline", "/path", "--no-backup"])
+        validate_args(args)
+        assert args.backup is False

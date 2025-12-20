@@ -17,7 +17,6 @@ class BloodHoundConfig:
 
     # OpenGraph generation
     bh_opengraph: bool = False
-    bh_output: str = "./opengraph"
     bh_no_upload: bool = False
 
     # BloodHound connection
@@ -56,7 +55,6 @@ class BloodHoundConfig:
         config = cls(
             # OpenGraph
             bh_opengraph=args.bh_opengraph,
-            bh_output=args.bh_output,
             bh_no_upload=args.bh_no_upload,
             # Connection
             bh_connector=args.bh_connector,
