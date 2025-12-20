@@ -230,11 +230,10 @@ def _handle_exports(
     if args.csv:
         write_csv(args.csv, all_rows)
 
-    # Auto-enable plain output in concise mode (default) to ./output
-    is_concise = not (args.verbose or args.debug)
+    # Plain text output - explicit path or auto-generate to ./output
     if args.plain:
         write_rich_plain(args.plain, all_rows)
-    elif is_concise and all_rows:
+    elif all_rows:
         write_rich_plain("./output", all_rows)
 
     # Print decrypted credentials summary
