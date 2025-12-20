@@ -46,7 +46,7 @@ For backstory/lore and detailed explanations: see the associated [Blog Post](htt
 | **LDAP-based Tier-0 Detection** | Detect privileged accounts via group membership without BloodHound |
 | **Credential Validation** | Verify if stored task passwords are still valid via RPC |
 | **Offline Analysis** | Process mounted disk images or previously collected XMLs |
-| **Audit Mode** | Generate HTML security reports with severity scoring and remediation guidance |
+| **Multiple Output Formats** | Plain text, JSON, CSV, and HTML security reports with severity scoring |
 | **SID Resolution** | Multi-tier resolution via BloodHound → Cache → LSARPC → LDAP → GC |
 | **Caching** | SQLite-based persistent cache for SID lookups and LAPS credentials |
 
@@ -258,8 +258,8 @@ TaskHound creates custom nodes and edges in BloodHound CE to visualize scheduled
 # Collect and auto-upload
 taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --bh-opengraph
 
-# Generate without upload
-taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --bh-opengraph --bh-no-upload --bh-output ./opengraph
+# Generate without upload (saves to {output_dir}/opengraph/)
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --bh-opengraph --bh-no-upload
 ```
 
 > **Note**: OpenGraph is BHCE-only. Legacy BloodHound doesn't support custom node types.
@@ -340,24 +340,79 @@ Output includes validation status:
 
 ---
 
-## Audit Mode
+## Output Formats
 
-Generate HTML security reports for blue team assessments.
+TaskHound supports multiple output formats for different use cases. All outputs use a structured directory layout under `--output-dir` (default: `./output`).
+
+### Available Formats
+
+| Format | Flag | Description | Use Case |
+|--------|------|-------------|----------|
+| **Plain** | `-o plain` | Human-readable console output (default) | Interactive use, quick review |
+| **JSON** | `-o json` | Machine-readable structured export | Automation, data analysis, scripting |
+| **CSV** | `-o csv` | Spreadsheet-compatible export | Reporting, filtering, Excel analysis |
+| **HTML** | `-o html` | Security report with severity scoring | Blue team audits, stakeholder reports |
+
+### Usage Examples
 
 ```bash
-# Generate HTML report (add html to output formats)
-taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o html
+# Default - plain text to console + files
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local
 
 # Multiple output formats
 taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o plain,json,html
 
+# JSON only for automation
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o json
+
 # Custom output directory
 taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o html --output-dir ./audit_results
+
+# All formats for comprehensive audit
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets -o plain,json,csv,html --output-dir ./full_audit
 ```
 
-Reports include:
-- Severity scoring per task
-- Task details and metadata
+### Directory Structure
+
+```
+./output/                           # Base directory (--output-dir)
+├── plain/                          # Plain text output
+│   └── <hostname>/
+│       └── tasks.txt
+├── json/                           # JSON export
+│   └── taskhound.json
+├── csv/                            # CSV export
+│   └── taskhound.csv
+├── html/                           # HTML security reports
+│   └── taskhound.html
+├── opengraph/                      # BloodHound OpenGraph files
+│   └── taskhound_data.json
+└── raw_backups/                    # Raw collection (XML + DPAPI)
+    └── <hostname>/
+        ├── tasks/                  # Task XML files
+        └── dpapi_loot/             # DPAPI credential blobs
+```
+
+### HTML Security Reports
+
+The HTML output generates a comprehensive security report designed for blue team assessments:
+
+- **Severity Scoring**: Tasks rated by risk level based on privilege, stored credentials, and configuration
+- **Task Details**: Full metadata including triggers, actions, run-as accounts, and validation status
+- **Filtering**: Client-side filtering by host, severity, and credential status
+- **Export Ready**: Suitable for management reports and audit documentation
+
+### Backup Collection
+
+By default, TaskHound saves raw XML task files and DPAPI credential blobs for offline analysis:
+
+```bash
+# Disable backup collection
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --no-backup
+
+# Analyze backups later (offline mode)
+taskhound --offline ./output/raw_backups/moe.thesimpsons.local --dpapi-key 0x51e43225...
+```
 
 ---
 
@@ -570,8 +625,7 @@ BLOODHOUND OPTIONS
   --bh-save             Save query results to file
 
 OPENGRAPH OPTIONS (BHCE ONLY)
-  --bh-opengraph        Generate OpenGraph JSON files
-  --bh-output           Output directory (default: ./opengraph)
+  --bh-opengraph        Generate OpenGraph JSON files (saves to {output_dir}/opengraph/)
   --bh-no-upload        Skip automatic upload
   --bh-force-icon       Force icon update
   --bh-icon             Icon name (default: clock)
@@ -615,9 +669,10 @@ OUTPUT OPTIONS
     ├── json/taskhound.json       # JSON export
     ├── csv/taskhound.csv         # CSV export
     ├── html/taskhound.html       # HTML security report
+    ├── opengraph/                # BloodHound OpenGraph files
     └── raw_backups/<host>/       # Raw XML + DPAPI files
         ├── tasks/                # Task XML files
-        └── dpapi_loot/           # DPAPI files (with --loot)
+        └── dpapi_loot/           # DPAPI credential blobs
 
 MISC
   --verbose             Verbose output
@@ -637,7 +692,7 @@ When caffeine intake and free time align:
 - ~~LAPS Support - Windows LAPS + Legacy + encrypted via MS-GKDI~~
 - ~~Multi-threaded Processing - Parallel scanning with rate limiting~~
 - ~~Credential Validation - RPC-based password validity checking~~
-- ~~Audit Mode - HTML reports with severity scoring~~
+- ~~Multiple Output Formats - Plain, JSON, CSV, HTML with structured directory layout~~
 - ~~Auto-target Discovery - LDAP-based computer enumeration~~
 - ~~Offline Disk Mode - Mounted disk image analysis~~
 - ~~Persistent Caching - SQLite cache for SID/LAPS data~~
