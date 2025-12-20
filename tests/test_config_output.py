@@ -309,35 +309,31 @@ class TestValidateArgs:
         # Should have called sys.exit because LAPS needs --dc-ip
         mock_exit.assert_called()
 
-    @patch("taskhound.config.sys.exit")
-    def test_validate_creds_with_opsec_exits(self, mock_exit):
-        """Test that --validate-creds with --opsec exits with error."""
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_no_validate_creds_flag(self, mock_exists, mock_isdir):
+        """Test that --no-validate-creds disables credential validation."""
         parser = build_parser()
         args = parser.parse_args([
             "--offline", "/path",
-            "--validate-creds",
-            "--opsec",
+            "--no-validate-creds",
         ])
         validate_args(args)
-        # Should have called sys.exit because validate-creds is incompatible with opsec
-        mock_exit.assert_called_with(1)
+        # validate_creds should be False
+        assert args.validate_creds is False
 
     @patch("taskhound.config.os.path.isdir", return_value=True)
     @patch("taskhound.config.os.path.exists", return_value=True)
-    @patch("taskhound.config.sys.exit")
-    def test_opsec_disables_credguard_detect(self, mock_exit, mock_exists, mock_isdir):
-        """Test that --opsec disables --credguard-detect."""
+    def test_opsec_disables_credguard_detect(self, mock_exists, mock_isdir):
+        """Test that --opsec disables credguard detection."""
         parser = build_parser()
         args = parser.parse_args([
             "--offline", "/path",
             "--opsec",
-            "--credguard-detect",
         ])
         validate_args(args)
-        # credguard_detect should be set to False
+        # credguard_detect should be set to False via --opsec
         assert args.credguard_detect is False
-        # Should not exit (no incompatible flags)
-        mock_exit.assert_not_called()
 
     @patch("taskhound.config.os.path.isdir", return_value=True)
     @patch("taskhound.config.os.path.exists", return_value=True)
@@ -354,14 +350,12 @@ class TestValidateArgs:
 
     @patch("taskhound.config.os.path.isdir", return_value=True)
     @patch("taskhound.config.os.path.exists", return_value=True)
-    def test_validate_creds_without_opsec_passes(self, mock_exists, mock_isdir):
-        """Test that --validate-creds without --opsec passes validation."""
+    def test_validate_creds_default_enabled(self, mock_exists, mock_isdir):
+        """Test that credential validation is enabled by default."""
         parser = build_parser()
         args = parser.parse_args([
             "--offline", "/path",
-            "--validate-creds",
         ])
-        # Should not raise or exit
         validate_args(args)
         assert args.validate_creds is True
 
@@ -379,8 +373,8 @@ class TestValidateArgs:
 
     @patch("taskhound.config.os.path.isdir", return_value=True)
     @patch("taskhound.config.os.path.exists", return_value=True)
-    def test_opsec_sets_both_no_ldap_and_no_rpc(self, mock_exists, mock_isdir):
-        """Test that --opsec sets both --no-ldap and --no-rpc."""
+    def test_opsec_sets_all_disable_flags(self, mock_exists, mock_isdir):
+        """Test that --opsec sets all noise-reducing flags."""
         parser = build_parser()
         args = parser.parse_args([
             "--offline", "/path",
@@ -390,33 +384,25 @@ class TestValidateArgs:
         assert args.opsec is True
         assert args.no_ldap is True
         assert args.no_rpc is True
-
-    @patch("taskhound.config.sys.exit")
-    def test_validate_creds_with_no_rpc_exits(self, mock_exit):
-        """Test that --validate-creds with --no-rpc exits with error."""
-        parser = build_parser()
-        args = parser.parse_args([
-            "--offline", "/path",
-            "--validate-creds",
-            "--no-rpc",
-        ])
-        validate_args(args)
-        # Should have called sys.exit because validate-creds requires RPC
-        mock_exit.assert_called_with(1)
+        assert args.loot is False
+        assert args.credguard_detect is False
+        assert args.validate_creds is False
 
     @patch("taskhound.config.os.path.isdir", return_value=True)
     @patch("taskhound.config.os.path.exists", return_value=True)
-    def test_no_rpc_disables_credguard_detect(self, mock_exists, mock_isdir):
-        """Test that --no-rpc disables --credguard-detect."""
+    def test_no_rpc_disables_credguard_and_validate(self, mock_exists, mock_isdir):
+        """Test that --no-rpc disables credguard and validation (they require RPC)."""
         parser = build_parser()
         args = parser.parse_args([
             "--offline", "/path",
             "--no-rpc",
-            "--credguard-detect",
         ])
         validate_args(args)
-        # credguard_detect should be set to False
+        # credguard_detect and validate_creds should be disabled
         assert args.credguard_detect is False
+        assert args.validate_creds is False
+        # But loot should still be enabled
+        assert args.loot is True
 
     @patch("taskhound.config.os.path.isdir", return_value=True)
     @patch("taskhound.config.os.path.exists", return_value=True)

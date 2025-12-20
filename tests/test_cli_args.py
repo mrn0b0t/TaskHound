@@ -25,7 +25,7 @@ def test_help_output_includes_dpapi():
 
         output = sys.stdout.getvalue()
 
-        assert "--loot" in output, "Missing --loot flag"
+        assert "--no-loot" in output, "Missing --no-loot flag"
         assert "--dpapi-key" in output, "Missing --dpapi-key flag"
         assert "DPAPI" in output, "Missing DPAPI section"
 
@@ -89,9 +89,9 @@ def test_dpapi_key_validation_with_targets_file():
 
     parser = build_parser()
 
-    # Test args that should trigger validation error
+    # Test args that should trigger validation error (loot is ON by default)
     args = parser.parse_args(
-        ["--targets-file", "fake.txt", "--dpapi-key", "0x123", "--loot", "-u", "user", "-p", "pass", "-d", "domain"]
+        ["--targets-file", "fake.txt", "--dpapi-key", "0x123", "-u", "user", "-p", "pass", "-d", "domain"]
     )
 
     # The validation condition is:

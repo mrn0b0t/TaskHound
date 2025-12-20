@@ -552,14 +552,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--opsec",
         action="store_true",
-        help="OPSEC safe mode: Alias for --no-ldap --no-rpc. Disables all LDAP and RPC operations. "
+        help="OPSEC safe mode: Disables noisy operations. Equivalent to --no-ldap --no-rpc --no-loot --no-credguard --no-validate-creds. "
         "SID resolution limited to BloodHound data and local cache only.",
     )
     scan.add_argument(
         "--no-rpc",
         action="store_true",
-        help="Disable RPC operations (LSARPC SID lookup, Credential Guard check, credential validation). "
-        "Does not affect SMB task enumeration. Use with --no-ldap for maximum stealth.",
+        help="Disable RPC operations (LSARPC SID lookup). Does not affect SMB task enumeration. "
+        "Note: Also disables Credential Guard detection and credential validation (which require RPC).",
     )
     scan.add_argument(
         "--include-ms", action="store_true", help="Also include \\Microsoft scheduled tasks (WARNING: very slow)"
@@ -580,31 +580,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show scheduled tasks that do not store credentials (unsaved credentials)",
     )
     scan.add_argument(
-        "--credguard-detect",
+        "--no-credguard",
         action="store_true",
-        default=False,
-        help="EXPERIMENTAL: Attempt to detect Credential Guard status via remote registry (default: off). Only use if you know your environment supports it.",
+        help="Disable Credential Guard detection via remote registry. Reduces RPC traffic.",
     )
     scan.add_argument(
-        "--validate-creds",
+        "--no-validate-creds",
         action="store_true",
-        default=False,
-        help="Query Task Scheduler RPC to validate stored credentials based on task execution history. "
-        "Determines if passwords are valid/invalid/expired by checking LastReturnCode. "
-        "Requires additional RPC traffic (\\pipe\\atsvc). Disabled in OPSEC mode.",
+        help="Disable credential validation via Task Scheduler RPC. Reduces RPC traffic.",
     )
 
     # DPAPI decryption options
     dpapi = ap.add_argument_group("DPAPI Credential Decryption")
     dpapi.add_argument(
-        "--loot",
+        "--no-loot",
         action="store_true",
-        default=False,
-        help="Automatically download and decrypt ALL Task Scheduler credential blobs (requires --dpapi-key)",
+        help="Disable automatic collection of DPAPI credential blobs. By default, TaskHound collects "
+        "credential files for offline decryption or immediate decryption if --dpapi-key is provided.",
     )
     dpapi.add_argument(
         "--dpapi-key",
-        help="DPAPI_SYSTEM userkey from LSA secrets dump (hex format, e.g., 0x51e43225e5b43b25d3768a2ae7f99934cb35d3ea)",
+        help="DPAPI_SYSTEM userkey from LSA secrets dump (hex format, e.g., 0x51e43225...). "
+        "When provided, collected credentials are decrypted immediately.",
     )
 
     # LDAP/SID Resolution options
@@ -717,48 +714,33 @@ def validate_args(args):
     if not hasattr(args, 'no_rpc'):
         args.no_rpc = False
 
-    # Handle --opsec as alias for --no-ldap --no-rpc
-    # --opsec sets both flags, but explicit flags can override with warnings
+    # Handle --opsec as alias for all noise-reducing flags
+    # --opsec sets all disable flags for maximum stealth
     if args.opsec:
-        # Track if user explicitly set these flags alongside --opsec
-        explicit_no_ldap = getattr(args, '_explicit_no_ldap', False)
-        explicit_no_rpc = getattr(args, '_explicit_no_rpc', False)
-
-        # Set the underlying flags (--opsec implies both)
+        # Set the underlying flags (--opsec implies all)
         if not args.no_ldap:
             args.no_ldap = True
         if not args.no_rpc:
             args.no_rpc = True
+        if not getattr(args, 'no_loot', False):
+            args.no_loot = True
+        if not getattr(args, 'no_credguard', False):
+            args.no_credguard = True
+        if not getattr(args, 'no_validate_creds', False):
+            args.no_validate_creds = True
 
-    # Handle explicit feature flags that override OPSEC protections
-    # These generate warnings but are allowed (user knows what they're doing)
-    opsec_active = args.opsec or (args.no_ldap and args.no_rpc)
+    # Derive enabled flags from the --no-* flags for cleaner logic
+    # These are the "effective" settings after processing --opsec and --no-rpc
+    args.credguard_detect = not getattr(args, 'no_credguard', False)
+    args.validate_creds = not getattr(args, 'no_validate_creds', False)
+    args.loot = not getattr(args, 'no_loot', False)
 
-    # --credguard-detect requires RPC (remote registry)
-    if args.credguard_detect:
-        if args.no_rpc:
-            print("[!] WARNING: --credguard-detect requires RPC (remote registry)")
-            if args.opsec:
-                print("[!] Disabling Credential Guard detection (--opsec mode)")
-                args.credguard_detect = False
-            else:
-                print("[!] Disabling Credential Guard detection (--no-rpc)")
-                args.credguard_detect = False
-
-    # --validate-creds requires RPC (Task Scheduler RPC)
-    if getattr(args, 'validate_creds', False):
-        if args.no_rpc:
-            print("[!] ERROR: --validate-creds is incompatible with --no-rpc")
-            print("[!] Credential validation requires Task Scheduler RPC queries (\\pipe\\atsvc)")
-            print("[!] These queries may trigger security monitoring.")
-            print("[!]")
-            print("[!] Options:")
-            if args.opsec:
-                print("[!]   1. Remove --opsec flag to validate credentials")
-            else:
-                print("[!]   1. Remove --no-rpc flag to validate credentials")
-            print("[!]   2. Remove --validate-creds flag to maintain stealth")
-            sys.exit(1)
+    # --no-rpc implies no credguard and no validate_creds (they require RPC)
+    if args.no_rpc:
+        if args.credguard_detect:
+            args.credguard_detect = False
+        if args.validate_creds:
+            args.validate_creds = False
 
     # Handle LAPS + OPSEC compatibility
     if getattr(args, "laps", False):
@@ -1005,19 +987,22 @@ def validate_args(args):
         print("[!] Each target has a unique DPAPI key - you cannot use the same key for multiple targets")
         print()
         print("[*] Valid workflows:")
-        print("    1. Single target with key:  --target <host> --loot --dpapi-key <key>")
-        print("    2. Collect from multiple:   --targets-file <file> --loot (without --dpapi-key)")
+        print("    1. Single target with key:  --target <host> --dpapi-key <key>")
+        print("    2. Collect from multiple:   --targets-file <file> (credentials collected automatically)")
         print("       Then decrypt offline:    --offline dpapi_loot/<target> --dpapi-key <target_key>")
         sys.exit(1)
 
-    # DPAPI loot validation for online mode
-    if args.loot and not args.offline and not args.dpapi_key:
-        # Online mode: --loot can work with or without --dpapi-key
-        # With key: live decryption
-        # Without key: offline collection
-        print("[*] --loot specified without --dpapi-key")
-        print("[*] Will collect DPAPI files for offline decryption")
-        print("[!] To decrypt immediately, obtain dpapi_userkey with: nxc smb <target> -u <user> -p <pass> --lsa")
+    # DPAPI messaging for online mode
+    if args.loot and not args.offline:
+        if args.dpapi_key:
+            # Single target with key: will collect and decrypt
+            print("[*] DPAPI key provided - credentials will be collected and decrypted immediately")
+        else:
+            # Multi-target or no key: collect for offline decryption
+            print("[*] DPAPI credential collection enabled (use --no-loot to disable)")
+            print("[*] Credentials will be saved for offline decryption")
+            print("[!] To decrypt immediately, provide --dpapi-key (single target only)")
+            print("[!] Obtain dpapi_userkey with: nxc smb <target> -u <user> -p <pass> --lsa")
         print()
 
     # DPAPI offline decryption validation

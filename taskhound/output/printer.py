@@ -246,6 +246,7 @@ def format_block(
     concise: bool = False,
     cred_validation: Optional[Dict[str, Any]] = None,
     resolved_runas: Optional[str] = None,
+    credential_guard: Optional[bool] = None,
 ) -> List[str]:
     """
     Format a task block for CLI output.
@@ -403,6 +404,13 @@ def format_block(
     gmsa_hint = _check_gmsa_account(display_runas, resolved_username)
     if gmsa_hint:
         rows.append(("gMSA Hint", gmsa_hint))
+
+    # Credential Guard status (shown when credguard_detect is enabled, which is default)
+    if credential_guard is not None:
+        if credential_guard:
+            rows.append(("Cred Guard", "[red]ENABLED[/] - DPAPI extraction will fail"))
+        else:
+            rows.append(("Cred Guard", "[green]DISABLED[/] - DPAPI extraction possible"))
 
     # Reason for privileged tasks
     if kind in ["TIER-0", "PRIV"]:

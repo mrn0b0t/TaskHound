@@ -99,8 +99,12 @@ def _format_task_table(row_dict: Dict[str, Any]) -> Table:
         else:
             table.add_row("Cred Validation", f"[yellow][?] {cred_val}[/]")
 
-    if row_dict.get("credential_guard"):
-        table.add_row("Credential Guard", "[yellow][!] Detected - DPAPI may fail[/]")
+    # Credential Guard status - show both enabled and disabled states
+    if row_dict.get("credential_guard") is not None:
+        if row_dict["credential_guard"]:
+            table.add_row("Cred Guard", "[red]ENABLED[/] - DPAPI extraction will fail")
+        else:
+            table.add_row("Cred Guard", "[green]DISABLED[/] - DPAPI extraction possible")
 
     if row_dict.get("reason"):
         table.add_row("Reason", row_dict["reason"])
