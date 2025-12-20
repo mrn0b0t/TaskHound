@@ -349,3 +349,144 @@ class TestGetLdapConnection:
 
         call_kwargs = mock_conn.login.call_args[1]
         assert call_kwargs["password"] == ""
+
+
+# ============================================================================
+# Test: enumerate_domain_computers_filtered
+# ============================================================================
+
+
+class TestEnumerateDomainComputersFiltered:
+    """Tests for enumerate_domain_computers_filtered function"""
+
+    @patch('taskhound.utils.ldap.get_ldap_connection')
+    def test_excludes_disabled_by_default(self, mock_get_conn):
+        """Should exclude disabled accounts by default"""
+        from taskhound.utils.ldap import enumerate_domain_computers_filtered
+
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_conn.search.return_value = []
+
+        enumerate_domain_computers_filtered(
+            dc_ip="192.168.1.1",
+            domain="example.com",
+            username="admin",
+            password="pass",
+        )
+
+        # Verify the LDAP filter includes disabled exclusion
+        call_args = mock_conn.search.call_args
+        search_filter = call_args[1]["searchFilter"]
+        # userAccountControl bit 2 = disabled
+        assert "userAccountControl:1.2.840.113556.1.4.803:=2" in search_filter
+        assert "!" in search_filter  # Negation for exclusion
+
+    @patch('taskhound.utils.ldap.get_ldap_connection')
+    def test_includes_disabled_when_requested(self, mock_get_conn):
+        """Should include disabled accounts when include_disabled=True"""
+        from taskhound.utils.ldap import enumerate_domain_computers_filtered
+
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_conn.search.return_value = []
+
+        enumerate_domain_computers_filtered(
+            dc_ip="192.168.1.1",
+            domain="example.com",
+            username="admin",
+            password="pass",
+            include_disabled=True,
+        )
+
+        call_args = mock_conn.search.call_args
+        search_filter = call_args[1]["searchFilter"]
+        # Should not have disabled exclusion
+        assert ":=2)" not in search_filter or "(!" not in search_filter
+
+    @patch('taskhound.utils.ldap.get_ldap_connection')
+    def test_excludes_dcs_by_default(self, mock_get_conn):
+        """Should exclude Domain Controllers by default"""
+        from taskhound.utils.ldap import enumerate_domain_computers_filtered
+
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_conn.search.return_value = []
+
+        enumerate_domain_computers_filtered(
+            dc_ip="192.168.1.1",
+            domain="example.com",
+            username="admin",
+            password="pass",
+        )
+
+        call_args = mock_conn.search.call_args
+        search_filter = call_args[1]["searchFilter"]
+        # userAccountControl bit 8192 = SERVER_TRUST_ACCOUNT (DC)
+        assert "8192" in search_filter
+
+    @patch('taskhound.utils.ldap.get_ldap_connection')
+    def test_applies_custom_ldap_filter(self, mock_get_conn):
+        """Should apply custom LDAP filter"""
+        from taskhound.utils.ldap import enumerate_domain_computers_filtered
+
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_conn.search.return_value = []
+
+        enumerate_domain_computers_filtered(
+            dc_ip="192.168.1.1",
+            domain="example.com",
+            username="admin",
+            password="pass",
+            ldap_filter="(operatingSystem=*Server*)",
+        )
+
+        call_args = mock_conn.search.call_args
+        search_filter = call_args[1]["searchFilter"]
+        assert "(operatingSystem=*Server*)" in search_filter
+
+    @patch('taskhound.utils.ldap.get_ldap_connection')
+    def test_requests_pwdlastset_attribute(self, mock_get_conn):
+        """Should request pwdLastSet attribute for stale filtering"""
+        from taskhound.utils.ldap import enumerate_domain_computers_filtered
+
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_conn.search.return_value = []
+
+        enumerate_domain_computers_filtered(
+            dc_ip="192.168.1.1",
+            domain="example.com",
+            username="admin",
+            password="pass",
+        )
+
+        call_args = mock_conn.search.call_args
+        attributes = call_args[1]["attributes"]
+        assert "pwdLastSet" in attributes
+
+    @patch('taskhound.utils.ldap.get_ldap_connection')
+    def test_disables_stale_filter_with_zero_threshold(self, mock_get_conn):
+        """Should disable stale filtering when threshold is 0"""
+        from taskhound.utils.ldap import enumerate_domain_computers_filtered
+
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_conn.search.return_value = []
+
+        enumerate_domain_computers_filtered(
+            dc_ip="192.168.1.1",
+            domain="example.com",
+            username="admin",
+            password="pass",
+            stale_threshold=0,  # Disable stale filtering
+        )
+
+        # Verify pwdLastSet is still requested (for consistency)
+        call_args = mock_conn.search.call_args
+        attributes = call_args[1]["attributes"]
+        assert "pwdLastSet" in attributes
+
+        # Just verify the function runs without error
+        mock_conn.search.assert_called_once()

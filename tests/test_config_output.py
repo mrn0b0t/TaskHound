@@ -364,3 +364,82 @@ class TestValidateArgs:
         # Should not raise or exit
         validate_args(args)
         assert args.validate_creds is True
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_no_rpc_flag_exists(self, mock_exists, mock_isdir):
+        """Test that --no-rpc flag is recognized."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--no-rpc",
+        ])
+        validate_args(args)
+        assert args.no_rpc is True
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_opsec_sets_both_no_ldap_and_no_rpc(self, mock_exists, mock_isdir):
+        """Test that --opsec sets both --no-ldap and --no-rpc."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--opsec",
+        ])
+        validate_args(args)
+        assert args.opsec is True
+        assert args.no_ldap is True
+        assert args.no_rpc is True
+
+    @patch("taskhound.config.sys.exit")
+    def test_validate_creds_with_no_rpc_exits(self, mock_exit):
+        """Test that --validate-creds with --no-rpc exits with error."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--validate-creds",
+            "--no-rpc",
+        ])
+        validate_args(args)
+        # Should have called sys.exit because validate-creds requires RPC
+        mock_exit.assert_called_with(1)
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_no_rpc_disables_credguard_detect(self, mock_exists, mock_isdir):
+        """Test that --no-rpc disables --credguard-detect."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--no-rpc",
+            "--credguard-detect",
+        ])
+        validate_args(args)
+        # credguard_detect should be set to False
+        assert args.credguard_detect is False
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_no_ldap_alone_without_no_rpc(self, mock_exists, mock_isdir):
+        """Test that --no-ldap alone doesn't set --no-rpc."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--no-ldap",
+        ])
+        validate_args(args)
+        assert args.no_ldap is True
+        assert args.no_rpc is False
+
+    @patch("taskhound.config.os.path.isdir", return_value=True)
+    @patch("taskhound.config.os.path.exists", return_value=True)
+    def test_no_rpc_alone_without_no_ldap(self, mock_exists, mock_isdir):
+        """Test that --no-rpc alone doesn't set --no-ldap."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline", "/path",
+            "--no-rpc",
+        ])
+        validate_args(args)
+        assert args.no_rpc is True
+        assert args.no_ldap is False

@@ -265,3 +265,161 @@ class TestGetBloodhoundToken:
 
         call_kwargs = mock_post.call_args[1]
         assert call_kwargs["timeout"] == 120
+
+
+# ============================================================================
+# Test: enumerate_computers_from_bloodhound
+# ============================================================================
+
+
+class TestEnumerateComputersFromBloodhound:
+    """Tests for enumerate_computers_from_bloodhound function"""
+
+    @patch('taskhound.utils.bh_api.requests.post')
+    def test_basic_enumeration(self, mock_post):
+        """Should enumerate computers with include_properties=true"""
+        from taskhound.utils.bh_api import enumerate_computers_from_bloodhound
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": {
+                "nodes": {
+                    "1": {
+                        "properties": {
+                            "name": "SERVER01.DOMAIN.COM",
+                            "objectid": "S-1-5-21-1234-5678",
+                            "enabled": True,
+                            "pwdlastset": 1734567890,
+                            "operatingsystem": "WINDOWS SERVER 2019",
+                            "lastlogontimestamp": 1734500000,
+                            "lastseen": "2024-12-18T14:27:00Z",
+                            "lastcollected": "2024-12-18T14:27:00Z",
+                            "distinguishedname": "CN=SERVER01,OU=Servers,DC=domain,DC=com",
+                            "samaccountname": "SERVER01$",
+                        }
+                    },
+                    "2": {
+                        "properties": {
+                            "name": "WORKSTATION01.DOMAIN.COM",
+                            "objectid": "S-1-5-21-1234-5679",
+                            "enabled": False,
+                            "pwdlastset": 1704567890,
+                            "operatingsystem": "WINDOWS 11",
+                        }
+                    }
+                }
+            }
+        }
+        mock_post.return_value = mock_response
+
+        computers = enumerate_computers_from_bloodhound(
+            base_url="http://localhost:8080",
+            token="test_token",
+        )
+
+        assert len(computers) == 2
+        assert computers[0]["name"] == "SERVER01.DOMAIN.COM"
+        assert computers[0]["enabled"] is True
+        assert computers[0]["pwdlastset"] == 1734567890
+        assert computers[1]["enabled"] is False
+
+        # Verify the API call
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["json"]["query"] == "MATCH (c:Computer) RETURN c"
+        assert call_kwargs["json"]["include_properties"] is True
+
+    @patch('taskhound.utils.bh_api.requests.post')
+    def test_empty_result(self, mock_post):
+        """Should handle empty result"""
+        from taskhound.utils.bh_api import enumerate_computers_from_bloodhound
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"nodes": {}}}
+        mock_post.return_value = mock_response
+
+        computers = enumerate_computers_from_bloodhound(
+            base_url="http://localhost:8080",
+            token="test_token",
+        )
+
+        assert computers == []
+
+    @patch('taskhound.utils.bh_api.requests.post')
+    def test_raises_on_invalid_response(self, mock_post):
+        """Should raise ValueError on invalid response"""
+        from taskhound.utils.bh_api import enumerate_computers_from_bloodhound
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"error": "invalid query"}
+        mock_post.return_value = mock_response
+
+        with pytest.raises(ValueError) as exc_info:
+            enumerate_computers_from_bloodhound(
+                base_url="http://localhost:8080",
+                token="test_token",
+            )
+
+        assert "missing nodes" in str(exc_info.value)
+
+
+# ============================================================================
+# Test: get_bloodhound_data_age
+# ============================================================================
+
+
+class TestGetBloodhoundDataAge:
+    """Tests for get_bloodhound_data_age function"""
+
+    def test_calculates_age_from_lastseen(self):
+        """Should calculate age from lastseen timestamp"""
+        from datetime import datetime, timezone
+        from taskhound.utils.bh_api import get_bloodhound_data_age
+
+        # Create a timestamp from 5 days ago
+        now = datetime.now(timezone.utc)
+        five_days_ago = now.replace(day=now.day - 5) if now.day > 5 else now
+        ts_str = five_days_ago.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        computers = [
+            {"lastseen": ts_str, "lastcollected": ""},
+        ]
+
+        age_days, newest = get_bloodhound_data_age(computers)
+        # Allow for small variations due to test timing
+        assert 4 <= age_days <= 6
+        assert newest == ts_str
+
+    def test_handles_empty_list(self):
+        """Should return 0 for empty list"""
+        from taskhound.utils.bh_api import get_bloodhound_data_age
+
+        age_days, newest = get_bloodhound_data_age([])
+        assert age_days == 0
+        assert newest == ""
+
+    def test_handles_missing_timestamps(self):
+        """Should handle computers without timestamps"""
+        from taskhound.utils.bh_api import get_bloodhound_data_age
+
+        computers = [
+            {"name": "SERVER01", "lastseen": "", "lastcollected": None},
+            {"name": "SERVER02"},
+        ]
+
+        age_days, newest = get_bloodhound_data_age(computers)
+        assert age_days == 0
+        assert newest == ""
+
+    def test_handles_nanosecond_timestamps(self):
+        """Should handle nanosecond precision in timestamps"""
+        from taskhound.utils.bh_api import get_bloodhound_data_age
+
+        # BloodHound uses nanosecond precision
+        computers = [
+            {"lastseen": "2024-12-18T14:27:00.320042793Z"},
+        ]
+
+        age_days, newest = get_bloodhound_data_age(computers)
+        # Just verify it doesn't crash and returns a reasonable value
+        assert age_days >= 0
+        assert newest == "2024-12-18T14:27:00.320042793Z"

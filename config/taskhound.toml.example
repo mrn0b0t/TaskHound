@@ -32,9 +32,30 @@
 # include_ms = false  # Include tasks in \Microsoft folder
 # include_all = false  # Include ALL tasks (very slow, includes everything)
 # unsaved_creds = true
-# opsec = false
 # credguard_detect = false
 # bh_data = "path/to/data.json"
+
+[opsec]
+# OPSEC (Operational Security) settings
+# Controls which network protocols are used during scans
+# enabled = false  # Enable full OPSEC mode (equivalent to --opsec CLI flag)
+                   # Sets both no_ldap and no_rpc to true
+# no_ldap = false  # Disable LDAP operations (SID resolution, GC queries, domain SID prefetch)
+# no_rpc = false   # Disable RPC operations (LSARPC SID lookup, CredGuard detection, credential validation)
+#
+# Protocol Impact:
+#   - SMB: Always used for task enumeration (cannot be disabled)
+#   - LDAP (port 389/636): SID resolution, tier-0 detection, pwdLastSet queries
+#   - Global Catalog (port 3268/3269): Cross-domain SID resolution
+#   - LSARPC (SMB named pipe): Fallback SID resolution via target's LSA
+#   - Remote Registry (SMB named pipe): Credential Guard detection
+#   - Task Scheduler RPC (SMB named pipe): Credential validation
+#
+# SID Resolution Chain:
+#   Default:     BloodHound → Cache → LSARPC → LDAP → GC
+#   --no-ldap:   BloodHound → Cache → LSARPC
+#   --no-rpc:    BloodHound → Cache → LDAP → GC
+#   --opsec:     BloodHound → Cache (only)
 
 [cache]
 # Caching options for SID resolution, BloodHound queries, and LAPS credentials

@@ -92,6 +92,7 @@ def process_target(
     backup_dir: Optional[str] = None,
     credguard_detect: bool = False,
     no_ldap: bool = False,
+    no_rpc: bool = False,
     loot: bool = False,
     dpapi_key: Optional[str] = None,
     bh_connector: Optional[Any] = None,
@@ -114,13 +115,14 @@ def process_target(
         debug: Enable debug output
         show_unsaved_creds: Show tasks without saved credentials
         backup_dir: Directory to backup raw XML files
-        credguard_detect: Detect Credential Guard
+        credguard_detect: Detect Credential Guard (requires RPC)
         no_ldap: Disable LDAP SID resolution
+        no_rpc: Disable RPC operations (LSARPC SID lookup, CredGuard, cred validation)
         loot: Enable DPAPI credential looting
         dpapi_key: DPAPI key for decryption
         bh_connector: BloodHound connector
         concise: Use concise output format
-        opsec: Enable OPSEC mode
+        opsec: Enable OPSEC mode (implies no_ldap + no_rpc)
         laps_cache: LAPS credential cache (if LAPS mode enabled)
         validate_creds: Query Task Scheduler RPC to validate stored credentials
         ldap_tier0: Check Tier-0 group membership via LDAP (when no BloodHound data)
@@ -151,8 +153,16 @@ def process_target(
     laps_result: Optional[Union[bool, LAPSFailure]] = None
 
     status(f"[Collecting] {target} ...")
+
+    # Log OPSEC status based on which flags are active
     if opsec:
-        info(f"{target}: OPSEC mode enabled - skipping risky operations")
+        info(f"{target}: OPSEC mode enabled (--no-ldap --no-rpc)")
+    elif no_ldap and no_rpc:
+        info(f"{target}: Stealth mode (--no-ldap --no-rpc)")
+    elif no_ldap:
+        info(f"{target}: LDAP disabled (--no-ldap)")
+    elif no_rpc:
+        info(f"{target}: RPC disabled (--no-rpc)")
 
     credguard_status = None
     server_fqdn = None  # Will store the resolved FQDN from SMB
@@ -293,10 +303,10 @@ def process_target(
                 return [], None
 
         # Extract the computer account SID using unified resolution
-        # Fallback chain: Cache → BloodHound data → LDAP
-        # Skipped in OPSEC mode to avoid noisy LDAP calls
+        # Fallback chain: Cache → BloodHound data → LSARPC
+        # Skipped when RPC is disabled (LSARPC uses SMB named pipe)
         server_sid = None
-        if not opsec:
+        if not no_rpc:
             server_sid = get_server_sid(
                 smb, dc_ip=dc_ip, username=username, password=password, hashes=hashes, kerberos=kerberos,
                 hv_loader=hv
@@ -307,18 +317,18 @@ def process_target(
                 else:
                     log_debug(f"{target}: Could not retrieve computer SID")
         elif debug:
-            log_debug(f"{target}: Skipping SID lookup (OPSEC mode)")
+            log_debug(f"{target}: Skipping SID lookup (--no-rpc mode)")
 
         # Credential Guard detection (EXPERIMENTAL, only if enabled)
-        # Skipped in OPSEC mode
-        if credguard_detect and not opsec:
+        # Skipped when RPC is disabled (remote registry requires RPC)
+        if credguard_detect and not no_rpc:
             credguard_status = check_credential_guard(smb, target)
             if credguard_status:
                 info(f"{target}: Credential Guard detected (LsaCfgFlags/IsolatedUserMode)")
             else:
                 info(f"{target}: Credential Guard not detected")
-        elif credguard_detect and opsec:
-            info(f"{target}: Skipping Credential Guard check (OPSEC mode)")
+        elif credguard_detect and no_rpc:
+            info(f"{target}: Skipping Credential Guard check (--no-rpc mode)")
     except Exception as e:
         if debug:
             traceback.print_exc()
@@ -426,8 +436,9 @@ def process_target(
         return out_lines, laps_result
 
     # First pass: identify tasks with Password logon type for credential validation
+    # Credential validation requires RPC (Task Scheduler pipe), skip if no_rpc is set
     password_task_paths: list[str] = []
-    if validate_creds and not opsec:
+    if validate_creds and not no_rpc:
         for rel_path, xml_bytes in items:
             meta = parse_task_xml(xml_bytes)
             logon_type = (meta.get("logon_type") or "").strip().lower()
@@ -437,7 +448,7 @@ def process_target(
         if password_task_paths:
             info(f"{target}: Found {len(password_task_paths)} tasks with stored credentials to validate")
 
-    # Credential validation via Task Scheduler RPC (if requested and not in OPSEC mode)
+    # Credential validation via Task Scheduler RPC (if requested and RPC not disabled)
     cred_validation_results = perform_credential_validation(
         target,
         password_task_paths,
@@ -448,7 +459,7 @@ def process_target(
         aes_key=aes_key,
         kerberos=kerberos,
         dc_ip=dc_ip,
-        opsec=opsec,
+        opsec=no_rpc,  # Use no_rpc flag (opsec sets this)
         debug=debug,
     ) if validate_creds else {}
 
@@ -593,7 +604,7 @@ def process_target(
                     runas,
                     hv_loader=hv,
                     bh_connector=bh_connector,
-                    smb_connection=smb,
+                    smb_connection=None if no_rpc else smb,  # Skip LSARPC if --no-rpc
                     no_ldap=no_ldap,
                     domain=domain,
                     dc_ip=dc_ip,
@@ -663,7 +674,7 @@ def process_target(
                     password_analysis=result.password_analysis,
                     hv=hv,
                     bh_connector=bh_connector,
-                    smb_connection=smb,
+                    smb_connection=None if no_rpc else smb,  # Skip LSARPC if --no-rpc
                     no_ldap=no_ldap,
                     domain=domain,
                     dc_ip=dc_ip,
@@ -698,7 +709,7 @@ def process_target(
                     password_analysis=result.password_analysis,
                     hv=hv,
                     bh_connector=bh_connector,
-                    smb_connection=smb,
+                    smb_connection=None if no_rpc else smb,  # Skip LSARPC if --no-rpc
                     no_ldap=no_ldap,
                     domain=domain,
                     dc_ip=dc_ip,

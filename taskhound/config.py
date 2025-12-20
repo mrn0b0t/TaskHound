@@ -224,6 +224,15 @@ def load_config() -> Dict[str, Any]:
     if "bh_data" in scan:
         defaults["bh_data"] = scan["bh_data"]
 
+    # OPSEC settings - granular control over noisy operations
+    opsec_section = config_data.get("opsec", {})
+    if "enabled" in opsec_section:
+        defaults["opsec"] = opsec_section["enabled"]
+    if "no_ldap" in opsec_section:
+        defaults["no_ldap"] = opsec_section["no_ldap"]
+    if "no_rpc" in opsec_section:
+        defaults["no_rpc"] = opsec_section["no_rpc"]
+
     # Cache
     cache = config_data.get("cache", {})
     if "ttl" in cache:
@@ -410,21 +419,38 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument(
         "--auto-targets",
         action="store_true",
-        help="Auto-discover targets by querying LDAP for all domain computer objects. "
-        "Requires domain credentials (--username, --password) and DC connectivity (--dc-ip or auto-discovery). "
+        help="Auto-discover targets by querying for domain computer objects. "
+        "Uses BloodHound data if available (via --bloodhound-* options), otherwise falls back to LDAP. "
+        "By default, filters out disabled accounts and stale computers (>60 days). "
         "Can be combined with -t/--targets-file to add additional targets.",
     )
     target.add_argument(
         "--ldap-filter",
-        help="Custom LDAP filter for --auto-targets (default: all computers). "
-        "Examples: '(operatingSystem=*Server*)' for servers only, "
-        "'(!(userAccountControl:1.2.840.113556.1.4.803:=2))' for enabled computers only.",
+        help="Filter for --auto-targets. Supports presets or raw LDAP syntax. "
+        "Presets: 'servers' (Windows Server OS), 'workstations' (non-server OS). "
+        "Raw LDAP: '(operatingSystem=*2019*)' for specific OS. "
+        "Only one filter allowed. When using BloodHound, presets work but raw LDAP requires LDAP fallback.",
     )
     target.add_argument(
         "--include-dcs",
         action="store_true",
         help="Include Domain Controllers when using --auto-targets. By default, DCs are excluded "
         "to reduce noise and avoid security concerns from scanning the DC directly.",
+    )
+    target.add_argument(
+        "--include-disabled",
+        action="store_true",
+        help="Include disabled computer accounts in --auto-targets. By default, disabled accounts "
+        "are filtered out since they represent decommissioned or offline systems.",
+    )
+    target.add_argument(
+        "--stale-threshold",
+        type=int,
+        default=60,
+        metavar="DAYS",
+        help="Exclude computers with password age older than DAYS (default: 60). "
+        "Stale accounts typically indicate offline/decommissioned systems. "
+        "Set to 0 to disable stale filtering. Based on pwdLastSet attribute.",
     )
 
     # High value / scanning options
@@ -526,7 +552,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--opsec",
         action="store_true",
-        help="OPSEC safe mode: Disable noisy operations (SAMR SID lookup, LDAP SID lookup, Credential Guard check)",
+        help="OPSEC safe mode: Alias for --no-ldap --no-rpc. Disables all LDAP and RPC operations. "
+        "SID resolution limited to BloodHound data and local cache only.",
+    )
+    scan.add_argument(
+        "--no-rpc",
+        action="store_true",
+        help="Disable RPC operations (LSARPC SID lookup, Credential Guard check, credential validation). "
+        "Does not affect SMB task enumeration. Use with --no-ldap for maximum stealth.",
     )
     scan.add_argument(
         "--include-ms", action="store_true", help="Also include \\Microsoft scheduled tasks (WARNING: very slow)"
@@ -680,41 +713,75 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(args):
-    # Handle OPSEC mode precedence
-    if args.opsec:
-        if args.credguard_detect:
-            print("[!] OPSEC mode enabled: Disabling Credential Guard detection")
-            args.credguard_detect = False
+    # Initialize no_rpc if not present (for backwards compatibility)
+    if not hasattr(args, 'no_rpc'):
+        args.no_rpc = False
 
-        # --validate-creds requires RPC queries that are noisy
-        if getattr(args, 'validate_creds', False):
-            print("[!] ERROR: --validate-creds is incompatible with --opsec mode")
+    # Handle --opsec as alias for --no-ldap --no-rpc
+    # --opsec sets both flags, but explicit flags can override with warnings
+    if args.opsec:
+        # Track if user explicitly set these flags alongside --opsec
+        explicit_no_ldap = getattr(args, '_explicit_no_ldap', False)
+        explicit_no_rpc = getattr(args, '_explicit_no_rpc', False)
+
+        # Set the underlying flags (--opsec implies both)
+        if not args.no_ldap:
+            args.no_ldap = True
+        if not args.no_rpc:
+            args.no_rpc = True
+
+    # Handle explicit feature flags that override OPSEC protections
+    # These generate warnings but are allowed (user knows what they're doing)
+    opsec_active = args.opsec or (args.no_ldap and args.no_rpc)
+
+    # --credguard-detect requires RPC (remote registry)
+    if args.credguard_detect:
+        if args.no_rpc:
+            print("[!] WARNING: --credguard-detect requires RPC (remote registry)")
+            if args.opsec:
+                print("[!] Disabling Credential Guard detection (--opsec mode)")
+                args.credguard_detect = False
+            else:
+                print("[!] Disabling Credential Guard detection (--no-rpc)")
+                args.credguard_detect = False
+
+    # --validate-creds requires RPC (Task Scheduler RPC)
+    if getattr(args, 'validate_creds', False):
+        if args.no_rpc:
+            print("[!] ERROR: --validate-creds is incompatible with --no-rpc")
             print("[!] Credential validation requires Task Scheduler RPC queries (\\pipe\\atsvc)")
-            print("[!] These queries may trigger security monitoring and are not OPSEC-safe.")
+            print("[!] These queries may trigger security monitoring.")
             print("[!]")
             print("[!] Options:")
-            print("[!]   1. Remove --opsec flag to validate credentials")
-            print("[!]   2. Remove --validate-creds flag to maintain OPSEC")
+            if args.opsec:
+                print("[!]   1. Remove --opsec flag to validate credentials")
+            else:
+                print("[!]   1. Remove --no-rpc flag to validate credentials")
+            print("[!]   2. Remove --validate-creds flag to maintain stealth")
             sys.exit(1)
 
     # Handle LAPS + OPSEC compatibility
     if getattr(args, "laps", False):
-        if args.opsec and not getattr(args, "force_laps", False):
-            print("[!] ERROR: LAPS is incompatible with OPSEC mode")
+        if args.no_ldap and not getattr(args, "force_laps", False):
+            print("[!] ERROR: --laps is incompatible with --no-ldap")
             print("[!] LAPS requires LDAP queries to retrieve passwords, which may trigger:")
             print("[!]   - Event ID 4662 (Directory Service Access) for LAPS attribute reads")
             print("[!]   - Event ID 4624 (Logon) for each LAPS-authenticated SMB connection")
             print("[!]")
             print("[!] Options:")
-            print("[!]   1. Remove --opsec flag to use LAPS normally")
-            print("[!]   2. Add --force-laps to use LAPS while keeping other OPSEC protections")
-            print("[!]      (SAMR SID lookup, LDAP SID resolution, CredGuard check remain disabled)")
+            if args.opsec:
+                print("[!]   1. Remove --opsec flag to use LAPS normally")
+            else:
+                print("[!]   1. Remove --no-ldap flag to use LAPS normally")
+            print("[!]   2. Add --force-laps to use LAPS while keeping other protections")
+            print("[!]      (RPC operations will still be disabled if --no-rpc/--opsec is set)")
             sys.exit(1)
 
-        if args.opsec and getattr(args, "force_laps", False):
-            print("[!] WARNING: LAPS enabled in OPSEC mode via --force-laps")
+        if args.no_ldap and getattr(args, "force_laps", False):
+            print("[!] WARNING: --laps enabled with --force-laps despite LDAP restrictions")
             print("[!] LAPS LDAP queries may be audited (Event ID 4662)")
-            print("[!] Other OPSEC protections remain active")
+            if args.no_rpc:
+                print("[!] RPC operations remain disabled (LSARPC, CredGuard, cred validation)")
             print()
 
         # LAPS requires DC IP for LDAP queries

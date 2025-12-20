@@ -349,6 +349,159 @@ def enumerate_domain_computers(
     return computers
 
 
+def enumerate_domain_computers_filtered(
+    dc_ip: Optional[str],
+    domain: str,
+    username: str,
+    password: Optional[str] = None,
+    hashes: Optional[str] = None,
+    kerberos: bool = False,
+    aes_key: Optional[str] = None,
+    ldap_filter: Optional[str] = None,
+    use_tcp: bool = False,
+    include_dcs: bool = False,
+    include_disabled: bool = False,
+    stale_threshold: int = 60,
+) -> list[str]:
+    """
+    Enumerate domain computers with filtering support.
+
+    Enhanced version of enumerate_domain_computers that supports filtering by:
+    - Disabled accounts (userAccountControl bit 0x2 = 2)
+    - Stale accounts (pwdLastSet older than threshold)
+    - Domain Controllers (userAccountControl bit 0x2000 = 8192)
+    - Custom LDAP filter
+
+    Args:
+        dc_ip: Domain controller IP address
+        domain: Domain name (FQDN format)
+        username: Username for authentication
+        password: Password (plaintext)
+        hashes: NTLM hashes
+        kerberos: Use Kerberos authentication
+        aes_key: AES key for Kerberos
+        ldap_filter: Additional LDAP filter
+        use_tcp: Force DNS queries over TCP
+        include_dcs: Include Domain Controllers (default: False)
+        include_disabled: Include disabled accounts (default: False)
+        stale_threshold: Exclude accounts with pwdLastSet older than this many days (0 to disable)
+
+    Returns:
+        List of computer hostnames
+
+    Raises:
+        LDAPConnectionError: If connection fails
+    """
+    import time
+
+    from impacket.ldap.ldapasn1 import SearchResultEntry
+
+    # Connect to LDAP
+    ldap_conn = get_ldap_connection(
+        dc_ip=dc_ip,
+        domain=domain,
+        username=username,
+        password=password,
+        hashes=hashes,
+        kerberos=kerberos,
+        aes_key=aes_key,
+        use_tcp=use_tcp,
+    )
+
+    # Build search filter
+    filters = ["(objectClass=computer)"]
+
+    # Exclude Domain Controllers by default
+    if not include_dcs:
+        # userAccountControl bit 0x2000 (8192) = SERVER_TRUST_ACCOUNT (DC)
+        filters.append("(!(userAccountControl:1.2.840.113556.1.4.803:=8192))")
+        debug("LDAP: Excluding Domain Controllers")
+
+    # Exclude disabled accounts by default
+    if not include_disabled:
+        # userAccountControl bit 0x2 (2) = ACCOUNTDISABLE
+        filters.append("(!(userAccountControl:1.2.840.113556.1.4.803:=2))")
+        debug("LDAP: Excluding disabled accounts")
+
+    # Add custom LDAP filter
+    if ldap_filter:
+        filters.append(ldap_filter)
+        debug(f"LDAP: Adding custom filter: {ldap_filter}")
+
+    # Combine all filters
+    if len(filters) == 1:
+        search_filter = filters[0]
+    else:
+        search_filter = f"(&{''.join(filters)})"
+
+    debug(f"LDAP: Enumerating computers with filter: {search_filter}")
+
+    # Request attributes needed for filtering
+    attributes = ["dNSHostName", "sAMAccountName", "pwdLastSet"]
+
+    try:
+        results = ldap_conn.search(
+            searchFilter=search_filter,
+            attributes=attributes,
+            sizeLimit=0,
+        )
+    except Exception as e:
+        raise LDAPConnectionError(f"LDAP search failed: {e}") from e
+
+    # Calculate stale threshold in Windows FILETIME
+    # Windows FILETIME: 100-nanosecond intervals since Jan 1, 1601
+    # Unix epoch is 11644473600 seconds after 1601
+    now_ts = int(time.time())
+    stale_cutoff_ts = now_ts - (stale_threshold * 86400) if stale_threshold > 0 else 0
+    # Convert to Windows FILETIME (100-ns intervals)
+    stale_cutoff_filetime = (stale_cutoff_ts + 11644473600) * 10000000 if stale_cutoff_ts else 0
+
+    computers = []
+    stats = {"total": 0, "stale": 0}
+
+    for result in results:
+        if not isinstance(result, SearchResultEntry):
+            continue
+
+        stats["total"] += 1
+
+        # Extract attributes
+        dns_hostname = None
+        sam_name = None
+        pwd_last_set = None
+
+        for attr in result["attributes"]:
+            attr_type = str(attr["type"])
+            if attr["vals"]:
+                attr_value = str(attr["vals"][0])
+
+                if attr_type.lower() == "dnshostname":
+                    dns_hostname = attr_value
+                elif attr_type.lower() == "samaccountname":
+                    sam_name = attr_value
+                elif attr_type.lower() == "pwdlastset":
+                    try:
+                        pwd_last_set = int(attr_value)
+                    except (ValueError, TypeError):
+                        pass
+
+        # Filter stale accounts
+        if stale_threshold > 0 and pwd_last_set:
+            if pwd_last_set < stale_cutoff_filetime:
+                stats["stale"] += 1
+                continue
+
+        # Build hostname
+        if dns_hostname:
+            computers.append(dns_hostname)
+        elif sam_name:
+            hostname = sam_name.rstrip("$")
+            computers.append(f"{hostname}.{domain}")
+
+    debug(f"LDAP: Found {len(computers)} computers ({stats['total']} total, {stats['stale']} stale filtered)")
+    return computers
+
+
 def get_netbios_domain_name(
     dc_ip: Optional[str],
     domain: str,

@@ -266,6 +266,253 @@ def _handle_exports(
     return opengraph_json_path, opengraph_json_overwrites
 
 
+def _auto_discover_targets(args: Any, bh_config: Any) -> List[str]:
+    """
+    Auto-discover computer targets from BloodHound or LDAP.
+
+    Tries BloodHound first (if configured), falls back to LDAP.
+    Applies filtering based on:
+    - Disabled accounts (excluded by default, --include-disabled to include)
+    - Stale accounts (--stale-threshold days, default 60, 0 to disable)
+    - Domain Controllers (excluded by default, --include-dcs to include)
+    - Custom filters (--ldap-filter with presets or raw LDAP)
+
+    Args:
+        args: Parsed CLI arguments
+        bh_config: BloodHound configuration
+
+    Returns:
+        List of computer hostnames (FQDNs)
+    """
+    import time
+
+    include_dcs = getattr(args, "include_dcs", False)
+    include_disabled = getattr(args, "include_disabled", False)
+    stale_threshold = getattr(args, "stale_threshold", 60)
+    ldap_filter = getattr(args, "ldap_filter", None)
+
+    # Resolve filter presets
+    ldap_filter_raw = None
+    filter_preset = None
+    if ldap_filter:
+        preset_lower = ldap_filter.lower().strip()
+        if preset_lower == "servers":
+            filter_preset = "servers"
+            ldap_filter_raw = "(operatingSystem=*Server*)"
+        elif preset_lower == "workstations":
+            filter_preset = "workstations"
+            ldap_filter_raw = "(!(operatingSystem=*Server*))"
+        elif ldap_filter.startswith("("):
+            # Raw LDAP filter
+            ldap_filter_raw = ldap_filter
+        else:
+            warn(f"Unknown filter preset '{ldap_filter}'. Use 'servers', 'workstations', or raw LDAP '(...)'")
+            sys.exit(1)
+
+    # Build status message
+    filter_parts = []
+    if not include_disabled:
+        filter_parts.append("enabled only")
+    if stale_threshold > 0:
+        filter_parts.append(f"active <{stale_threshold}d")
+    if not include_dcs:
+        filter_parts.append("excluding DCs")
+    if filter_preset:
+        filter_parts.append(filter_preset)
+    elif ldap_filter_raw:
+        filter_parts.append("custom filter")
+
+    filter_msg = f" ({', '.join(filter_parts)})" if filter_parts else ""
+
+    # Try BloodHound first
+    computers = []
+    source = None
+
+    if bh_config and bh_config.has_credentials():
+        try:
+            computers, source = _enumerate_from_bloodhound(
+                bh_config=bh_config,
+                include_dcs=include_dcs,
+                include_disabled=include_disabled,
+                stale_threshold=stale_threshold,
+                filter_preset=filter_preset,
+                ldap_filter_raw=ldap_filter_raw,
+            )
+        except Exception as e:
+            debug(f"BloodHound enumeration failed: {e}")
+            warn(f"BloodHound query failed ({e}), falling back to LDAP")
+
+    # Fall back to LDAP if BloodHound didn't work
+    if not computers and not source:
+        try:
+            computers, source = _enumerate_from_ldap(
+                args=args,
+                include_dcs=include_dcs,
+                include_disabled=include_disabled,
+                stale_threshold=stale_threshold,
+                ldap_filter_raw=ldap_filter_raw,
+            )
+        except Exception as e:
+            print(f"[!] Auto-targets failed: {e}")
+            sys.exit(1)
+
+    if computers:
+        status(f"[Auto-targets] {len(computers)} computers from {source}{filter_msg}")
+        good(f"Auto-targets: Found {len(computers)} computer objects")
+    else:
+        warn("Auto-targets: No computers found matching criteria")
+
+    return computers
+
+
+def _enumerate_from_bloodhound(
+    bh_config: Any,
+    include_dcs: bool,
+    include_disabled: bool,
+    stale_threshold: int,
+    filter_preset: Optional[str],
+    ldap_filter_raw: Optional[str],
+) -> tuple[List[str], Optional[str]]:
+    """
+    Enumerate computers from BloodHound CE.
+
+    Returns:
+        Tuple of (list of hostnames, source string) or ([], None) on failure
+    """
+    import time
+
+    from .output.bloodhound import extract_host_from_connector, normalize_bloodhound_connector
+    from .utils.bh_api import (
+        enumerate_computers_from_bloodhound,
+        get_bloodhound_data_age,
+        get_bloodhound_token,
+    )
+
+    # Get base URL
+    base_url = normalize_bloodhound_connector(bh_config.bh_connector, is_legacy=False)
+
+    # Authenticate
+    info("Auto-targets: Querying BloodHound CE...")
+    start = time.time()
+
+    token = get_bloodhound_token(
+        base_url=base_url,
+        username=bh_config.bh_username,
+        password=bh_config.bh_password,
+    )
+
+    # Get all computers with properties
+    all_computers = enumerate_computers_from_bloodhound(base_url=base_url, token=token)
+    elapsed = time.time() - start
+    debug(f"BloodHound query returned {len(all_computers)} computers in {elapsed:.2f}s")
+
+    if not all_computers:
+        return [], None
+
+    # Check data age and warn if stale
+    data_age_days, newest_ts = get_bloodhound_data_age(all_computers)
+    if data_age_days > 30:
+        warn(f"BloodHound data is {data_age_days} days old! Consider re-running SharpHound.")
+    elif data_age_days > 7:
+        info(f"BloodHound data is {data_age_days} days old", verbose_only=True)
+
+    # Apply filters
+    filtered = []
+    stats = {"total": len(all_computers), "disabled": 0, "stale": 0, "dc": 0, "os_filter": 0}
+    now_ts = int(time.time())
+
+    for comp in all_computers:
+        name = comp.get("name", "")
+        if not name:
+            continue
+
+        # Filter disabled accounts
+        if not include_disabled and comp.get("enabled") is False:
+            stats["disabled"] += 1
+            continue
+
+        # Filter stale accounts (pwdlastset older than threshold)
+        if stale_threshold > 0:
+            pwd_last_set = comp.get("pwdlastset")
+            if pwd_last_set:
+                age_days = (now_ts - pwd_last_set) / 86400
+                if age_days > stale_threshold:
+                    stats["stale"] += 1
+                    continue
+
+        # Filter DCs (check for SERVER_TRUST_ACCOUNT bit or OU=Domain Controllers)
+        if not include_dcs:
+            dn = comp.get("distinguishedname", "").lower()
+            if "ou=domain controllers" in dn:
+                stats["dc"] += 1
+                continue
+
+        # Apply OS filter preset
+        if filter_preset:
+            os_name = (comp.get("operatingsystem") or "").upper()
+            if filter_preset == "servers" and "SERVER" not in os_name:
+                stats["os_filter"] += 1
+                continue
+            elif filter_preset == "workstations" and "SERVER" in os_name:
+                stats["os_filter"] += 1
+                continue
+
+        # Raw LDAP filter can't be applied to BH data directly
+        # If user specified raw filter and we're using BH, warn them
+        if ldap_filter_raw and not filter_preset:
+            # First computer - warn once
+            if not filtered:
+                warn("Raw LDAP filter requires LDAP source; use presets with BloodHound")
+            return [], None  # Force LDAP fallback
+
+        filtered.append(name)
+
+    debug(
+        f"BloodHound filter stats: {stats['total']} total, "
+        f"{stats['disabled']} disabled, {stats['stale']} stale, "
+        f"{stats['dc']} DCs, {stats['os_filter']} OS filtered"
+    )
+
+    return filtered, "BloodHound"
+
+
+def _enumerate_from_ldap(
+    args: Any,
+    include_dcs: bool,
+    include_disabled: bool,
+    stale_threshold: int,
+    ldap_filter_raw: Optional[str],
+) -> tuple[List[str], Optional[str]]:
+    """
+    Enumerate computers from LDAP with filtering.
+
+    Returns:
+        Tuple of (list of hostnames, source string)
+    """
+    from .utils.ldap import LDAPConnectionError, enumerate_domain_computers_filtered
+
+    info("Auto-targets: Querying LDAP...")
+
+    kerberos_enabled = args.kerberos or getattr(args, "aes_key", None) is not None
+
+    computers = enumerate_domain_computers_filtered(
+        dc_ip=args.dc_ip,
+        domain=args.domain,
+        username=args.username,
+        password=args.password,
+        hashes=args.hashes,
+        kerberos=kerberos_enabled,
+        aes_key=getattr(args, "aes_key", None),
+        ldap_filter=ldap_filter_raw,
+        use_tcp=getattr(args, "dns_tcp", False),
+        include_dcs=include_dcs,
+        include_disabled=include_disabled,
+        stale_threshold=stale_threshold,
+    )
+
+    return computers, "LDAP"
+
+
 def main():
     print_banner()
     ap = build_parser()
@@ -513,40 +760,16 @@ def main():
         )
     else:
         # Online mode: process targets via SMB
+        from .config_model import BloodHoundConfig
+
+        bh_config = BloodHoundConfig.from_args_and_config(args)
+
         # Build targets list
         targets = []
 
-        # Auto-discover targets from LDAP if requested
+        # Auto-discover targets if requested
         if getattr(args, "auto_targets", False):
-            from .utils.ldap import LDAPConnectionError, enumerate_domain_computers
-
-            include_dcs = getattr(args, "include_dcs", False)
-            dc_msg = " (including DCs)" if include_dcs else " (excluding DCs)"
-            ldap_filter_msg = " with filter" if getattr(args, "ldap_filter", None) else ""
-            info(f"Auto-targets: Querying LDAP for domain computer objects{dc_msg}...")
-            try:
-                kerberos_enabled = args.kerberos or getattr(args, "aes_key", None) is not None
-                ldap_computers = enumerate_domain_computers(
-                    dc_ip=args.dc_ip,
-                    domain=args.domain,
-                    username=args.username,
-                    password=args.password,
-                    hashes=args.hashes,
-                    kerberos=kerberos_enabled,
-                    aes_key=getattr(args, "aes_key", None),
-                    ldap_filter=getattr(args, "ldap_filter", None),
-                    use_tcp=getattr(args, "dns_tcp", False),
-                    include_dcs=include_dcs,
-                )
-                if ldap_computers:
-                    status(f"[Auto-targets] {len(ldap_computers)} computers from LDAP{ldap_filter_msg}")
-                    good(f"Auto-targets: Found {len(ldap_computers)} computer objects in domain")
-                    targets.extend(ldap_computers)
-                else:
-                    warn("Auto-targets: No computer objects found in LDAP")
-            except LDAPConnectionError as e:
-                print(f"[!] Auto-targets failed: {e}")
-                sys.exit(1)
+            targets.extend(_auto_discover_targets(args, bh_config))
 
         # Add explicit targets from CLI
         if args.target:
@@ -610,6 +833,7 @@ def main():
             "backup_dir": args.backup,
             "credguard_detect": args.credguard_detect,
             "no_ldap": args.no_ldap,
+            "no_rpc": getattr(args, 'no_rpc', False),
             "loot": args.loot,
             "dpapi_key": args.dpapi_key,
             "bh_connector": bh_connector,

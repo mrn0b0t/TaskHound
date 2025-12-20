@@ -47,7 +47,7 @@ For backstory/lore and detailed explanations: see the associated [Blog Post](htt
 | **Credential Validation** | Verify if stored task passwords are still valid via RPC |
 | **Offline Analysis** | Process mounted disk images or previously collected XMLs |
 | **Audit Mode** | Generate HTML security reports with severity scoring and remediation guidance |
-| **SID Resolution** | Multi-tier resolution via BloodHound → LDAP → Global Catalog → LSARPC |
+| **SID Resolution** | Multi-tier resolution via BloodHound → Cache → LSARPC → LDAP → GC |
 | **Caching** | SQLite-based persistent cache for SID lookups and LAPS credentials |
 
 ## Quick Start
@@ -74,6 +74,8 @@ taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --targets-file host
 # Offline analysis of mounted disk image
 taskhound --offline-disk /mnt/disk
 ```
+
+> **Auth Support**: TaskHound supports most major authentication mechanisms including password, NTLM hash, Kerberos (also with ccache), and AES key authentication.
 
 ## Configuration File
 
@@ -351,10 +353,34 @@ For large environments, use parallel scanning with rate limiting:
 # 20 parallel workers, max 5 targets/second
 taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets --threads 20 --rate-limit 5
 
-# Auto-discover servers only
-taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets \
-  --ldap-filter "(operatingSystem=*Server*)" --threads 20
+# Auto-discover servers only (uses preset filter)
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets --ldap-filter servers --threads 20
+
+# Include disabled computers and extend stale threshold to 90 days
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets --include-disabled --stale-threshold 90
+
+# Target workstations only, disable stale filtering
+taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local --auto-targets --ldap-filter workstations --stale-threshold 0
 ```
+
+### Auto-Target Filtering
+
+By default, `--auto-targets` applies smart filtering to reduce noise and failed connections:
+
+| Filter | Default | Override |
+|--------|---------|----------|
+| Disabled accounts | Excluded | `--include-disabled` |
+| Stale computers (>60 days) | Excluded | `--stale-threshold 0` (disable) |
+| Domain Controllers | Excluded | `--include-dcs` |
+
+**Data Source Priority:** BloodHound (if configured) → LDAP fallback
+
+When using BloodHound, TaskHound queries with `include_properties=true` for efficient single-query enumeration. If BloodHound data is older than 7 days, a warning is displayed; over 30 days triggers an urgent warning.
+
+**Filter Presets:**
+- `servers` - Windows Server operating systems only
+- `workstations` - Non-server operating systems only
+- `(raw LDAP)` - Custom LDAP filter (requires LDAP source)
 
 ---
 
@@ -364,9 +390,9 @@ TaskHound resolves SIDs to readable names using a multi-tier fallback chain:
 
 1. **BloodHound** (if connected) - fastest, no network traffic
 2. **Cache** - SQLite persistent cache (default 24h TTL)
-3. **LDAP** - domain controller query
-4. **Global Catalog** - for cross-domain/forest SIDs
-5. **LSARPC** - direct target query (most accurate, most traffic)
+3. **LSARPC** - direct target query (most accurate for local accounts)
+4. **LDAP** - domain controller query
+5. **Global Catalog** - for cross-domain/forest SIDs
 
 ```bash
 # Separate LDAP credentials for SID resolution
@@ -399,33 +425,52 @@ taskhound --offline-disk /mnt/disk --disk-hostname MOE
 
 ---
 
-## Authentication Methods
-
-| Method | Example |
-|--------|---------|
-| Password | `-u homer.simpson -p 'Doh!123' -d thesimpsons.local` |
-| NTLM Hash | `-u homer.simpson --hashes :31d6cfe0d16ae931b73c59d7e0c089c0 -d thesimpsons.local` |
-| Kerberos | `-u homer.simpson -p 'Doh!123' -d thesimpsons.local -k --dc-ip 10.0.0.1` |
-| AES Key | `-u homer.simpson --aes-key 0123...cdef -d thesimpsons.local --dc-ip 10.0.0.1` |
-| ccache | `export KRB5CCNAME=/tmp/homer.ccache && taskhound -u homer.simpson -d thesimpsons.local -k` |
-| LAPS | `-u homer.simpson -p 'Doh!123' -d thesimpsons.local --laps` |
-
----
-
 ## OPSEC Considerations
 
-TaskHound relies on Impacket for SMB/RPC operations. Standard Impacket IOCs apply.
+TaskHound provides granular control over network operations to balance stealth vs functionality.
 
-**Noisy operations (disabled with `--opsec`):**
-- LDAP SID resolution  
-- Credential Guard detection
-- Credential validation RPC
-- LAPS queries (use `--force-laps` to override)
+### Protocol Impact
 
-**For maximum stealth:**
-1. Use the BOF implementation in AdaptixC2
-2. Collect XMLs via other means, analyze offline
-3. Pre-populate BloodHound data to avoid network queries
+| Protocol | Operations | Flag to Disable |
+|----------|------------|-----------------|
+| SMB | Task enumeration (always used) | N/A |
+| LDAP (389/636) | SID resolution, Tier-0 detection, pwdLastSet | `--no-ldap` |
+| Global Catalog (3268) | Cross-domain SID resolution | `--no-ldap` |
+| LSARPC (SMB pipe) | Fallback SID resolution | `--no-rpc` |
+| Remote Registry (SMB pipe) | Credential Guard detection | `--no-rpc` |
+| Task Scheduler RPC (SMB pipe) | Credential validation | `--no-rpc` |
+
+### SID Resolution Chain
+
+```
+Default:     BloodHound → Cache → LSARPC → LDAP → GC
+--no-ldap:   BloodHound → Cache → LSARPC  
+--no-rpc:    BloodHound → Cache → LDAP → GC
+--opsec:     BloodHound → Cache (only)
+```
+
+### Usage Examples
+
+```bash
+# Full OPSEC mode (alias for --no-ldap --no-rpc)
+taskhound -u user -p 'pass' -d corp.local -t target --opsec
+
+# Disable LDAP only (keep LSARPC for SID resolution)
+taskhound -u user -p 'pass' -d corp.local -t target --no-ldap
+
+# Disable RPC only (keep LDAP for SID resolution)
+taskhound -u user -p 'pass' -d corp.local -t target --no-rpc
+
+# LAPS with OPSEC (force LAPS LDAP queries despite --opsec)
+taskhound -u user -p 'pass' -d corp.local --laps --opsec --force-laps
+```
+
+### Best Practices for Stealth
+
+1. **Pre-populate BloodHound data** - Import domain data first with `--bh-live`
+2. **Use `--opsec` flag** - Limits resolution to BloodHound + cache only
+3. **Collect XMLs via other means** - Analyze offline with `--offline`
+4. **Use the BOF implementation** - Available in AdaptixC2
 
 ---
 
@@ -460,16 +505,19 @@ TARGET OPTIONS
   --threads             Parallel worker threads (default: 1)
   --rate-limit          Max targets per second (default: unlimited)
   --dns-tcp             Force DNS over TCP (for SOCKS proxies)
-  --auto-targets        Auto-discover targets via LDAP
-  --ldap-filter         Custom LDAP filter for auto-discovery
+  --auto-targets        Auto-discover targets (BloodHound first, LDAP fallback)
+  --ldap-filter         Filter for auto-targets: 'servers', 'workstations', or raw LDAP
   --include-dcs         Include Domain Controllers in auto-targets
+  --include-disabled    Include disabled computer accounts
+  --stale-threshold     Exclude computers inactive >N days (default: 60, 0=disable)
 
 SCANNING OPTIONS
   --offline             Parse XMLs from directory
   --offline-disk        Analyze mounted Windows filesystem
   --disk-hostname       Override hostname for offline-disk
   --bh-data             BloodHound export file for HV detection
-  --opsec               Disable noisy operations
+  --opsec               Disable noisy operations (alias for --no-ldap --no-rpc)
+  --no-rpc              Disable RPC operations (LSARPC, CredGuard, validation)
   --include-ms          Include \Microsoft tasks
   --include-local       Include local system accounts
   --include-all         Include ALL tasks
@@ -503,7 +551,7 @@ DPAPI OPTIONS
   --dpapi-key           DPAPI_SYSTEM userkey (hex format)
 
 LDAP/SID RESOLUTION
-  --no-ldap             Disable LDAP SID resolution
+  --no-ldap             Disable LDAP/GC operations
   --ldap-user           Alternative LDAP username
   --ldap-password       Alternative LDAP password
   --ldap-hashes         Alternative LDAP hashes
