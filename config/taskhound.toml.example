@@ -120,6 +120,7 @@ color = "#8B5CF6"
 # no_summary = false   # Disable summary output
 # debug = false
 # verbose = false
+# no_confirm = false  # Skip confirmation prompts for noisy operations (useful for automation/CI)
 #
 # Directory structure created:
 #   ./output/

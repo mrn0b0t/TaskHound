@@ -337,6 +337,8 @@ def load_config() -> Dict[str, Any]:
         defaults["debug"] = output["debug"]
     if "verbose" in output:
         defaults["verbose"] = output["verbose"]
+    if "no_confirm" in output:
+        defaults["no_confirm"] = output["no_confirm"]
 
     return defaults
 
@@ -682,6 +684,11 @@ def build_parser() -> argparse.ArgumentParser:
     misc = ap.add_argument_group("Misc")
     misc.add_argument("--verbose", action="store_true", help="Enable verbose output")
     misc.add_argument("--debug", action="store_true", help="Enable debug output (print full stack traces)")
+    misc.add_argument(
+        "--no-confirm",
+        action="store_true",
+        help="Skip confirmation prompts for noisy operations (useful for automation/CI)",
+    )
     # Load defaults from config file
     defaults = load_config()
     if defaults:

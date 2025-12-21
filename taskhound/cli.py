@@ -27,6 +27,7 @@ from .output.writer import write_csv, write_json, write_rich_plain
 from .parsers.highvalue import HighValueLoader
 from .utils.cache_manager import init_cache
 from .utils.console import (
+    console,
     print_audit_report_section,
     print_backup_section,
     print_banner,
@@ -36,6 +37,9 @@ from .utils.date_parser import parse_timestamp
 from .utils.helpers import normalize_targets
 from .utils.logging import debug, good, info, set_verbosity, status, warn
 from .utils.network import verify_ldap_connection
+
+from rich.panel import Panel
+from rich.prompt import Confirm
 
 
 def _handle_opengraph(
@@ -538,6 +542,34 @@ def main():
     set_verbosity(args.verbose, args.debug)
 
     validate_args(args)
+
+    # Adult check for noisy operations (Credential Guard detection)
+    if args.credguard_detect and not getattr(args, 'no_confirm', False):
+        warning_text = """[bold yellow]WARNING: Credential Guard detection is enabled (default)[/]
+
+This operation involves:
+  [dim]•[/] Starting/stopping the [cyan]RemoteRegistry[/] service on targets
+  [dim]•[/] Reading registry keys via RPC ([cyan]\\pipe\\winreg[/])
+
+[bold red]This is NOISY(!) and may trigger EDR/SOC alerts![/]
+
+[dim]To disable this check:[/]
+  [green]--no-credguard[/]  Skip Credential Guard detection
+  [green]--opsec[/]         Disable all noisy operations
+
+[dim]To skip this prompt in the future:[/]
+  [green]--no-confirm[/]    Accept warnings automatically"""
+
+        console.print(Panel(warning_text, title="[bold yellow]⚠ OPSEC Warning[/]", border_style="yellow"))
+        console.print()
+        try:
+            if not Confirm.ask("[yellow]Are you an adult?[/]", default=False):
+                console.print("[blue][*][/] Aborted. Re-run with --no-credguard or --opsec for stealth mode.")
+                sys.exit(0)
+            console.print()  # Blank line after confirmation
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[blue][*][/] Aborted.")
+            sys.exit(0)
 
     # Initialize Cache
     cache_file = Path(args.cache_file) if args.cache_file else None
