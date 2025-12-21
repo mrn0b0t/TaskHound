@@ -697,6 +697,7 @@ def process_target(
                     cred_validation=row.to_dict() if row.cred_status else None,
                     resolved_runas=row.resolved_runas,
                     credential_guard=credguard_status,
+                    cache_manager=cache,
                 )
             )
             priv_count += 1
@@ -733,6 +734,7 @@ def process_target(
                     cred_validation=row.to_dict() if row.cred_status else None,
                     resolved_runas=row.resolved_runas,
                     credential_guard=credguard_status,
+                    cache_manager=cache,
                 )
             )
 

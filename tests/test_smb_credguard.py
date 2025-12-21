@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from taskhound.smb.credguard import check_credential_guard, RemoteRegistryOps
+from taskhound.smb.credguard import RemoteRegistryOps, check_credential_guard
 
 
 @pytest.fixture

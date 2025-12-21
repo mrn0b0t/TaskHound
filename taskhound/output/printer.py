@@ -169,18 +169,28 @@ def format_trigger_info(meta: Dict[str, str]) -> Optional[str]:
     return " ".join(trigger_parts) if len(trigger_parts) > 1 else trigger_type
 
 
-def _check_gmsa_account(display_runas: str, resolved_username: Optional[str] = None) -> Optional[str]:
+def _check_gmsa_account(
+    display_runas: str,
+    resolved_username: Optional[str] = None,
+    bh_connector=None,
+    cache_manager=None,
+) -> Optional[str]:
     """
     Check if the runas account is a gMSA (Group Managed Service Account).
 
-    gMSA accounts:
-    - End with '$' character
-    - Are NOT machine/computer accounts (typically match computer name)
-    - Are NOT well-known system accounts (NT AUTHORITY, etc.)
+    Uses a multi-tier detection strategy:
+    1. Cache - Check if we've already determined gMSA status for this user
+    2. BloodHound - Query User node for gmsa/msa boolean properties
+    3. Heuristic Fallback - Username ends with '$' and not a system account
+
+    BloodHound CE stores 'gmsa' and 'msa' properties on User nodes, derived from
+    objectClass during SharpHound collection (msds-groupmanagedserviceaccount).
 
     Args:
         display_runas: The display string for the runas account
         resolved_username: The resolved username (if SID was resolved)
+        bh_connector: BloodHound connector for API queries (optional)
+        cache_manager: Cache manager for storing results (optional)
 
     Returns:
         Hint message if gMSA detected, None otherwise
@@ -191,16 +201,13 @@ def _check_gmsa_account(display_runas: str, resolved_username: Optional[str] = N
         return None
 
     # Extract just the username part (remove domain prefix)
+    clean_username = username
     if "\\" in username:
-        username = username.split("\\")[-1]
+        clean_username = username.split("\\")[-1]
     elif "@" in username:
-        username = username.split("@")[0]
+        clean_username = username.split("@")[0]
 
-    # Check if it ends with $ (service or machine account)
-    if not username.endswith("$"):
-        return None
-
-    # Skip well-known system accounts
+    # Skip well-known system accounts early
     well_known_skip = {
         "system", "local service", "network service",
         "nt authority", "nt service", "iis apppool"
@@ -211,9 +218,71 @@ def _check_gmsa_account(display_runas: str, resolved_username: Optional[str] = N
         if skip in display_lower:
             return None
 
-    # At this point we have an account ending with $
-    # This is likely a gMSA - machine accounts are less common for scheduled tasks
-    return "gMSA credentials are stored in LSA secrets, not DPAPI. Consider LSA dump if you have SYSTEM access."
+    # Cache key uses the clean username (lowercase for consistency)
+    cache_key = clean_username.lower().rstrip("$")
+
+    # Tier 1: Check cache first
+    if cache_manager:
+        cached = cache_manager.get("gmsa_status", cache_key)
+        if cached is not None:
+            if cached.get("is_gmsa") or cached.get("is_msa"):
+                return _format_gmsa_hint(cached.get("is_gmsa", False), cached.get("is_msa", False))
+            return None
+
+    # Tier 2: Query BloodHound for authoritative gMSA/MSA status
+    if bh_connector:
+        try:
+            result = bh_connector.get_user_gmsa_status(username)
+            if result:
+                is_gmsa = result.get("is_gmsa", False)
+                is_msa = result.get("is_msa", False)
+
+                # Cache the result
+                if cache_manager:
+                    cache_manager.set("gmsa_status", cache_key, {
+                        "is_gmsa": is_gmsa,
+                        "is_msa": is_msa,
+                        "source": "bloodhound",
+                    })
+
+                if is_gmsa or is_msa:
+                    return _format_gmsa_hint(is_gmsa, is_msa)
+                return None
+        except Exception:
+            pass  # Fall through to heuristic
+
+    # Tier 3: Heuristic fallback - check if username ends with $
+    if not clean_username.endswith("$"):
+        return None
+
+    # Cache heuristic result (lower confidence)
+    if cache_manager:
+        cache_manager.set("gmsa_status", cache_key, {
+            "is_gmsa": True,  # Assume gMSA for $ accounts (more common than MSA)
+            "is_msa": False,
+            "source": "heuristic",
+        })
+
+    # At this point we have an account ending with $ - likely a gMSA
+    return _format_gmsa_hint(is_gmsa=True, is_msa=False, heuristic=True)
+
+
+def _format_gmsa_hint(is_gmsa: bool, is_msa: bool, heuristic: bool = False) -> str:
+    """Format the gMSA/MSA hint message."""
+    if is_gmsa:
+        account_type = "gMSA (Group Managed Service Account)"
+    elif is_msa:
+        account_type = "MSA (Managed Service Account)"
+    else:
+        account_type = "Service Account"
+
+    hint = f"{account_type} - credentials stored in LSA secrets, not DPAPI."
+    hint += " Consider LSA dump if you have SYSTEM access."
+
+    if heuristic:
+        hint += " (detected by $ suffix heuristic)"
+
+    return hint
 
 
 def format_block(
@@ -247,6 +316,7 @@ def format_block(
     cred_validation: Optional[Dict[str, Any]] = None,
     resolved_runas: Optional[str] = None,
     credential_guard: Optional[bool] = None,
+    cache_manager=None,
 ) -> List[str]:
     """
     Format a task block for CLI output.
@@ -400,8 +470,13 @@ def format_block(
     if decrypted_password:
         rows.append(("Decrypted Pwd", decrypted_password))
 
-    # gMSA hint
-    gmsa_hint = _check_gmsa_account(display_runas, resolved_username)
+    # gMSA hint - uses multi-tier detection: Cache → BloodHound → Heuristic
+    gmsa_hint = _check_gmsa_account(
+        display_runas,
+        resolved_username,
+        bh_connector=bh_connector,
+        cache_manager=cache_manager,
+    )
     if gmsa_hint:
         rows.append(("gMSA Hint", gmsa_hint))
 

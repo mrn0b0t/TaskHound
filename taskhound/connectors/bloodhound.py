@@ -89,18 +89,22 @@ class BloodHoundConnector:
 
     def run_cypher_query(self, query: str) -> Optional[Dict]:
         """
-        Execute a Cypher query against BloodHound CE, handling authentication automatically.
+        Execute a Cypher query against BloodHound CE (API) or Legacy (Neo4j Bolt).
 
         Args:
             query: The Cypher query string
 
         Returns:
-            JSON response data (dict) or None if failed
+            JSON response data (dict) or None if failed.
+            Format: {"data": {"data": [records], "nodes": {...}}} for compatibility.
         """
-        if self.bh_type != "bhce":
-            warn("run_cypher_query only supports BHCE type")
-            return None
+        if self.bh_type == "bhce":
+            return self._run_cypher_query_bhce(query)
+        else:
+            return self._run_cypher_query_legacy(query)
 
+    def _run_cypher_query_bhce(self, query: str) -> Optional[Dict]:
+        """Execute Cypher query against BHCE via REST API."""
         # Prepare Query Body
         body = {"query": query}
 
@@ -118,6 +122,36 @@ class BloodHoundConnector:
 
         except Exception as e:
             warn(f"Error executing Cypher query: {e}")
+            return None
+
+    def _run_cypher_query_legacy(self, query: str) -> Optional[Dict]:
+        """
+        Execute Cypher query against Legacy BloodHound via Neo4j Bolt.
+
+        Returns data in BHCE-compatible format for caller compatibility.
+        """
+        if GraphDatabase is None:
+            debug("neo4j library not installed - cannot execute Legacy Cypher query")
+            return None
+
+        try:
+            uri = f"bolt://{self.ip}:7687"
+            driver = GraphDatabase.driver(uri, auth=(self.username, self.password))
+
+            with driver.session() as session:
+                result = session.run(query)
+                # Convert Neo4j records to list of dicts
+                records = [dict(record) for record in result]
+
+            driver.close()
+
+            # Return in BHCE-compatible format
+            # BHCE returns: {"data": {"data": [...], "nodes": {...}}}
+            # For simple queries like SID resolution, callers expect data.data[0].name
+            return {"data": {"data": records}}
+
+        except Exception as e:
+            debug(f"Legacy Cypher query failed: {e}")
             return None
 
     def connect_and_query(self) -> bool:
@@ -741,6 +775,127 @@ class BloodHoundConnector:
 
         except Exception as e:
             warn(f"Error querying user '{upn}': {e}")
+            return None
+
+    def get_user_gmsa_status(self, username: str, domain: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Query BloodHound for user's gMSA/MSA status.
+
+        BloodHound CE stores 'gmsa' and 'msa' boolean properties on User nodes,
+        derived from objectClass during SharpHound collection:
+        - gmsa=true: objectClass contains 'msds-groupmanagedserviceaccount'
+        - msa=true: objectClass contains 'msds-managedserviceaccount'
+
+        Args:
+            username: Username to query (with or without domain prefix)
+            domain: Optional domain FQDN to construct UPN
+
+        Returns:
+            Dict with 'is_gmsa', 'is_msa', 'name', 'objectid' or None if not found
+        """
+        if self.bh_type != "bhce":
+            # Legacy BloodHound also has these properties, but use Neo4j differently
+            return self._get_user_gmsa_status_legacy(username, domain)
+
+        try:
+            # Extract username part (remove domain prefix if present)
+            clean_username = username
+            if "\\" in username:
+                clean_username = username.split("\\")[-1]
+            elif "@" in username:
+                clean_username = username.split("@")[0]
+
+            # Remove trailing $ for query (we're looking for the user node)
+            query_username = clean_username.rstrip("$")
+
+            # Build query - search by name pattern (case-insensitive)
+            # BloodHound stores users as "USERNAME@DOMAIN.FQDN"
+            if domain:
+                # Exact UPN match
+                upn = f"{query_username.upper()}@{domain.upper()}"
+                query = f"MATCH (u:User) WHERE toLower(u.name) = '{upn.lower()}' RETURN u"
+            else:
+                # Partial match on username
+                query = f"MATCH (u:User) WHERE toLower(u.name) STARTS WITH '{query_username.lower()}@' RETURN u"
+
+            data = self.run_cypher_query(query)
+
+            if data:
+                nodes = data.get("data", {}).get("nodes", {})
+
+                if nodes:
+                    # Get first matching user
+                    node_id = list(nodes.keys())[0]
+                    node_data = nodes[node_id]
+                    properties = node_data.get("properties", {})
+
+                    return {
+                        "is_gmsa": properties.get("gmsa", False),
+                        "is_msa": properties.get("msa", False),
+                        "name": node_data.get("label", ""),
+                        "objectid": node_data.get("objectId", ""),
+                        "node_id": node_id,
+                    }
+            return None
+
+        except Exception as e:
+            debug(f"Error querying gMSA status for '{username}': {e}")
+            return None
+
+    def _get_user_gmsa_status_legacy(self, username: str, domain: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Query Legacy BloodHound (Neo4j) for user's gMSA/MSA status.
+
+        Args:
+            username: Username to query
+            domain: Optional domain FQDN
+
+        Returns:
+            Dict with 'is_gmsa', 'is_msa', 'name', 'objectid' or None if not found
+        """
+        if GraphDatabase is None:
+            debug("neo4j library not installed - cannot query Legacy BloodHound for gMSA status")
+            return None
+
+        try:
+            # Extract username part
+            clean_username = username
+            if "\\" in username:
+                clean_username = username.split("\\")[-1]
+            elif "@" in username:
+                clean_username = username.split("@")[0]
+
+            query_username = clean_username.rstrip("$")
+
+            # Build query
+            if domain:
+                query = f"MATCH (u:User) WHERE toLower(u.name) = toLower('{query_username}@{domain}') RETURN u"
+            else:
+                query = f"MATCH (u:User) WHERE toLower(u.name) STARTS WITH toLower('{query_username}@') RETURN u"
+
+            uri = f"bolt://{self.ip}:7687"
+            driver = GraphDatabase.driver(uri, auth=(self.username, self.password))
+
+            with driver.session() as session:
+                result = session.run(query)
+                record = result.single()
+
+                if record:
+                    node = record["u"]
+                    properties = dict(node) if node else {}
+
+                    return {
+                        "is_gmsa": properties.get("gmsa", False),
+                        "is_msa": properties.get("msa", False),
+                        "name": properties.get("name", ""),
+                        "objectid": properties.get("objectid", ""),
+                    }
+
+            driver.close()
+            return None
+
+        except Exception as e:
+            debug(f"Error querying Legacy BH gMSA status for '{username}': {e}")
             return None
 
     def validate_and_resolve_cross_domain_user(self, netbios_domain: str, username: str) -> Optional[Dict[str, str]]:

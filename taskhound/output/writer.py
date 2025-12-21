@@ -48,12 +48,9 @@ def _format_task_table(row_dict: Dict[str, Any], hostname: str = None) -> Table:
         tag = "[TASK]"
 
     rel_path = row_dict.get("path", "Unknown")
-    
+
     # Build title with hostname if provided
-    if hostname:
-        title = f"[{header_style}]{tag}[/] {hostname} - {rel_path}"
-    else:
-        title = f"[{header_style}]{tag}[/] {rel_path}"
+    title = f"[{header_style}]{tag}[/] {hostname} - {rel_path}" if hostname else f"[{header_style}]{tag}[/] {rel_path}"
 
     # Use SQUARE box style with title as header - matches README format
     table = Table(
@@ -147,7 +144,6 @@ def _format_task_table(row_dict: Dict[str, Any], hostname: str = None) -> Table:
 def _format_trigger_display(row_dict: Dict[str, Any]) -> str:
     """Format trigger information for plain text display."""
     trigger_type = row_dict.get("trigger_type", "")
-    parts = [trigger_type]
 
     start_boundary = row_dict.get("start_boundary")
     interval = row_dict.get("interval")

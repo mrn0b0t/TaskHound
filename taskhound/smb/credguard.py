@@ -15,6 +15,7 @@
 #   False - Credential Guard is NOT detected (DPAPI extraction may work)
 #   None  - Unable to check (insufficient permissions or other failure)
 
+import contextlib
 import time
 from typing import Optional
 
@@ -136,15 +137,11 @@ class RemoteRegistryOps:
         """Cleanup: restore service state and disconnect"""
         self._restore()
         if self._rrp is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._rrp.disconnect()
-            except Exception:
-                pass
         if self._scmr is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._scmr.disconnect()
-            except Exception:
-                pass
 
 
 def check_credential_guard(smb_conn, host) -> Optional[bool]:

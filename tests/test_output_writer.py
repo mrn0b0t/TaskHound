@@ -487,7 +487,7 @@ class TestFormatTaskTable:
     def test_trigger_display_formatting(self):
         """Should format trigger display with details"""
         from taskhound.output.writer import _format_trigger_display
-        
+
         # Calendar with interval
         result = _format_trigger_display({
             "trigger_type": "Calendar",
@@ -497,7 +497,7 @@ class TestFormatTaskTable:
         assert "Calendar" in result
         assert "5min" in result
         assert "daily" in result
-        
+
         # Time trigger with start boundary
         result = _format_trigger_display({
             "trigger_type": "Time",

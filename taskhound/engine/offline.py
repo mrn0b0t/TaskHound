@@ -326,6 +326,10 @@ def _process_offline_host(
             if matched_password:
                 row.decrypted_password = matched_password
 
+        # Get cache for gMSA detection
+        from ..utils.cache_manager import get_cache
+        cache = get_cache()
+
         # Format output block based on classification
         if result.task_type in ("TIER-0", "PRIV"):
             priv_lines.extend(
@@ -348,6 +352,7 @@ def _process_offline_host(
                     ldap_password=None,
                     meta=meta,
                     concise=concise,
+                    cache_manager=cache,
                 )
             )
             priv_count += 1
@@ -372,6 +377,7 @@ def _process_offline_host(
                     ldap_password=None,
                     meta=meta,
                     concise=concise,
+                    cache_manager=cache,
                 )
             )
 

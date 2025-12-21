@@ -157,18 +157,50 @@ class TestBloodHoundConnectorInit:
 class TestBloodHoundConnectorRunCypherQuery:
     """Tests for run_cypher_query method"""
 
-    def test_rejects_non_bhce(self):
-        """Should reject non-BHCE connector"""
-        connector = BloodHoundConnector(
-            bh_type="legacy",
-            ip="192.168.1.1",
-            username="neo4j",
-            password="password"
-        )
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    def test_routes_to_bhce(self):
+        """Should route BHCE to REST API method"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "bhce"
+        connector.authenticator = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {"nodes": []}}
+        connector.authenticator.request.return_value = mock_response
 
         result = connector.run_cypher_query("MATCH (n) RETURN n")
 
-        assert result is None
+        assert result == {"data": {"nodes": []}}
+        connector.authenticator.request.assert_called_once()
+
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    @patch('taskhound.connectors.bloodhound.GraphDatabase')
+    def test_routes_to_legacy(self, mock_graph_db):
+        """Should route Legacy to Neo4j Bolt method"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "legacy"
+        connector.ip = "192.168.1.1"
+        connector.username = "neo4j"
+        connector.password = "password"
+
+        # Mock Neo4j driver and session
+        mock_driver = MagicMock()
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.__iter__ = lambda x: iter([{"name": "ADMIN@CORP.LOCAL"}])
+        mock_session.run.return_value = mock_result
+        mock_driver.session.return_value.__enter__ = lambda x: mock_session
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_graph_db.driver.return_value = mock_driver
+
+        result = connector.run_cypher_query("MATCH (n) RETURN n.name AS name")
+
+        assert result == {"data": {"data": [{"name": "ADMIN@CORP.LOCAL"}]}}
+        mock_graph_db.driver.assert_called_once_with(
+            "bolt://192.168.1.1:7687",
+            auth=("neo4j", "password")
+        )
 
     @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
     def test_successful_query(self):
@@ -213,6 +245,157 @@ class TestBloodHoundConnectorRunCypherQuery:
         result = connector.run_cypher_query("MATCH (n) RETURN n")
 
         assert result is None
+
+
+class TestBloodHoundConnectorRunCypherQueryLegacy:
+    """Tests for Legacy BloodHound Cypher query support"""
+
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    @patch('taskhound.connectors.bloodhound.GraphDatabase')
+    def test_successful_legacy_query(self, mock_graph_db):
+        """Should execute successful Cypher query against Neo4j"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "legacy"
+        connector.ip = "192.168.1.1"
+        connector.username = "neo4j"
+        connector.password = "password"
+
+        # Mock Neo4j response with user data
+        mock_driver = MagicMock()
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.__iter__ = lambda x: iter([
+            {"name": "ADMIN@CORP.LOCAL", "objectid": "S-1-5-21-123-456-789-500"}
+        ])
+        mock_session.run.return_value = mock_result
+        mock_driver.session.return_value.__enter__ = lambda x: mock_session
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_graph_db.driver.return_value = mock_driver
+
+        result = connector._run_cypher_query_legacy(
+            'MATCH (n) WHERE n.objectid = "S-1-5-21-123-456-789-500" RETURN n.name AS name'
+        )
+
+        assert result is not None
+        assert "data" in result
+        assert "data" in result["data"]
+        assert len(result["data"]["data"]) == 1
+        assert result["data"]["data"][0]["name"] == "ADMIN@CORP.LOCAL"
+
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    @patch('taskhound.connectors.bloodhound.GraphDatabase')
+    def test_legacy_query_multiple_results(self, mock_graph_db):
+        """Should handle multiple results from Neo4j"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "legacy"
+        connector.ip = "192.168.1.1"
+        connector.username = "neo4j"
+        connector.password = "password"
+
+        # Mock multiple users
+        mock_driver = MagicMock()
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.__iter__ = lambda x: iter([
+            {"name": "ADMIN@CORP.LOCAL"},
+            {"name": "USER1@CORP.LOCAL"},
+            {"name": "USER2@CORP.LOCAL"},
+        ])
+        mock_session.run.return_value = mock_result
+        mock_driver.session.return_value.__enter__ = lambda x: mock_session
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_graph_db.driver.return_value = mock_driver
+
+        result = connector._run_cypher_query_legacy("MATCH (u:User) RETURN u.name AS name")
+
+        assert len(result["data"]["data"]) == 3
+
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    @patch('taskhound.connectors.bloodhound.GraphDatabase')
+    def test_legacy_query_empty_results(self, mock_graph_db):
+        """Should handle empty results from Neo4j"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "legacy"
+        connector.ip = "192.168.1.1"
+        connector.username = "neo4j"
+        connector.password = "password"
+
+        # Mock empty result
+        mock_driver = MagicMock()
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.__iter__ = lambda x: iter([])
+        mock_session.run.return_value = mock_result
+        mock_driver.session.return_value.__enter__ = lambda x: mock_session
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_graph_db.driver.return_value = mock_driver
+
+        result = connector._run_cypher_query_legacy("MATCH (n:NonExistent) RETURN n")
+
+        assert result == {"data": {"data": []}}
+
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    @patch('taskhound.connectors.bloodhound.GraphDatabase')
+    def test_legacy_query_connection_failure(self, mock_graph_db):
+        """Should handle Neo4j connection failure"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "legacy"
+        connector.ip = "192.168.1.1"
+        connector.username = "neo4j"
+        connector.password = "password"
+
+        # Mock connection failure
+        mock_graph_db.driver.side_effect = Exception("Connection refused")
+
+        result = connector._run_cypher_query_legacy("MATCH (n) RETURN n")
+
+        assert result is None
+
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    @patch('taskhound.connectors.bloodhound.GraphDatabase', None)
+    def test_legacy_query_no_neo4j_library(self):
+        """Should return None when neo4j library not installed"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "legacy"
+        connector.ip = "192.168.1.1"
+        connector.username = "neo4j"
+        connector.password = "password"
+
+        result = connector._run_cypher_query_legacy("MATCH (n) RETURN n")
+
+        assert result is None
+
+    @patch.object(BloodHoundConnector, '__init__', lambda x, **kwargs: None)
+    @patch('taskhound.connectors.bloodhound.GraphDatabase')
+    def test_legacy_sid_resolution_query(self, mock_graph_db):
+        """Should support SID resolution query pattern used by sid_resolver"""
+        connector = BloodHoundConnector.__new__(BloodHoundConnector)
+        connector.bh_type = "legacy"
+        connector.ip = "192.168.1.1"
+        connector.username = "neo4j"
+        connector.password = "password"
+
+        # Mock the exact query pattern from resolve_sid_via_bloodhound_api
+        mock_driver = MagicMock()
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.__iter__ = lambda x: iter([{"name": "SERVICEACCOUNT@CORP.LOCAL"}])
+        mock_session.run.return_value = mock_result
+        mock_driver.session.return_value.__enter__ = lambda x: mock_session
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_graph_db.driver.return_value = mock_driver
+
+        # This is the exact query pattern from sid_resolver.py
+        sid = "S-1-5-21-123-456-789-1001"
+        query = f'MATCH (n) WHERE n.objectid = "{sid}" RETURN n.name AS name LIMIT 1'
+        result = connector.run_cypher_query(query)
+
+        # Verify format matches what resolve_sid_via_bloodhound_api expects
+        assert result is not None
+        assert "data" in result
+        assert "data" in result["data"]
+        assert len(result["data"]["data"]) > 0
+        assert result["data"]["data"][0]["name"] == "SERVICEACCOUNT@CORP.LOCAL"
 
 
 class TestBloodHoundConnectorConnectAndQuery:

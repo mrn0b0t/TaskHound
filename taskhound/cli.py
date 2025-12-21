@@ -4,6 +4,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from rich.panel import Panel
+from rich.prompt import Confirm
+
 from .auth import AuthContext
 from .config import build_parser, validate_args
 from .engine import process_offline_directory, process_target
@@ -37,9 +40,6 @@ from .utils.date_parser import parse_timestamp
 from .utils.helpers import normalize_targets
 from .utils.logging import debug, good, info, set_verbosity, status, warn
 from .utils.network import verify_ldap_connection
-
-from rich.panel import Panel
-from rich.prompt import Confirm
 
 
 def _handle_opengraph(
@@ -304,7 +304,6 @@ def _auto_discover_targets(args: Any, bh_config: Any) -> List[str]:
     Returns:
         List of computer hostnames (FQDNs)
     """
-    import time
 
     include_dcs = getattr(args, "include_dcs", False)
     include_disabled = getattr(args, "include_disabled", False)
@@ -401,7 +400,7 @@ def _enumerate_from_bloodhound(
     """
     import time
 
-    from .output.bloodhound import extract_host_from_connector, normalize_bloodhound_connector
+    from .output.bloodhound import normalize_bloodhound_connector
     from .utils.bh_api import (
         enumerate_computers_from_bloodhound,
         get_bloodhound_data_age,
@@ -470,10 +469,7 @@ def _enumerate_from_bloodhound(
         # Apply OS filter preset
         if filter_preset:
             os_name = (comp.get("operatingsystem") or "").upper()
-            if filter_preset == "servers" and "SERVER" not in os_name:
-                stats["os_filter"] += 1
-                continue
-            elif filter_preset == "workstations" and "SERVER" in os_name:
+            if filter_preset == "servers" and "SERVER" not in os_name or filter_preset == "workstations" and "SERVER" in os_name:
                 stats["os_filter"] += 1
                 continue
 
@@ -509,7 +505,7 @@ def _enumerate_from_ldap(
     Returns:
         Tuple of (list of hostnames, source string)
     """
-    from .utils.ldap import LDAPConnectionError, enumerate_domain_computers_filtered
+    from .utils.ldap import enumerate_domain_computers_filtered
 
     info("Auto-targets: Querying LDAP...")
 

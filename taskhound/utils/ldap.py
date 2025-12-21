@@ -54,7 +54,7 @@ def resolve_dc_hostname(dc_ip: str, domain: str, use_tcp: bool = False) -> Optio
                 return hostname
     except ImportError:
         pass  # dnspython not available
-    except (OSError, socket.timeout) as e:
+    except (OSError, socket.timeout):
         pass  # DNS lookup failed: {e}
 
     # Method 2: System reverse DNS lookup
@@ -71,7 +71,7 @@ def resolve_dc_hostname(dc_ip: str, domain: str, use_tcp: bool = False) -> Optio
         hostname = socket.getfqdn(dc_ip)
         if hostname and hostname != dc_ip and hostname.lower() != domain.lower():
             return hostname
-    except (OSError, socket.error):
+    except OSError:
         pass
 
     return None
@@ -429,10 +429,7 @@ def enumerate_domain_computers_filtered(
         debug(f"LDAP: Adding custom filter: {ldap_filter}")
 
     # Combine all filters
-    if len(filters) == 1:
-        search_filter = filters[0]
-    else:
-        search_filter = f"(&{''.join(filters)})"
+    search_filter = filters[0] if len(filters) == 1 else f"(&{''.join(filters)})"
 
     debug(f"LDAP: Enumerating computers with filter: {search_filter}")
 
@@ -480,16 +477,13 @@ def enumerate_domain_computers_filtered(
                 elif attr_type.lower() == "samaccountname":
                     sam_name = attr_value
                 elif attr_type.lower() == "pwdlastset":
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         pwd_last_set = int(attr_value)
-                    except (ValueError, TypeError):
-                        pass
 
         # Filter stale accounts
-        if stale_threshold > 0 and pwd_last_set:
-            if pwd_last_set < stale_cutoff_filetime:
-                stats["stale"] += 1
-                continue
+        if stale_threshold > 0 and pwd_last_set and pwd_last_set < stale_cutoff_filetime:
+            stats["stale"] += 1
+            continue
 
         # Build hostname
         if dns_hostname:

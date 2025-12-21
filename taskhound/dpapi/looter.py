@@ -9,6 +9,7 @@ import contextlib
 import json
 import logging
 import os
+import struct
 from binascii import unhexlify
 from datetime import datetime
 from io import BytesIO

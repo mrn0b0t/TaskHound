@@ -373,6 +373,7 @@ class TestGetBloodhoundDataAge:
     def test_calculates_age_from_lastseen(self):
         """Should calculate age from lastseen timestamp"""
         from datetime import datetime, timezone
+
         from taskhound.utils.bh_api import get_bloodhound_data_age
 
         # Create a timestamp from 5 days ago
