@@ -331,7 +331,15 @@ def _create_principal_id(runas_user: str, local_domain: str, task: Dict, bh_conn
         return f"{user}@{local_domain}"
     else:
         # No domain prefix and no @ - assume local domain
+        # This is ambiguous: could be local account or domain account
+        # MS-TSCH spec defines .\user for local, DOMAIN\user for domain
+        # Plain samaccountname is non-standard - warn user about assumption
         user = runas_user.strip().upper()
+        task_path = task.get("path", "unknown")
+        hostname = task.get("host", "unknown")
+        warn(f"Ambiguous principal on {hostname}: {task_path}")
+        warn(f"  RunAs: '{runas_user}' (no domain prefix) - assuming domain account {user}@{local_domain}")
+        warn(f"  If this is a local account, it should be '.\\{runas_user}' per MS-TSCH spec")
         return f"{user}@{local_domain}"
 
 
