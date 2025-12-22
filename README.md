@@ -161,7 +161,7 @@ TTTTT  AAA   SSS  K   K H   H  OOO  U   U N   N DDDD
 │ Date             │ 2025-03-10T08:00:00                                       │
 │ Trigger          │ Calendar (starts 2025-03-10 08:00, every 4 hours)         │
 │ Reason           │ High Value match found in BloodHound                      │
-│ Cred Validation  │ EXPIRED (0x80070532)                                      │
+│ Cred Validation  │ LIKELY INVALID (password older than pwdLastSet)          │
 │ Pwd Analysis     │ Password changed AFTER task - credentials may be stale    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -331,10 +331,12 @@ taskhound -u homer.simpson -p 'Doh!123' -d thesimpsons.local -t moe.thesimpsons.
 ```
 
 Output includes validation status:
-- `VALID` - Task ran successfully recently
-- `EXPIRED` - Password changed (0x80070532)
-- `INVALID` - Logon failure (0x8007052E)
-- `UNKNOWN` - No execution history
+- `VALID` - Credentials confirmed working, task can execute
+- `VALID (restricted)` - Password correct but account restricted (e.g., no batch or interactive logon right)
+- `INVALID (wrong password)` - Logon failure (0x8007052E)
+- `BLOCKED (account disabled/expired)` - Account disabled, locked, or password expired
+- `UNKNOWN` - Task never ran, cannot determine
+- `LIKELY VALID/INVALID` - Heuristic based on password freshness when task never ran
 
 > **Note**: Disabled when using `--opsec` or `--no-rpc`.
 
