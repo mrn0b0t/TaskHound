@@ -105,8 +105,8 @@ class BloodHoundConnector:
 
     def _run_cypher_query_bhce(self, query: str) -> Optional[Dict]:
         """Execute Cypher query against BHCE via REST API."""
-        # Prepare Query Body
-        body = {"query": query}
+        # Prepare Query Body - include_properties=True ensures node properties are returned
+        body = {"query": query, "include_properties": True}
 
         try:
             response = self.authenticator.request("POST", "/api/v2/graphs/cypher", body)
@@ -777,7 +777,7 @@ class BloodHoundConnector:
             warn(f"Error querying user '{upn}': {e}")
             return None
 
-    def get_user_gmsa_status(self, username: str, domain: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_user_gmsa_status(self, username: str) -> Optional[Dict[str, Any]]:
         """
         Query BloodHound for user's gMSA/MSA status.
 
@@ -788,14 +788,13 @@ class BloodHoundConnector:
 
         Args:
             username: Username to query (with or without domain prefix)
-            domain: Optional domain FQDN to construct UPN
 
         Returns:
             Dict with 'is_gmsa', 'is_msa', 'name', 'objectid' or None if not found
         """
         if self.bh_type != "bhce":
             # Legacy BloodHound also has these properties, but use Neo4j differently
-            return self._get_user_gmsa_status_legacy(username, domain)
+            return self._get_user_gmsa_status_legacy(username)
 
         try:
             # Extract username part (remove domain prefix if present)
@@ -805,18 +804,13 @@ class BloodHoundConnector:
             elif "@" in username:
                 clean_username = username.split("@")[0]
 
-            # Remove trailing $ for query (we're looking for the user node)
-            query_username = clean_username.rstrip("$")
+            # Keep the $ suffix for gMSA/MSA accounts - BloodHound stores them with $
+            # e.g., "GMSATASK2$@BADSUCCESSOR.LAB"
+            query_username = clean_username
 
-            # Build query - search by name pattern (case-insensitive)
-            # BloodHound stores users as "USERNAME@DOMAIN.FQDN"
-            if domain:
-                # Exact UPN match
-                upn = f"{query_username.upper()}@{domain.upper()}"
-                query = f"MATCH (u:User) WHERE toLower(u.name) = '{upn.lower()}' RETURN u"
-            else:
-                # Partial match on username
-                query = f"MATCH (u:User) WHERE toLower(u.name) STARTS WITH '{query_username.lower()}@' RETURN u"
+            # Build query - search by samaccountname (case-insensitive)
+            # Using samaccountname is more reliable than name (UPN) since we have the account name directly
+            query = f"MATCH (u:User) WHERE toLower(u.samaccountname) = '{query_username.lower()}' RETURN u"
 
             data = self.run_cypher_query(query)
 
@@ -829,9 +823,34 @@ class BloodHoundConnector:
                     node_data = nodes[node_id]
                     properties = node_data.get("properties", {})
 
+                    is_gmsa = properties.get("gmsa", False)
+                    is_msa = properties.get("msa", False)
+
+                    # Fallback 1: Check for incoming ReadGMSAPassword edges
+                    # This is the most reliable indicator - only gMSAs have this ACL
+                    if not is_gmsa and not is_msa:
+                        sam = properties.get("samaccountname", "")
+                        if sam and self._has_read_gmsa_password_edge(sam):
+                            is_gmsa = True
+                            debug(f"[BloodHound gMSA] Detected via ReadGMSAPassword edge: {sam}")
+
+                    # Fallback 2: Check distinguishedname for Managed Service Accounts container
+                    # SharpHound may not always populate gmsa/msa properties
+                    if not is_gmsa and not is_msa:
+                        dn = properties.get("distinguishedname", "").upper()
+                        if "CN=MANAGED SERVICE ACCOUNTS," in dn:
+                            # Account is in MSA container - determine type by $ suffix
+                            sam = properties.get("samaccountname", "")
+                            if sam.endswith("$"):
+                                is_gmsa = True  # gMSA accounts have $ suffix
+                                debug(f"[BloodHound gMSA] Detected via DN container: {dn}")
+                            else:
+                                is_msa = True  # Standalone MSA without $ suffix
+                                debug(f"[BloodHound MSA] Detected via DN container: {dn}")
+
                     return {
-                        "is_gmsa": properties.get("gmsa", False),
-                        "is_msa": properties.get("msa", False),
+                        "is_gmsa": is_gmsa,
+                        "is_msa": is_msa,
                         "name": node_data.get("label", ""),
                         "objectid": node_data.get("objectId", ""),
                         "node_id": node_id,
@@ -842,13 +861,39 @@ class BloodHoundConnector:
             debug(f"Error querying gMSA status for '{username}': {e}")
             return None
 
-    def _get_user_gmsa_status_legacy(self, username: str, domain: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def _has_read_gmsa_password_edge(self, user_name: str) -> bool:
+        """
+        Check if a user has incoming ReadGMSAPassword edges.
+
+        This is a definitive indicator that the account is a gMSA - only gMSAs
+        have this ACL edge in BloodHound.
+
+        Args:
+            user_name: The user's sAMAccountName (e.g., "gMSATask2$")
+
+        Returns:
+            True if the user has ReadGMSAPassword edges, False otherwise
+        """
+        try:
+            # Query for incoming ReadGMSAPassword edges to this user by sAMAccountName
+            query = f"MATCH p=()-[:ReadGMSAPassword]->(u) WHERE toLower(u.samaccountname) = '{user_name.lower()}' RETURN u"
+            data = self.run_cypher_query(query)
+
+            if data:
+                nodes = data.get("data", {}).get("nodes", {})
+                return len(nodes) > 0
+
+            return False
+        except Exception as e:
+            debug(f"Error checking ReadGMSAPassword edge for '{user_name}': {e}")
+            return False
+
+    def _get_user_gmsa_status_legacy(self, username: str) -> Optional[Dict[str, Any]]:
         """
         Query Legacy BloodHound (Neo4j) for user's gMSA/MSA status.
 
         Args:
-            username: Username to query
-            domain: Optional domain FQDN
+            username: Username to query (with or without domain prefix)
 
         Returns:
             Dict with 'is_gmsa', 'is_msa', 'name', 'objectid' or None if not found
@@ -865,13 +910,11 @@ class BloodHoundConnector:
             elif "@" in username:
                 clean_username = username.split("@")[0]
 
-            query_username = clean_username.rstrip("$")
+            # Keep the $ suffix for gMSA/MSA accounts - BloodHound stores them with $
+            query_username = clean_username
 
-            # Build query
-            if domain:
-                query = f"MATCH (u:User) WHERE toLower(u.name) = toLower('{query_username}@{domain}') RETURN u"
-            else:
-                query = f"MATCH (u:User) WHERE toLower(u.name) STARTS WITH toLower('{query_username}@') RETURN u"
+            # Build query - search by samaccountname (more reliable than UPN)
+            query = f"MATCH (u:User) WHERE toLower(u.samaccountname) = '{query_username.lower()}' RETURN u"
 
             uri = f"bolt://{self.ip}:7687"
             driver = GraphDatabase.driver(uri, auth=(self.username, self.password))
@@ -884,10 +927,35 @@ class BloodHoundConnector:
                     node = record["u"]
                     properties = dict(node) if node else {}
 
+                    is_gmsa = properties.get("gmsa", False)
+                    is_msa = properties.get("msa", False)
+                    user_name = properties.get("name", "")
+                    sam = properties.get("samaccountname", "")
+
+                    # Fallback 1: Check for incoming ReadGMSAPassword edges
+                    if not is_gmsa and not is_msa and sam:
+                        edge_query = f"MATCH ()-[:ReadGMSAPassword]->(u) WHERE toLower(u.samaccountname) = '{sam.lower()}' RETURN u"
+                        edge_result = session.run(edge_query)
+                        if edge_result.single():
+                            is_gmsa = True
+                            debug(f"[Legacy BH gMSA] Detected via ReadGMSAPassword edge: {sam}")
+
+                    # Fallback 2: Check distinguishedname for Managed Service Accounts container
+                    # SharpHound may not always populate gmsa/msa properties
+                    if not is_gmsa and not is_msa:
+                        dn = properties.get("distinguishedname", "").upper()
+                        if "CN=MANAGED SERVICE ACCOUNTS," in dn:
+                            if sam.endswith("$"):
+                                is_gmsa = True
+                                debug(f"[Legacy BH gMSA] Detected via DN container: {dn}")
+                            else:
+                                is_msa = True
+                                debug(f"[Legacy BH MSA] Detected via DN container: {dn}")
+
                     return {
-                        "is_gmsa": properties.get("gmsa", False),
-                        "is_msa": properties.get("msa", False),
-                        "name": properties.get("name", ""),
+                        "is_gmsa": is_gmsa,
+                        "is_msa": is_msa,
+                        "name": user_name,
                         "objectid": properties.get("objectid", ""),
                     }
 

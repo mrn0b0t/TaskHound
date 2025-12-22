@@ -169,11 +169,104 @@ def format_trigger_info(meta: Dict[str, str]) -> Optional[str]:
     return " ".join(trigger_parts) if len(trigger_parts) > 1 else trigger_type
 
 
+def _query_gmsa_ldap(
+    username: str,
+    domain: str,
+    dc_ip: str,
+    ldap_user: Optional[str] = None,
+    ldap_password: Optional[str] = None,
+    ldap_hashes: Optional[str] = None,
+) -> Optional[Dict[str, bool]]:
+    """
+    Query LDAP directly to check if an account is a gMSA or MSA.
+
+    Checks the objectClass attribute for:
+    - msds-groupmanagedserviceaccount (gMSA)
+    - msds-managedserviceaccount (MSA)
+
+    Args:
+        username: The sAMAccountName to look up (with or without $ suffix)
+        domain: Domain name for constructing search base
+        dc_ip: Domain controller IP address
+        ldap_user: Username for LDAP authentication
+        ldap_password: Password for LDAP authentication
+        ldap_hashes: NTLM hashes for LDAP authentication
+
+    Returns:
+        Dict with is_gmsa and is_msa booleans, or None if query failed
+    """
+    from impacket.ldap.ldapasn1 import SearchResultEntry
+
+    from ..utils.ldap import get_ldap_connection
+    from ..utils.logging import debug
+
+    # Ensure username has $ suffix for service account lookup
+    sam_account_name = username if username.endswith("$") else f"{username}$"
+
+    try:
+        ldap_conn = get_ldap_connection(
+            dc_ip=dc_ip,
+            domain=domain,
+            username=ldap_user or "",
+            password=ldap_password,
+            hashes=ldap_hashes,
+        )
+
+        # Build search base from domain
+        search_base = ",".join(f"DC={part}" for part in domain.split("."))
+
+        # Search for the account by sAMAccountName, request objectClass
+        search_filter = f"(sAMAccountName={sam_account_name})"
+
+        results = ldap_conn.search(
+            searchBase=search_base,
+            searchFilter=search_filter,
+            attributes=["objectClass", "sAMAccountName"],
+        )
+
+        # Process results - impacket returns a list of SearchResultEntry objects
+        for entry in results:
+            if not isinstance(entry, SearchResultEntry):
+                continue
+
+            object_classes = []
+
+            for attr in entry["attributes"]:
+                attr_type = str(attr["type"])
+                if attr_type.lower() == "objectclass":
+                    # Extract all objectClass values
+                    for val in attr["vals"]:
+                        object_classes.append(str(val).lower())
+                    break
+
+            # Check for gMSA/MSA object classes
+            is_gmsa = "msds-groupmanagedserviceaccount" in object_classes
+            is_msa = "msds-managedserviceaccount" in object_classes
+
+            debug(f"[LDAP gMSA] {sam_account_name}: objectClasses={object_classes}, is_gmsa={is_gmsa}, is_msa={is_msa}")
+
+            return {"is_gmsa": is_gmsa, "is_msa": is_msa}
+
+        # Account not found
+        debug(f"[LDAP gMSA] {sam_account_name}: account not found in LDAP")
+        return None
+
+    except Exception as e:
+        debug(f"[LDAP gMSA] Query failed for {sam_account_name}: {e}")
+        return None
+
+
 def _check_gmsa_account(
     display_runas: str,
     resolved_username: Optional[str] = None,
     bh_connector=None,
     cache_manager=None,
+    no_ldap: bool = False,
+    domain: Optional[str] = None,
+    dc_ip: Optional[str] = None,
+    ldap_user: Optional[str] = None,
+    ldap_password: Optional[str] = None,
+    ldap_hashes: Optional[str] = None,
 ) -> Optional[str]:
     """
     Check if the runas account is a gMSA (Group Managed Service Account).
@@ -181,7 +274,8 @@ def _check_gmsa_account(
     Uses a multi-tier detection strategy:
     1. Cache - Check if we've already determined gMSA status for this user
     2. BloodHound - Query User node for gmsa/msa boolean properties
-    3. Heuristic Fallback - Username ends with '$' and not a system account
+    3. LDAP - Query AD directly for objectClass=msds-groupmanagedserviceaccount
+    4. Heuristic Fallback - Username ends with '$' and not a system account
 
     BloodHound CE stores 'gmsa' and 'msa' properties on User nodes, derived from
     objectClass during SharpHound collection (msds-groupmanagedserviceaccount).
@@ -191,6 +285,12 @@ def _check_gmsa_account(
         resolved_username: The resolved username (if SID was resolved)
         bh_connector: BloodHound connector for API queries (optional)
         cache_manager: Cache manager for storing results (optional)
+        no_ldap: Skip LDAP queries (OPSEC mode)
+        domain: Domain name for LDAP connection
+        dc_ip: Domain controller IP for LDAP connection
+        ldap_user: Username for LDAP authentication
+        ldap_password: Password for LDAP authentication
+        ldap_hashes: NTLM hashes for LDAP authentication
 
     Returns:
         Hint message if gMSA detected, None otherwise
@@ -247,11 +347,45 @@ def _check_gmsa_account(
 
                 if is_gmsa or is_msa:
                     return _format_gmsa_hint(is_gmsa, is_msa)
-                return None
-        except Exception:
-            pass  # Fall through to heuristic
 
-    # Tier 3: Heuristic fallback - check if username ends with $
+                # BloodHound found the user but gmsa/msa properties are False
+                # If the username ends with $, fall through to LDAP verification
+                # (SharpHound may not have collected objectClass data)
+                if not clean_username.endswith("$"):
+                    return None
+                # Fall through to LDAP for $ accounts
+        except Exception:
+            pass  # Fall through to LDAP/heuristic
+
+    # Tier 3: LDAP query - check objectClass directly in AD
+    if not no_ldap and domain and dc_ip and clean_username.endswith("$"):
+        ldap_result = _query_gmsa_ldap(
+            clean_username,
+            domain,
+            dc_ip,
+            ldap_user,
+            ldap_password,
+            ldap_hashes,
+        )
+        if ldap_result is not None:
+            is_gmsa = ldap_result.get("is_gmsa", False)
+            is_msa = ldap_result.get("is_msa", False)
+
+            # Cache the LDAP result
+            if cache_manager:
+                cache_manager.set("gmsa_status", cache_key, {
+                    "is_gmsa": is_gmsa,
+                    "is_msa": is_msa,
+                    "source": "ldap",
+                })
+
+            if is_gmsa or is_msa:
+                return _format_gmsa_hint(is_gmsa, is_msa)
+            # LDAP confirmed account exists but is not gMSA/MSA
+            return None
+        # LDAP query failed, fall through to heuristic
+
+    # Tier 4: Heuristic fallback - check if username ends with $
     if not clean_username.endswith("$"):
         return None
 
@@ -470,12 +604,18 @@ def format_block(
     if decrypted_password:
         rows.append(("Decrypted Pwd", decrypted_password))
 
-    # gMSA hint - uses multi-tier detection: Cache → BloodHound → Heuristic
+    # gMSA hint - uses multi-tier detection: Cache → BloodHound → LDAP → Heuristic
     gmsa_hint = _check_gmsa_account(
         display_runas,
         resolved_username,
         bh_connector=bh_connector,
         cache_manager=cache_manager,
+        no_ldap=no_ldap,
+        domain=ldap_domain or domain,
+        dc_ip=dc_ip,
+        ldap_user=ldap_user or username,
+        ldap_password=ldap_password or password,
+        ldap_hashes=ldap_hashes or hashes,
     )
     if gmsa_hint:
         rows.append(("gMSA Hint", gmsa_hint))

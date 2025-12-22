@@ -610,6 +610,139 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             color: var(--text-secondary);
         }
 
+        /* Disclaimer Box */
+        .disclaimer {
+            background: rgba(99, 102, 241, 0.08);
+            border: 1px solid rgba(99, 102, 241, 0.25);
+            border-radius: 6px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .disclaimer-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .disclaimer-header .icon {
+            font-size: 1rem;
+        }
+
+        .disclaimer-header .title {
+            color: var(--accent-light);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .disclaimer p {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        .disclaimer p + p {
+            margin-top: 0.5rem;
+        }
+
+        /* Classification Reference Section */
+        .classification-reference {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border);
+        }
+
+        .classification-reference h2 {
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .classification-reference h3 {
+            color: var(--text-primary);
+            margin: 1.25rem 0 0.75rem 0;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .classification-reference h3:first-of-type {
+            margin-top: 0;
+        }
+
+        .classification-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .classification-table th {
+            background: var(--bg-card);
+            padding: 0.6rem 0.75rem;
+            text-align: left;
+            font-weight: 500;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.04em;
+        }
+
+        .classification-table td {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--border);
+            vertical-align: top;
+            color: var(--text-secondary);
+        }
+
+        .classification-table tr:hover {
+            background: rgba(99, 102, 241, 0.03);
+        }
+
+        .impact-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .impact-list li {
+            padding: 0.6rem 0.75rem;
+            background: var(--bg-card);
+            border-radius: 4px;
+            margin-bottom: 0.4rem;
+            border-left: 3px solid var(--border-light);
+            font-size: 0.85rem;
+        }
+
+        .impact-list li strong {
+            color: var(--text-primary);
+            display: block;
+            margin-bottom: 0.2rem;
+            font-weight: 500;
+        }
+
+        .impact-list li p {
+            color: var(--text-muted);
+            margin: 0;
+            font-size: 0.8rem;
+        }
+
+        .impact-list li.tier0 { border-left-color: var(--severity-critical); }
+        .impact-list li.tier0 strong { color: #fca5a5; }
+        .impact-list li.priv { border-left-color: var(--severity-high); }
+        .impact-list li.priv strong { color: #fdba74; }
+        .impact-list li.stored { border-left-color: var(--severity-medium); }
+        .impact-list li.stored strong { color: #fcd34d; }
+
         /* Tier-0 Warning Box */
         .tier0-warning {
             margin-top: 1.25rem;
@@ -1046,7 +1179,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
     <div class="container">
         {{HEADER}}
+        {{DISCLAIMER}}
         {{EXECUTIVE_SUMMARY}}
+        {{CLASSIFICATION_REFERENCE}}
         {{DETAILED_FINDINGS}}
         {{FAILURES}}
         {{FOOTER}}
@@ -1129,6 +1264,99 @@ def _generate_executive_summary(stats: AuditStatistics) -> str:
     summary_html += "</div>"
 
     return summary_html
+
+
+def _generate_disclaimer() -> str:
+    """Generate the disclaimer note section HTML."""
+    return """
+        <div class="disclaimer">
+            <div class="disclaimer-header">
+                <span class="icon">ℹ️</span>
+                <span class="title">Important Notice</span>
+            </div>
+            <p>
+                This report represents a <strong>point-in-time snapshot</strong> of the scheduled task configuration
+                across the scanned environment. Active Directory changes, task modifications, or credential updates
+                occurring after the scan time are not reflected in these findings.
+            </p>
+            <p>
+                Severity classifications are determined through automated heuristic analysis based on account
+                privilege levels, credential storage indicators, and validation results. These assessments should
+                be considered as <strong>indicative guidance</strong> rather than definitive security verdicts.
+                Manual verification and contextual evaluation by qualified security personnel is recommended
+                before taking remediation actions.
+            </p>
+        </div>
+    """
+
+
+def _generate_classification_reference() -> str:
+    """Generate the classification and impact reference section HTML."""
+    return """
+        <div class="classification-reference">
+            <h2>Classification &amp; Impact Reference</h2>
+
+            <h3>Severity Classification Matrix</h3>
+            <table class="classification-table">
+                <thead>
+                    <tr>
+                        <th>Severity</th>
+                        <th>Criteria</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="severity-pill severity-critical">CRITICAL</span></td>
+                        <td>Tier-0 account + Stored credentials + Valid password</td>
+                        <td>Domain Admin or equivalent credentials confirmed valid. Immediate compromise risk.</td>
+                    </tr>
+                    <tr>
+                        <td><span class="severity-pill severity-high">HIGH</span></td>
+                        <td>Tier-0 + Stored creds (outdated/protected)<br>—or— Privileged account + Valid password</td>
+                        <td>High-value credentials at risk. May enable privilege escalation or lateral movement.</td>
+                    </tr>
+                    <tr>
+                        <td><span class="severity-pill severity-medium">MEDIUM</span></td>
+                        <td>Tier-0 without stored creds<br>—or— Privileged account + Stored creds (not validated)</td>
+                        <td>Elevated account exposure. Potential attack path if credentials are obtained elsewhere.</td>
+                    </tr>
+                    <tr>
+                        <td><span class="severity-pill severity-low">LOW</span></td>
+                        <td>Privileged account without stored creds<br>—or— Standard task with stored credentials</td>
+                        <td>Limited direct risk. Monitor for privilege changes or credential additions.</td>
+                    </tr>
+                    <tr>
+                        <td><span class="severity-pill severity-info">INFO</span></td>
+                        <td>Standard task without stored credentials</td>
+                        <td>Informational finding. No immediate security concern identified.</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Potential Impact When Abused</h3>
+            <ul class="impact-list">
+                <li class="tier0">
+                    <strong>Tier-0 Credential Compromise</strong>
+                    <p>Attackers obtaining Domain Admin or equivalent credentials can achieve full domain control,
+                    including the ability to create persistence mechanisms, access all domain resources,
+                    modify security policies, and potentially compromise connected forests or cloud tenants.</p>
+                </li>
+                <li class="priv">
+                    <strong>Privileged Account Abuse</strong>
+                    <p>Compromised privileged accounts (local admin, service accounts with elevated rights)
+                    enable lateral movement across systems, access to sensitive data, deployment of malware,
+                    and potential escalation paths toward Tier-0 assets.</p>
+                </li>
+                <li class="stored">
+                    <strong>Stored Credential Extraction</strong>
+                    <p>Credentials stored via DPAPI can be extracted by attackers with local administrator
+                    access to the host. Successful decryption yields plaintext passwords that may be reused
+                    across systems or services, enabling credential stuffing and pass-the-hash attacks.</p>
+                </li>
+            </ul>
+        </div>
+    """
 
 
 def _generate_detailed_findings(rows: list[Any], findings: list[tuple[SeverityScore, Any]]) -> str:
@@ -1344,7 +1572,9 @@ def generate_html_report(
 
     # Generate sections
     header = _generate_header(stats, scan_time)
+    disclaimer = _generate_disclaimer()
     executive_summary = _generate_executive_summary(stats)
+    classification_reference = _generate_classification_reference()
     detailed_findings = _generate_detailed_findings(rows, findings)
     failures = _generate_failures(stats)
     footer = _generate_footer()
@@ -1352,7 +1582,9 @@ def generate_html_report(
     # Build final HTML using replace chain (avoids {} conflicts with CSS)
     html_content = (
         HTML_TEMPLATE.replace("{{HEADER}}", header)
+        .replace("{{DISCLAIMER}}", disclaimer)
         .replace("{{EXECUTIVE_SUMMARY}}", executive_summary)
+        .replace("{{CLASSIFICATION_REFERENCE}}", classification_reference)
         .replace("{{DETAILED_FINDINGS}}", detailed_findings)
         .replace("{{FAILURES}}", failures)
         .replace("{{FOOTER}}", footer)
