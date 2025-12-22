@@ -920,6 +920,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             text-transform: uppercase;
             display: inline-block;
             letter-spacing: 0.03em;
+            text-align: center;
+            min-width: 60px;
         }
 
         .severity-pill.severity-critical {
@@ -1103,12 +1105,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         .host-task-row {
             display: grid;
-            grid-template-columns: 80px 1fr 160px 1fr;
-            gap: 0.75rem;
+            grid-template-columns: 80px 1fr 200px 1fr;
+            gap: 1rem;
             padding: 0.6rem 1rem;
             border-bottom: 1px solid var(--border);
             align-items: start;
             font-size: 0.85rem;
+        }
+
+        .host-task-row .severity-pill {
+            text-align: center;
+            min-width: 60px;
         }
 
         .host-task-row:last-child {
@@ -1352,7 +1359,7 @@ def _generate_classification_reference() -> str:
                     <strong>Stored Credential Extraction</strong>
                     <p>Credentials stored via DPAPI can be extracted by attackers with local administrator
                     access to the host. Successful decryption yields plaintext passwords that may be reused
-                    across systems or services, enabling credential stuffing and pass-the-hash attacks.</p>
+                    across systems or services, enabling credential stuffing and password spraying attacks.</p>
                 </li>
             </ul>
         </div>
