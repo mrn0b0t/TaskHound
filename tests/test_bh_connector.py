@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from taskhound.connectors.bloodhound import (
     BloodHoundConnector,
+    _get_alternate_protocol_uri,
     _safe_get_sam,
     _sanitize_string_value,
 )
@@ -523,3 +524,47 @@ class TestBloodHoundConnectorGetUsersData:
         result = connector.get_users_data()
 
         assert result == {}
+
+
+class TestGetAlternateProtocolUri:
+    """Tests for _get_alternate_protocol_uri helper function"""
+
+    def test_http_to_https_keeps_port(self):
+        """Should convert http to https keeping the same port"""
+        result = _get_alternate_protocol_uri("http://localhost:8080")
+        assert result == "https://localhost:8080"
+
+    def test_https_to_http_keeps_port(self):
+        """Should convert https to http keeping the same port"""
+        result = _get_alternate_protocol_uri("https://localhost:8080")
+        assert result == "http://localhost:8080"
+
+    def test_http_custom_port_preserved(self):
+        """Should preserve custom ports when converting http to https"""
+        result = _get_alternate_protocol_uri("http://localhost:9090")
+        assert result == "https://localhost:9090"
+
+    def test_https_custom_port_preserved(self):
+        """Should preserve custom ports when converting https to http"""
+        result = _get_alternate_protocol_uri("https://localhost:9443")
+        assert result == "http://localhost:9443"
+
+    def test_with_fqdn(self):
+        """Should handle fully qualified domain names"""
+        result = _get_alternate_protocol_uri("http://bloodhound.domain.lab:8080")
+        assert result == "https://bloodhound.domain.lab:8080"
+
+    def test_with_ip_address(self):
+        """Should handle IP addresses"""
+        result = _get_alternate_protocol_uri("https://192.168.1.100:443")
+        assert result == "http://192.168.1.100:443"
+
+    def test_bolt_returns_none(self):
+        """Should return None for bolt:// scheme (Legacy BloodHound)"""
+        result = _get_alternate_protocol_uri("bolt://localhost:7687")
+        assert result is None
+
+    def test_unknown_scheme_returns_none(self):
+        """Should return None for unknown schemes"""
+        result = _get_alternate_protocol_uri("ftp://localhost:21")
+        assert result is None

@@ -167,6 +167,8 @@ def upload_opengraph_to_bloodhound(
     """
     Upload OpenGraph file to BloodHound Community Edition.
 
+    Supports automatic protocol fallback - if http:// fails, tries https:// and vice versa.
+
     Args:
         opengraph_file: Path to the OpenGraph JSON file (contains both nodes and edges)
         bloodhound_url: BloodHound connector URI (various formats supported)
@@ -190,31 +192,12 @@ def upload_opengraph_to_bloodhound(
         warn("Install with: pip install requests")
         return False
 
-    # Authenticate
-    try:
-        authenticator = BloodHoundAuthenticator(
-            base_url=bloodhound_url,
-            username=username,
-            password=password,
-            api_key=api_key,
-            api_key_id=api_key_id,
-            timeout=TIMEOUT,
-        )
+    # Try to authenticate, with protocol fallback
+    authenticator = _authenticate_with_fallback(
+        bloodhound_url, username, password, api_key, api_key_id
+    )
 
-        # Test authentication
-        if api_key and api_key_id:
-            info(f"Using API key authentication for BloodHound at {bloodhound_url}")
-            # Just verify we can make a request
-            if not authenticator.request("GET", "/api/version"):
-                warn("Failed to authenticate with API key")
-                return False
-        else:
-            if not authenticator.get_token():
-                return False
-            good(f"Authenticated to BloodHound at {bloodhound_url}")
-
-    except Exception as e:
-        warn(f"Unexpected authentication error: {e}")
+    if not authenticator:
         return False
 
     # Set custom icon if requested
@@ -226,6 +209,116 @@ def upload_opengraph_to_bloodhound(
     success = _upload_file(authenticator, opengraph_file, "OpenGraph")
 
     return success
+
+
+def _authenticate_with_fallback(
+    bloodhound_url: str,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_key_id: Optional[str] = None,
+) -> Optional[BloodHoundAuthenticator]:
+    """
+    Authenticate to BloodHound with automatic protocol fallback.
+
+    If http:// fails, tries https:// and vice versa.
+
+    Args:
+        bloodhound_url: Normalized BloodHound URL
+        username: BloodHound username
+        password: BloodHound password
+        api_key: BloodHound API key
+        api_key_id: BloodHound API key ID
+
+    Returns:
+        Authenticated BloodHoundAuthenticator or None if both protocols fail
+    """
+    # Try primary URL
+    authenticator = _try_authenticate(bloodhound_url, username, password, api_key, api_key_id)
+    if authenticator:
+        return authenticator
+
+    # Try alternate protocol
+    alt_url = _get_alternate_protocol_uri(bloodhound_url)
+    if alt_url:
+        original_scheme = "https" if bloodhound_url.startswith("https://") else "http"
+        alt_scheme = "http" if original_scheme == "https" else "https"
+        warn(f"Connection failed with {original_scheme}://, trying {alt_scheme}://...")
+
+        authenticator = _try_authenticate(alt_url, username, password, api_key, api_key_id)
+        if authenticator:
+            status(f"[+] Successfully connected using {alt_scheme}://")
+            return authenticator
+
+    return None
+
+
+def _try_authenticate(
+    url: str,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_key_id: Optional[str] = None,
+) -> Optional[BloodHoundAuthenticator]:
+    """
+    Try to authenticate to BloodHound at a specific URL.
+
+    Returns:
+        Authenticated BloodHoundAuthenticator or None if authentication fails
+    """
+    try:
+        authenticator = BloodHoundAuthenticator(
+            base_url=url,
+            username=username,
+            password=password,
+            api_key=api_key,
+            api_key_id=api_key_id,
+            timeout=TIMEOUT,
+        )
+
+        # Test authentication
+        if api_key and api_key_id:
+            info(f"Using API key authentication for BloodHound at {url}")
+            if not authenticator.request("GET", "/api/version"):
+                return None
+        else:
+            if not authenticator.get_token():
+                return None
+            good(f"Authenticated to BloodHound at {url}")
+
+        return authenticator
+
+    except Exception as e:
+        warn(f"Unexpected authentication error: {e}")
+        return None
+
+
+def _get_alternate_protocol_uri(uri: str) -> Optional[str]:
+    """
+    Get the alternate protocol URI (http <-> https).
+
+    Only swaps the protocol, keeps the same port.
+
+    Args:
+        uri: Original URI (e.g., "http://localhost:8080")
+
+    Returns:
+        URI with alternate protocol, or None if not applicable
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(uri)
+
+    if parsed.scheme == "http":
+        # http -> https (keep same port)
+        new_netloc = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+        return urlunparse(("https", new_netloc, parsed.path, "", "", ""))
+    elif parsed.scheme == "https":
+        # https -> http (keep same port)
+        new_netloc = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+        return urlunparse(("http", new_netloc, parsed.path, "", "", ""))
+
+    return None
 
 
 def _wait_for_job_completion(

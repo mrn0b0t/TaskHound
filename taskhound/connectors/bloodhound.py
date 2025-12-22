@@ -77,7 +77,11 @@ class BloodHoundConnector:
         self.users_data = {}
 
         # Initialize authenticator for BHCE
-        base_url = self.ip if "://" in self.ip else f"http://{self.ip}:8080"
+        # ip can be a full URI (http://host:port) or just hostname
+        if "://" in self.ip:
+            base_url = self.ip
+        else:
+            base_url = f"http://{self.ip}:8080"
         self.authenticator = BloodHoundAuthenticator(
             base_url=base_url,
             username=username,
@@ -170,7 +174,6 @@ class BloodHoundConnector:
 
     def _query_bhce(self) -> bool:
         """Query BHCE via API"""
-        # BHCE typically runs on port 8080
         # base_url is handled by authenticator
 
         # Get authentication headers
@@ -182,15 +185,15 @@ class BloodHoundConnector:
                 warn(f"BloodHound connection failed - HTTP {response.status_code if response else 'No Response'}")
                 return False
 
-            status(f"[+] Connected to BHCE at {self.ip}:8080")
+            status(f"[+] Connected to BHCE at {self.authenticator.base_url}")
             status("[*] Collecting high-value user data from BloodHound (be patient)")
 
         except requests.exceptions.ConnectionError:
-            warn(f"BloodHound BHCE connection failed at {self.ip}:8080")
+            warn(f"BloodHound BHCE connection failed at {self.authenticator.base_url}")
             warn("Check if BHCE is running and accessible")
             return False
         except requests.exceptions.Timeout:
-            warn(f"BloodHound BHCE connection timed out at {self.ip}:8080")
+            warn(f"BloodHound BHCE connection timed out at {self.authenticator.base_url}")
             return False
 
         # Comprehensive query for BHCE - simplified format that BHCE actually supports
@@ -1038,7 +1041,9 @@ class BloodHoundConnector:
 
 def connect_bloodhound(args) -> Tuple[Optional[Dict[str, Any]], Optional[BloodHoundConnector]]:
     """
-    Connect to BloodHound and retrieve high-value users data
+    Connect to BloodHound and retrieve high-value users data.
+
+    Supports automatic protocol fallback - if http:// fails, tries https:// and vice versa.
 
     Args:
         args: Parsed command line arguments
@@ -1051,20 +1056,20 @@ def connect_bloodhound(args) -> Tuple[Optional[Dict[str, Any]], Optional[BloodHo
 
     # Determine BloodHound type
     bh_type = "bhce" if args.bhce else "legacy"
+    is_legacy = bh_type == "legacy"
 
-    # Extract just the hostname/IP from the connector URI
-    # The connector expects just the hostname, as it adds its own ports
-    from ..output.bloodhound import extract_host_from_connector
+    # Normalize the connector URI (preserves scheme and adds port if missing)
+    from ..output.bloodhound import normalize_bloodhound_connector
 
-    connector_host = extract_host_from_connector(args.bh_connector)
+    connector_uri = normalize_bloodhound_connector(args.bh_connector, is_legacy=is_legacy)
 
     display_type = "BHCE" if args.bhce else "Legacy"
-    good(f"Connecting to {display_type} BloodHound at {connector_host}...")
+    good(f"Connecting to {display_type} BloodHound at {connector_uri}...")
 
     # Create connector and attempt connection
     connector = BloodHoundConnector(
         bh_type=bh_type,
-        ip=connector_host,  # Just the hostname, connector adds ports
+        ip=connector_uri,  # Full URI with scheme and port
         username=args.bh_user,
         password=args.bh_password,
         api_key=getattr(args, "bh_api_key", None),
@@ -1080,6 +1085,62 @@ def connect_bloodhound(args) -> Tuple[Optional[Dict[str, Any]], Optional[BloodHo
             connector.save_to_file(args.bh_save)
 
         return users_data, connector
-    else:
-        warn("BloodHound connection failed - continuing without high-value data")
-        return None, None
+
+    # Connection failed - try alternate protocol (http <-> https)
+    if not is_legacy:  # Only for BHCE (Legacy uses bolt://)
+        alt_uri = _get_alternate_protocol_uri(connector_uri)
+        if alt_uri:
+            original_scheme = "https" if connector_uri.startswith("https://") else "http"
+            alt_scheme = "http" if original_scheme == "https" else "https"
+            warn(f"Connection failed with {original_scheme}://, trying {alt_scheme}://...")
+
+            connector = BloodHoundConnector(
+                bh_type=bh_type,
+                ip=alt_uri,
+                username=args.bh_user,
+                password=args.bh_password,
+                api_key=getattr(args, "bh_api_key", None),
+                api_key_id=getattr(args, "bh_api_key_id", None),
+                timeout=getattr(args, "bh_timeout", 120),
+            )
+
+            if connector.connect_and_query():
+                status(f"[+] Successfully connected using {alt_scheme}://")
+                users_data = connector.get_users_data()
+
+                # Save to file if requested
+                if args.bh_save:
+                    connector.save_to_file(args.bh_save)
+
+                return users_data, connector
+
+    warn("BloodHound connection failed - continuing without high-value data")
+    return None, None
+
+
+def _get_alternate_protocol_uri(uri: str) -> Optional[str]:
+    """
+    Get the alternate protocol URI (http <-> https).
+
+    Only swaps the protocol, keeps the same port.
+
+    Args:
+        uri: Original URI (e.g., "http://localhost:8080")
+
+    Returns:
+        URI with alternate protocol, or None if not applicable
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(uri)
+
+    if parsed.scheme == "http":
+        # http -> https (keep same port)
+        new_netloc = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+        return urlunparse(("https", new_netloc, parsed.path, "", "", ""))
+    elif parsed.scheme == "https":
+        # https -> http (keep same port)
+        new_netloc = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+        return urlunparse(("http", new_netloc, parsed.path, "", "", ""))
+
+    return None
