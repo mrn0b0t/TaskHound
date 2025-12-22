@@ -169,6 +169,7 @@ def process_target(
     smb = None
     laps_used = False
     laps_type_used = None
+    laps_cred = None  # Track LAPS credentials for RPC reuse
     discovered_hostname = None
     cred_validation_results: Dict[str, TaskRunInfo] = {}  # RPC credential validation cache
 
@@ -452,19 +453,38 @@ def process_target(
             info(f"{target}: Found {len(password_task_paths)} tasks with stored credentials to validate")
 
     # Credential validation via Task Scheduler RPC (if requested and RPC not disabled)
-    cred_validation_results = perform_credential_validation(
-        target,
-        password_task_paths,
-        domain=domain,
-        username=username,
-        password=password,
-        hashes=hashes,
-        aes_key=aes_key,
-        kerberos=kerberos,
-        dc_ip=dc_ip,
-        opsec=no_rpc,  # Use no_rpc flag (opsec sets this)
-        debug=debug,
-    ) if validate_creds else {}
+    # When LAPS is used, authenticate with LAPS credentials (local admin) instead of domain creds
+    if validate_creds and password_task_paths:
+        rpc_domain = domain
+        rpc_username = username
+        rpc_password = password
+        rpc_hashes = hashes
+        rpc_aes_key = aes_key
+        rpc_kerberos = kerberos
+
+        if laps_used and laps_cred:
+            # LAPS credentials are local admin on the target - use them for RPC
+            rpc_domain = "."  # Local account
+            rpc_username = laps_cred.username
+            rpc_password = laps_cred.password
+            rpc_hashes = None  # LAPS provides plaintext password
+            rpc_aes_key = None
+            rpc_kerberos = False  # LAPS is always NTLM
+            log_debug(f"{target}: Using LAPS credentials for Task Scheduler RPC")
+
+        cred_validation_results = perform_credential_validation(
+            target,
+            password_task_paths,
+            domain=rpc_domain,
+            username=rpc_username,
+            password=rpc_password,
+            hashes=rpc_hashes,
+            aes_key=rpc_aes_key,
+            kerberos=rpc_kerberos,
+            dc_ip=dc_ip,
+            opsec=no_rpc,  # Use no_rpc flag (opsec sets this)
+            debug=debug,
+        )
 
     # Create backup directory structure if backup is requested
     backup_target_dir = setup_backup_directory(target, backup_dir, debug=debug)
