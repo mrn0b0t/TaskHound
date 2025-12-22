@@ -471,7 +471,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "LIKELY VALID (task never ran, password newer than pwdLastSet)" in text
+        assert "LIKELY VALID (password newer than pwdLastSet)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_unknown_with_bad_password(self, mock_resolve):
@@ -493,7 +493,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "LIKELY INVALID (task never ran, password older than pwdLastSet)" in text
+        assert "LIKELY INVALID (password older than pwdLastSet)" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_unknown_no_analysis(self, mock_resolve):
@@ -514,7 +514,7 @@ class TestFormatBlockCredValidation:
         )
 
         text = "\n".join(lines)
-        assert "UNKNOWN - task never ran (0x80070005)" in text
+        assert "Cred Validation    : UNKNOWN" in text
 
     @patch("taskhound.output.printer.format_runas_with_sid_resolution")
     def test_cred_validation_other_status(self, mock_resolve):

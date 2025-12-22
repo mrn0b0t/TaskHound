@@ -565,11 +565,11 @@ def format_block(
         # Build status display
         if cred_status == "unknown":
             if password_analysis and "GOOD" in password_analysis.upper():
-                status_display = "LIKELY VALID (task never ran, password newer than pwdLastSet)"
+                status_display = "LIKELY VALID (password newer than pwdLastSet)"
             elif password_analysis and "BAD" in password_analysis.upper():
-                status_display = "LIKELY INVALID (task never ran, password older than pwdLastSet)"
+                status_display = "LIKELY INVALID (password older than pwdLastSet)"
             else:
-                status_display = f"UNKNOWN - task never ran ({cred_code})"
+                status_display = "UNKNOWN"
         elif cred_valid is True:
             status_display = "VALID" if cred_hijackable else f"VALID (restricted: {cred_status})"
         elif cred_status == "invalid":

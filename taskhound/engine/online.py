@@ -589,18 +589,10 @@ def process_target(
                 row.cred_hijackable = task_run_info.task_hijackable
                 row.cred_last_run = task_run_info.last_run.isoformat() if task_run_info.last_run else None
                 row.cred_return_code = f"0x{task_run_info.return_code:08X}" if task_run_info.return_code is not None else None
-                # Build human-readable detail
-                if task_run_info.password_valid:
-                    if task_run_info.task_hijackable:
-                        row.cred_detail = "Password VALID - task can be hijacked"
-                    else:
-                        row.cred_detail = f"Password VALID but restricted ({task_run_info.credential_status.value})"
-                elif task_run_info.credential_status == CredentialStatus.INVALID:
-                    row.cred_detail = "Password INVALID - DPAPI dump not viable"
-                elif task_run_info.credential_status == CredentialStatus.BLOCKED:
-                    row.cred_detail = "Account blocked/expired - DPAPI dump not viable"
-                else:
-                    row.cred_detail = f"Unknown status (code: {row.cred_return_code})"
+                # Only set cred_detail for VALID_RESTRICTED - it explains the specific restriction
+                # Other statuses: Return Code description is sufficient (shown in printer)
+                if task_run_info.credential_status == CredentialStatus.VALID_RESTRICTED:
+                    row.cred_detail = task_run_info.status_detail
 
         # Resolve SID early if runas is a SID - store result for credential matching and output
         # This ensures we only resolve once per task, and the result is available for all uses
