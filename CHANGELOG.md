@@ -8,7 +8,7 @@ All notable changes to TaskHound will be documented in this file.
 
 ### Highlights
 
-This is a major feature release with **115 commits** bringing significant improvements to performance, OPSEC controls, SID resolution, and user experience.
+This is a major feature release with **125 commits** bringing significant improvements to performance, OPSEC controls, SID resolution, and user experience.
 
 **Key Features:**
 - **Auto-Targets**: Enumerate domain computers from BloodHound or LDAP instead of manual target lists
