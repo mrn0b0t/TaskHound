@@ -705,7 +705,7 @@ When caffeine intake and free time align:
 - **Modularization of Stages**: This turned into a behemoth with way too many switches. I'll fix that.
 - **Abuse Info Integration**: MITRE ATT&CK techniques in BloodHound nodes
 - **Custom Tier-0 Mappings**: Support for User-defined privilege zones in BHCE
-
+- **Linux Checks**: Support to scan *nix based operating systems
 ---
 
 ## Acknowledgements
