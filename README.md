@@ -31,7 +31,7 @@
 
 TaskHound hunts for Windows scheduled tasks that run with privileged accounts and stored credentials. It enumerates tasks over SMB, parses XMLs, and identifies high-value attack opportunities through BloodHound integration.
 
-For backstory/lore and detailed explanations: see the associated [Blog Post](https://r0bit.io/posts/taskhound.html).
+For backstory/lore and detailed explanations: see the associated Blog Posts - [Part 1](https://r0bit.io/posts/taskhound/part1/index.html) and [Part 2](https://r0bit.io/posts/taskhound/part2/index.html).
 
 ## Key Features
 
